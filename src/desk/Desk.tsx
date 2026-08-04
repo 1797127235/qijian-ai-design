@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { positionFromPointer, screenToWorld, zoomAtPoint, type Viewport } from "./geometry";
 import type { DeskObject } from "./types";
-
-interface Viewport { x: number; y: number; zoom: number }
 
 export function Desk({
   objects,
@@ -10,6 +9,7 @@ export function Desk({
   initialViewport,
   onViewportChange,
   renderObject,
+  children,
 }: {
   objects: DeskObject[];
   onMove: (id: string, x: number, y: number) => void;
@@ -17,6 +17,7 @@ export function Desk({
   initialViewport?: Viewport;
   onViewportChange?: (viewport: Viewport) => void;
   renderObject: (obj: DeskObject) => ReactNode;
+  children?: ReactNode;
 }) {
   const [view, setView] = useState<Viewport>(initialViewport ?? { x: 40, y: 20, zoom: 0.62 });
   const [panning, setPanning] = useState(false);
@@ -43,8 +44,8 @@ export function Desk({
     if (drag.current) {
       const { id, ox, oy } = drag.current;
       const rect = vpRef.current!.getBoundingClientRect();
-      const x = (e.clientX - rect.left - view.x) / view.zoom - ox;
-      const y = (e.clientY - rect.top - view.y) / view.zoom - oy;
+      const pointer = screenToWorld({ x: e.clientX, y: e.clientY }, { x: rect.left, y: rect.top }, view);
+      const { x, y } = positionFromPointer(pointer, { x: ox, y: oy });
       lastDragPos.current = { id, x, y };
       onMove(id, x, y);
       return;
@@ -60,23 +61,23 @@ export function Desk({
     setPanning(false);
   };
   const onWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
     const d = e.deltaY < 0 ? 1.08 : 0.92;
     setView((v) => {
       const z = Math.min(1.6, Math.max(0.3, v.zoom * d));
       const rect = vpRef.current!.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
-      return { x: cx - (cx - v.x) * (z / v.zoom), y: cy - (cy - v.y) * (z / v.zoom), zoom: z };
+      return zoomAtPoint(v, { x: cx, y: cy }, z);
     });
   };
 
   const startNodeDrag = (e: React.PointerEvent, obj: DeskObject) => {
     if ((e.target as HTMLElement).closest("button, input, textarea, a")) return;
     e.stopPropagation();
-    drag.current = { id: obj.id, ox: 0, oy: 0 };
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    drag.current.ox = (e.clientX - rect.left) / view.zoom;
-    drag.current.oy = (e.clientY - rect.top) / view.zoom;
+    const rect = vpRef.current!.getBoundingClientRect();
+    const pointer = screenToWorld({ x: e.clientX, y: e.clientY }, { x: rect.left, y: rect.top }, view);
+    drag.current = { id: obj.id, ox: pointer.x - obj.x, oy: pointer.y - obj.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -101,6 +102,7 @@ export function Desk({
             {renderObject(obj)}
           </div>
         ))}
+        {children}
       </div>
       <div className="desk-tools">
         <button type="button" aria-label="放大" onClick={() => setView((v) => ({ ...v, zoom: Math.min(1.6, v.zoom + 0.1) }))}>＋</button>

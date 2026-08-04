@@ -14,8 +14,9 @@ const nextId = () => `m-${Date.now().toString(36)}-${(seq++).toString(36)}`;
 function BriefSetup({ onSave }: { onSave: (text: string) => Promise<void> }) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string>();
   return (
-    <div className="note-card brief-card brief-setup obj">
+    <div className="note-card brief-card brief-setup">
       <span className="pin" />
       <span className="who">客户说 · Brief · 待补写</span>
       <textarea
@@ -31,11 +32,15 @@ function BriefSetup({ onSave }: { onSave: (text: string) => Promise<void> }) {
         disabled={saving || !text.trim()}
         onClick={() => {
           setSaving(true);
-          void onSave(text.trim()).finally(() => setSaving(false));
+          setError(undefined);
+          void onSave(text.trim())
+            .catch((e) => setError(e instanceof Error ? e.message : "保存失败，请重试"))
+            .finally(() => setSaving(false));
         }}
       >
         {saving ? "保存中…" : "钉到桌面上"}
       </button>
+      {error && <p className="error-text">{error}</p>}
     </div>
   );
 }
@@ -55,6 +60,9 @@ export function App() {
   const [floorPlanFileId, setFloorPlanFileId] = useState<string>();
   const chatRef = useRef<ReturnType<typeof connectChat>>();
   const streamBuf = useRef("");
+  const activeProjectRef = useRef<string>();
+  const persistViewport = useRef<number>();
+  const viewportSaveFailed = useRef(false);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -70,21 +78,31 @@ export function App() {
 
   const refreshDesk = useCallback(async (projectId: string) => {
     const snap = await api.desk(projectId);
-    setSnapshot(snap);
-    setObjects(mapSnapshot(snap));
+    if (activeProjectRef.current === projectId) {
+      setSnapshot(snap);
+      setObjects(mapSnapshot(snap));
+    }
     return snap;
   }, []);
 
   const openProject = useCallback(
     async (projectId: string) => {
       chatRef.current?.close();
+      activeProjectRef.current = projectId;
+      window.clearTimeout(persistViewport.current);
+      viewportSaveFailed.current = false;
+      setSnapshot(undefined);
+      setObjects([]);
       setChatItems([]);
       setStreaming(undefined);
+      streamBuf.current = "";
       setPending(undefined);
       setSetupOpen(false);
+      setFloorPlanFileId(undefined);
       setView({ mode: "desk", projectId });
       try {
         const snap = await refreshDesk(projectId);
+        if (activeProjectRef.current !== projectId) return;
         const plan = snap.artifacts.find((a) => a.artifactType === "space_map");
         setFloorPlanFileId(typeof plan?.payload.source_file_id === "string" ? plan.payload.source_file_id : undefined);
         setSetupOpen(!plan);
@@ -131,13 +149,28 @@ export function App() {
         });
         chatRef.current = chat;
       } catch (e) {
+        if (activeProjectRef.current !== projectId) return;
         setChatItems([{ id: nextId(), role: "agent", text: `打开项目失败：${e instanceof Error ? e.message : "未知错误"}` }]);
       }
     },
     [refreshDesk],
   );
 
-  useEffect(() => () => chatRef.current?.close(), []);
+  useEffect(() => () => {
+    chatRef.current?.close();
+    window.clearTimeout(persistViewport.current);
+  }, []);
+
+  const leaveProject = useCallback(() => {
+    activeProjectRef.current = undefined;
+    chatRef.current?.close();
+    chatRef.current = undefined;
+    window.clearTimeout(persistViewport.current);
+    setSnapshot(undefined);
+    setObjects([]);
+    setSetupOpen(false);
+    setView({ mode: "home" });
+  }, []);
 
   const createProject = useCallback(
     async (input: { name: string }) => {
@@ -171,31 +204,48 @@ export function App() {
   const onMoveEnd = useCallback(
     (id: string, x: number, y: number) => {
       if (!projectId) return;
-      void api.moveObject(projectId, id, { x: Math.round(x), y: Math.round(y) }).catch(() => undefined);
+      void api.moveObject(projectId, id, { x: Math.round(x), y: Math.round(y) }).catch((e) => {
+        if (activeProjectRef.current !== projectId) return;
+        setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `位置保存失败：${e instanceof Error ? e.message : "未知错误"}` }]);
+        void refreshDesk(projectId).catch(() => undefined);
+      });
     },
-    [projectId],
+    [projectId, refreshDesk],
   );
 
-  const persistViewport = useRef<number>();
   const onViewportChange = useCallback(
     (viewport: { x: number; y: number; zoom: number }) => {
-      if (!projectId) return;
+      if (!projectId || snapshot?.project.id !== projectId) return;
       window.clearTimeout(persistViewport.current);
       persistViewport.current = window.setTimeout(() => {
-        void api.setViewport(projectId, viewport).catch(() => undefined);
+        void api
+          .setViewport(projectId, viewport)
+          .then(() => {
+            viewportSaveFailed.current = false;
+          })
+          .catch((e) => {
+            if (activeProjectRef.current !== projectId) return;
+            if (!viewportSaveFailed.current) {
+              setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `视口保存失败：${e instanceof Error ? e.message : "未知错误"}` }]);
+            }
+            viewportSaveFailed.current = true;
+            void refreshDesk(projectId).catch(() => undefined);
+          });
       }, 800);
     },
-    [projectId],
+    [projectId, refreshDesk, snapshot?.project.id],
   );
 
   const withRefresh = useCallback(
     async (fn: () => Promise<unknown>) => {
-      if (!projectId) return;
+      if (!projectId) return false;
       try {
         await fn();
         await refreshDesk(projectId);
+        return activeProjectRef.current === projectId;
       } catch (e) {
         setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `操作失败：${e instanceof Error ? e.message : "未知错误"}` }]);
+        return false;
       }
     },
     [projectId, refreshDesk],
@@ -284,6 +334,8 @@ export function App() {
     );
   }
 
+  const deskProjectId = view.projectId;
+  const deskSnapshot = snapshot?.project.id === deskProjectId ? snapshot : undefined;
   const direction = objects.find((o) => o.kind === "direction_set" && o.status === "confirmed" && o.selectedId);
   const planObj = objects.find((o) => o.kind === "plan");
   const briefObj = objects.find((o) => o.kind === "brief");
@@ -293,7 +345,7 @@ export function App() {
       <header className="topbar">
         <span className="seal-box">砌</span>
         <div className="brand">砌间<small>QIJIAN AI DESIGN</small></div>
-        <button type="button" className="back-btn" onClick={() => setView({ mode: "home" })}>← 项目列表</button>
+        <button type="button" className="back-btn" onClick={leaveProject}>← 项目列表</button>
         <span className="proj-name">{snapshot?.project.name}</span>
         <div className="top-right">
           {direction?.kind === "direction_set" && (
@@ -304,56 +356,64 @@ export function App() {
       </header>
       <div className="workbench">
         <Desk
+          key={deskProjectId}
           objects={objects}
-          initialViewport={snapshot?.deskState.viewport}
+          initialViewport={deskSnapshot?.deskState.viewport}
           onMove={onMove}
           onMoveEnd={onMoveEnd}
           onViewportChange={onViewportChange}
           renderObject={(obj) => (
             <DeskObjectView obj={obj} handlers={{ onConfirm, onSelectDirection, onAdopt, onSaveBrief, onRedrawPlan: () => setSetupOpen(true) }} />
           )}
-        />
-        {projectId && !briefObj && (
-          <BriefSetup
-            onSave={async (text) => {
-              await withRefresh(() =>
-                api.createArtifact(projectId, {
-                  artifactType: "design_brief",
-                  payload: { text, files: [] },
-                  layout: { kind: "brief", x: 60, y: 70, rot: -1.5 },
-                }),
-              );
-            }}
-          />
-        )}
-        {setupOpen && projectId && (
-          <SpaceMapSetup
-            projectId={projectId}
-            initialFileId={floorPlanFileId ?? (planObj?.kind === "plan" ? planObj.sourceFileId : undefined)}
-            existingSpaces={planObj?.kind === "plan" ? planObj.spaces : undefined}
-            onCancel={planObj ? () => setSetupOpen(false) : undefined}
-            onSave={async (payload) => {
-              await withRefresh(async () => {
-                const existing = planObj && artifactOf(planObj.id);
-                if (existing) {
-                  await api.appendVersion(existing.id, payload);
-                } else {
-                  await api.createArtifact(projectId, {
-                    artifactType: "space_map",
-                    payload,
-                    layout: { kind: "plan", x: 420, y: 90, w: 640 },
+        >
+          {deskSnapshot && !briefObj && (
+            <div className="obj obj-setup" style={{ left: 60, top: 70, transform: "rotate(-1.5deg)" }}>
+              <BriefSetup
+                onSave={async (text) => {
+                  const saved = await withRefresh(() =>
+                    api.createArtifact(deskProjectId, {
+                      artifactType: "design_brief",
+                      payload: { text, files: [] },
+                      layout: { kind: "brief", x: 60, y: 70, rot: -1.5 },
+                    }),
+                  );
+                  if (!saved) throw new Error("Brief 未保存，请检查错误后重试");
+                }}
+              />
+            </div>
+          )}
+          {deskSnapshot && setupOpen && (
+            <div className="obj obj-setup" style={{ left: 420, top: 90 }}>
+              <SpaceMapSetup
+                projectId={deskProjectId}
+                initialFileId={floorPlanFileId ?? (planObj?.kind === "plan" ? planObj.sourceFileId : undefined)}
+                existingSpaces={planObj?.kind === "plan" ? planObj.spaces : undefined}
+                onCancel={planObj ? () => setSetupOpen(false) : undefined}
+                onSave={async (payload) => {
+                  const saved = await withRefresh(async () => {
+                    const existing = planObj && artifactOf(planObj.id);
+                    if (existing) {
+                      await api.appendVersion(existing.id, payload);
+                    } else {
+                      await api.createArtifact(deskProjectId, {
+                        artifactType: "space_map",
+                        payload,
+                        layout: { kind: "plan", x: 420, y: 90, w: 640 },
+                      });
+                    }
                   });
-                }
-              });
-              setSetupOpen(false);
-            }}
-          />
-        )}
+                  if (!saved) throw new Error("空间地图未保存，请检查错误后重试");
+                  setSetupOpen(false);
+                }}
+              />
+            </div>
+          )}
+        </Desk>
         <ChatPanel
           items={chatItems}
           streaming={streaming}
           busy={busy}
-          permission={snapshot?.project.permission ?? "ask"}
+          permission={deskSnapshot?.project.permission ?? "ask"}
           pending={pending}
           onTogglePermission={togglePermission}
           onSend={sendChat}
