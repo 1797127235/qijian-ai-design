@@ -1,7 +1,10 @@
 # 家装方案约束包契约
 
-**Status:** accepted  
+**Status:** superseded by [单画布 Agent 后端重写](../implementation/agent-backend-redesign.md)
+
 **Date:** 2026-08-03
+
+当前实现已移除方案约束包与 `design_system` Artifact。本文保留为历史决策记录，不描述现行产品流程。
 
 ## Context
 
