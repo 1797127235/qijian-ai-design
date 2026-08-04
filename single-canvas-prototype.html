@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>砌间 · 设计桌面原型</title>
+<style>
+  :root {
+    --canvas: #f0ece3;
+    --card: #fdfcf9;
+    --ink: #1c1a16;
+    --ink-soft: #3d3a33;
+    --mute: #6e6a61;
+    --mute-soft: #9b968a;
+    --hairline: #e3ded4;
+    --hairline-strong: #d4cec0;
+    --accent: #b5532a;
+    --accent-soft: #f5e8e0;
+    --ok: #4a7a5c;
+    --tbc: #8a641f;
+    --tbc-soft: #f7efdd;
+    --display: "Fraunces", "Noto Serif SC", "Songti SC", serif;
+    --body: "Instrument Sans", "Noto Sans SC", "PingFang SC", sans-serif;
+    --mono: "JetBrains Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: var(--body); color: var(--ink); background: var(--canvas); overflow: hidden; }
+
+  .topbar {
+    position: fixed; inset: 0 0 auto 0; height: 52px; z-index: 50;
+    display: flex; align-items: center; gap: 14px; padding: 0 16px;
+    background: rgba(240,236,227,.85); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .seal-box { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: #fff;
+    display: grid; place-items: center; font-family: var(--display); font-size: 15px; }
+  .brand { font-family: var(--display); font-size: 16px; }
+  .brand small { display: block; font-family: var(--mono); font-size: 8.5px; letter-spacing: .18em; color: var(--mute-soft); }
+  .proj-name { font-size: 13px; color: var(--ink-soft); border-left: 1px solid var(--hairline-strong); padding-left: 14px; }
+  .top-right { margin-left: auto; display: flex; gap: 8px; }
+  .pill { font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; padding: 5px 10px;
+    border-radius: 999px; border: 1px solid var(--hairline-strong); background: var(--card); color: var(--mute); }
+  .pill.acc { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+  .viewport { position: fixed; inset: 52px 0 0 0; cursor: grab; overflow: hidden;
+    background-image: radial-gradient(circle, #d5cfc0 1px, transparent 1px); background-size: 26px 26px; }
+  .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+
+  /* ── 通用卡片 ── */
+  .card {
+    position: absolute; background: var(--card);
+    border: 1px solid var(--hairline-strong); border-radius: 6px;
+    box-shadow: 0 2px 4px rgba(28,26,22,.06), 0 14px 30px rgba(28,26,22,.10);
+  }
+  .card .head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--hairline);
+    font-family: var(--mono); font-size: 10px; letter-spacing: .1em; color: var(--mute); cursor: grab; }
+  .card .body { padding: 12px; font-size: 12.5px; line-height: 1.65; color: var(--ink-soft); }
+  .card h3 { font-family: var(--display); font-size: 16px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+  .badge { font-family: var(--mono); font-size: 9.5px; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+  .badge.ok { background: #e9f0ea; color: var(--ok); }
+  .badge.tbc { background: var(--tbc-soft); color: var(--tbc); }
+  .badge.acc { background: var(--accent-soft); color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .chip { font-size: 10.5px; padding: 2px 8px; border-radius: 999px; background: #efe9df; color: var(--ink-soft); }
+  .k { font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; color: var(--mute-soft); text-transform: uppercase; margin: 8px 0 3px; }
+
+  /* 图钉 */
+  .pin { position: absolute; top: -7px; left: 50%; margin-left: -7px; width: 14px; height: 14px;
+    border-radius: 50%; background: radial-gradient(circle at 35% 30%, #d97b54, var(--accent) 65%);
+    box-shadow: 0 2px 4px rgba(28,26,22,.35); z-index: 3; }
+  .pin.grey { background: radial-gradient(circle at 35% 30%, #b8b2a4, #8a8478 65%); }
+
+  /* 印章 */
+  .stamp { position: absolute; right: 10px; bottom: 10px; transform: rotate(-7deg);
+    font-family: var(--display); font-size: 12px; color: var(--ok);
+    border: 1.5px solid var(--ok); border-radius: 5px; padding: 2px 8px; opacity: .85; background: rgba(253,252,249,.7); }
+  .stamp.acc { color: var(--accent); border-color: var(--accent); }
+
+  /* 便签 */
+  .note { position: absolute; width: 190px; padding: 10px 12px 12px; font-size: 12px; line-height: 1.6;
+    background: #fbf6e7; border: 1px solid #e8dfc8; border-radius: 3px;
+    box-shadow: 0 3px 10px rgba(28,26,22,.12); color: var(--ink-soft); }
+  .note .who { font-family: var(--mono); font-size: 9px; letter-spacing: .12em; color: var(--mute-soft); display: block; margin-bottom: 4px; }
+  .note.ai { background: #eef1ec; border-color: #d8e0d6; }
+  .note .thread { position: absolute; top: -2px; width: 1.5px; background: var(--hairline-strong); }
+
+  /* 照片 */
+  .photo { position: absolute; background: #fff; padding: 6px 6px 22px; border-radius: 3px;
+    box-shadow: 0 3px 12px rgba(28,26,22,.16); }
+  .photo .img { width: 100%; height: 100%; border-radius: 2px; }
+  .photo .cap { position: absolute; bottom: 5px; left: 0; right: 0; text-align: center;
+    font-family: var(--mono); font-size: 9px; color: var(--mute-soft); letter-spacing: .08em; }
+  .ph-wood { background: linear-gradient(135deg, #8a6a4f, #5f4630); }
+  .ph-green { background: linear-gradient(135deg, #5f7a5c, #3d5340); }
+  .ph-cloth { background: linear-gradient(135deg, #9a8a7a, #6e6252); }
+  .ph-site { background: linear-gradient(135deg, #7a8290, #565d68); }
+
+  /* 户型图：桌子中央的主角 */
+  .plan { position: absolute; background: #f7f4ec; border: 1px solid var(--hairline-strong); border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(28,26,22,.08), 0 24px 60px rgba(28,26,22,.14); }
+  .plan img { display: block; width: 100%; border-radius: 8px; }
+  .region { position: absolute; border: 1.5px solid var(--accent); background: rgba(181,83,42,.07);
+    border-radius: 4px; font-size: 11px; color: var(--accent); padding: 3px 7px; font-family: var(--mono); }
+  .region.key { background: rgba(181,83,42,.15); }
+  .plan-tag { position: absolute; top: 12px; left: 12px; z-index: 2;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .12em;
+    background: rgba(253,252,249,.94); border: 1px solid var(--hairline-strong);
+    padding: 4px 10px; border-radius: 999px; color: var(--mute); }
+
+  /* 约束便签条：钉在桌沿 */
+  .rule { position: absolute; height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px;
+    background: #fbf6e7; border: 1px solid #e8dfc8; border-radius: 4px;
+    font-size: 11px; color: var(--ink-soft); box-shadow: 0 2px 6px rgba(28,26,22,.1); white-space: nowrap; }
+  .rule .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .rule.soft .dot { background: var(--tbc); }
+
+  .tools { position: fixed; right: 16px; bottom: 16px; z-index: 40; display: flex; gap: 6px; align-items: center;
+    background: var(--card); border: 1px solid var(--hairline-strong); border-radius: 10px; padding: 6px;
+    box-shadow: 0 4px 16px rgba(28,26,22,.1); }
+  .tools button { min-width: 30px; height: 30px; border: 1px solid var(--hairline); border-radius: 7px;
+    background: var(--canvas); cursor: pointer; font-size: 13px; color: var(--ink-soft); padding: 0 8px; }
+  .tools .zoom { font-family: var(--mono); font-size: 11px; color: var(--mute); padding: 0 6px; }
+  .hint { position: fixed; left: 16px; bottom: 16px; z-index: 40;
+    font-family: var(--mono); font-size: 10.5px; color: var(--mute-soft); letter-spacing: .06em; }
+  .stack { position: absolute; }
+  .stack .photo { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <span class="seal-box">砌</span>
+  <div class="brand">砌间<small>QIJIAN AI DESIGN</small></div>
+  <span class="proj-name">静安寺老公房改造 · 78㎡</span>
+  <div class="top-right">
+    <span class="pill">事实基线 ✓</span>
+    <span class="pill acc">方向 · 温润木质</span>
+  </div>
+</header>
+
+<div class="viewport" id="vp">
+  <div class="stage" id="stage">
+
+    <!-- ═══ 桌角：客户带来的资料 ═══ -->
+
+    <!-- Brief 便签 -->
+    <div class="note" style="left:60px; top:80px; transform:rotate(-1.5deg); width:230px;">
+      <span class="pin"></span>
+      <span class="who">客户说 · 微信整理</span>
+      夫妻二人+一只猫。预算 28 万内。喜欢老房子的味道，但厅太暗、东西没地方放。主卧阳台想利用起来。
+      <span class="stamp">✓ Brief 已确认</span>
+    </div>
+
+    <!-- 现场照片 -->
+    <div class="photo" style="left:70px; top:290px; width:130px; height:130px; transform:rotate(2deg);">
+      <div class="img ph-site" style="height:100px;"></div><span class="cap">现场 · 暗厅</span>
+    </div>
+    <div class="photo" style="left:190px; top:330px; width:130px; height:130px; transform:rotate(-2.5deg);">
+      <div class="img ph-site" style="height:100px; filter:hue-rotate(15deg);"></div><span class="cap">现场 · 厨房</span>
+    </div>
+
+    <!-- 参考图 -->
+    <div class="photo" style="left:80px; top:500px; width:120px; height:120px; transform:rotate(-1deg);">
+      <span class="pin grey"></span>
+      <div class="img ph-wood" style="height:92px;"></div><span class="cap">参考 · 木作</span>
+    </div>
+    <div class="photo" style="left:200px; top:540px; width:120px; height:120px; transform:rotate(2.5deg);">
+      <span class="pin grey"></span>
+      <div class="img ph-cloth" style="height:92px;"></div><span class="cap">参考 · 亚麻帘</span>
+    </div>
+
+    <!-- ═══ 桌子中央：户型图 ═══ -->
+    <div class="plan" style="left:420px; top:110px; width:640px;">
+      <span class="plan-tag">空间地图 · 已确认 ✓</span>
+      <img src="prototype-assets/cad-sheet.png" alt="户型图" />
+      <div class="region key" style="left:16%; top:28%; width:30%; height:27%;">客厅 ★</div>
+      <div class="region" style="left:52%; top:28%; width:24%; height:21%;">餐厨</div>
+      <div class="region key" style="left:52%; top:55%; width:24%; height:25%;">主卧 ★</div>
+      <div class="region" style="left:16%; top:62%; width:20%; height:18%;">卫生间</div>
+    </div>
+
+    <!-- 理解便签：钉在对应空间旁 -->
+    <div class="note ai" style="left:340px; top:200px; transform:rotate(1deg); width:170px;">
+      <span class="thread" style="left:100%; height:60px; transform:rotate(-30deg); transform-origin:top;"></span>
+      <span class="who">AI 理解 · 已改 ✓</span>
+      暗厅：采光集中在南北两端，需借光
+    </div>
+    <div class="note ai" style="left:1000px; top:420px; transform:rotate(-1.5deg); width:180px;">
+      <span class="thread" style="left:0; height:50px; transform:rotate(25deg); transform-origin:top;"></span>
+      <span class="who">AI 理解 · 已改 ✓</span>
+      主卧阳台可打通，注意配重墙不可拆
+    </div>
+    <div class="note ai" style="left:1040px; top:150px; transform:rotate(1.5deg); width:170px;">
+      <span class="who">AI 理解 ✓</span>
+      餐厨可开放，烟道位置限制灶台
+    </div>
+
+    <!-- ═══ 右边摊开的三张方向草图，B 选中，AC 推到旁边 ═══ -->
+    <div class="card" style="left:1290px; top:90px; width:250px; transform:rotate(-2deg); z-index:1;">
+      <div class="head"><span>方向 A</span><span class="badge tbc">推开</span></div>
+      <div class="body">
+        <div class="ph-green" style="height:78px; border-radius:4px; margin-bottom:8px;"></div>
+        <h3 style="font-size:15px;">绿意庭院</h3>
+        引绿入室，阳台做室内庭院
+      </div>
+    </div>
+
+    <div class="card" style="left:1560px; top:70px; width:290px; transform:rotate(.5deg); z-index:2; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft), 0 18px 40px rgba(181,83,42,.18);">
+      <span class="pin"></span>
+      <div class="head"><span>方向 B · 选定</span><span class="badge acc">已选</span></div>
+      <div class="body">
+        <div class="ph-wood" style="height:96px; border-radius:4px; margin-bottom:8px;"></div>
+        <h3>温润木质</h3>
+        木作一体化解决收纳；暗厅用浅色木皮借光
+        <div class="chips"><span class="chip">白橡木</span><span class="chip">暖白</span><span class="chip">亚麻</span></div>
+        <span class="stamp acc">✓ 方向已确认</span>
+      </div>
+    </div>
+
+    <div class="card" style="left:1300px; top:330px; width:250px; transform:rotate(1.5deg); z-index:1; opacity:.92;">
+      <div class="head"><span>方向 C</span><span class="badge tbc">推开</span></div>
+      <div class="body">
+        <div class="ph-cloth" style="height:78px; border-radius:4px; margin-bottom:8px;"></div>
+        <h3 style="font-size:15px;">织物盒子</h3>
+        软包界定空间，可逆改造
+      </div>
+    </div>
+
+    <!-- ═══ 效果图：直接从空间长出来，一摞照片钉在户型图旁 ═══ -->
+    <div class="stack" style="left:1300px; top:560px; width:220px; height:170px; transform:rotate(-1deg); z-index:2;">
+      <span class="who" style="position:absolute; top:-22px; left:2px; font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; color:var(--mute-soft);">客厅 ★ · 效果图 2/2 已采用 1</span>
+      <div class="photo" style="left:0; top:0; width:150px; height:150px; transform:rotate(-2deg); z-index:2; border:2px solid var(--accent); border-radius:3px;">
+        <span class="pin"></span>
+        <div class="img ph-wood" style="height:120px;"></div><span class="cap">变体 1 · 已采用 ✓</span>
+      </div>
+      <div class="photo" style="left:90px; top:16px; width:150px; height:150px; transform:rotate(3deg); opacity:.85;">
+        <div class="img ph-wood" style="height:120px; filter:saturate(.7);"></div><span class="cap">变体 2</span>
+      </div>
+    </div>
+
+    <div class="stack" style="left:1600px; top:600px; width:200px; height:150px; transform:rotate(.8deg);">
+      <span style="position:absolute; top:-22px; left:2px; font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; color:var(--mute-soft);">主卧 ★ · 效果图</span>
+      <button style="position:absolute; left:0; top:0; width:150px; height:150px; border:1.5px dashed var(--hairline-strong); border-radius:3px; background:rgba(253,252,249,.6); cursor:pointer; font-size:12px; color:var(--mute); font-family:var(--body);">
+        ＋ 生成效果图<br/><span style="font-size:10px; color:var(--mute-soft);">继承方向 B 与空间理解</span>
+      </button>
+    </div>
+
+    <!-- 材料小样 -->
+    <div class="photo" style="left:1900px; top:430px; width:90px; height:90px; transform:rotate(-3deg);">
+      <span class="pin grey"></span>
+      <div class="img ph-wood" style="height:64px;"></div><span class="cap">白橡木皮</span>
+    </div>
+    <div class="photo" style="left:1990px; top:470px; width:90px; height:90px; transform:rotate(2deg);">
+      <div class="img ph-cloth" style="height:64px;"></div><span class="cap">亚麻小样</span>
+    </div>
+
+  </div>
+</div>
+
+<div class="tools">
+  <button id="zin">＋</button>
+  <span class="zoom" id="zoomLabel">62%</span>
+  <button id="zout">−</button>
+  <button id="zreset">复位</button>
+</div>
+<p class="hint">拖动平移 · 滚轮缩放 · 设计桌面原型</p>
+
+<script>
+  const vp = document.getElementById('vp');
+  const stage = document.getElementById('stage');
+  const label = document.getElementById('zoomLabel');
+  let view = { x: 20, y: 10, zoom: 0.62 };
+  const apply = () => {
+    stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`;
+    label.textContent = Math.round(view.zoom * 100) + '%';
+  };
+  apply();
+  let pan = null;
+  vp.addEventListener('pointerdown', (e) => {
+    pan = { sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
+    vp.setPointerCapture(e.pointerId);
+    vp.style.cursor = 'grabbing';
+  });
+  vp.addEventListener('pointermove', (e) => {
+    if (!pan) return;
+    view.x = pan.vx + e.clientX - pan.sx;
+    view.y = pan.vy + e.clientY - pan.sy;
+    apply();
+  });
+  vp.addEventListener('pointerup', () => { pan = null; vp.style.cursor = 'grab'; });
+  vp.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const d = e.deltaY < 0 ? 1.08 : 0.92;
+    const z = Math.min(1.6, Math.max(0.3, view.zoom * d));
+    const r = vp.getBoundingClientRect();
+    const cx = e.clientX - r.left, cy = e.clientY - r.top;
+    view.x = cx - (cx - view.x) * (z / view.zoom);
+    view.y = cy - (cy - view.y) * (z / view.zoom);
+    view.zoom = z;
+    apply();
+  }, { passive: false });
+  document.getElementById('zin').onclick = () => { view.zoom = Math.min(1.6, view.zoom + 0.1); apply(); };
+  document.getElementById('zout').onclick = () => { view.zoom = Math.max(0.3, view.zoom - 0.1); apply(); };
+  document.getElementById('zreset').onclick = () => { view = { x: 20, y: 10, zoom: 0.62 }; apply(); };
+</script>
+</body>
+</html>

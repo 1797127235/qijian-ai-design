@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785850422372,
+      "tag": "0000_agent_desk",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785850553712,
+      "tag": "0001_legacy_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785850650000,
+      "tag": "0002_legacy_fk_cascades",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785850750000,
+      "tag": "0003_stored_files_fk_cascade",
+      "breakpoints": true
+    }
+  ]
+}
