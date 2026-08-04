@@ -1,7 +1,10 @@
 # 结构化提案画布契约
 
-**Status:** accepted  
+**Status:** superseded by [单画布 Agent 后端重写](../implementation/agent-backend-redesign.md)
+
 **Date:** 2026-08-03
+
+当前实现以单张 `desk_state` 设计桌面取代 `proposal_canvas`、`canvas_layout` 和 `space_proposal`。本文保留为历史决策记录；空间地图、布局与 Artifact 内容分离等原则仍由现行实现延续。
 
 ## Context
 

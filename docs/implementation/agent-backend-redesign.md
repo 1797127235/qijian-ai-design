@@ -23,7 +23,7 @@
 | 数据库 | PostgreSQL（沿用 docker-compose），Drizzle ORM |
 | 图像生成 | 独立 `ImageGenerator` 接口（gpt-image / 即梦 / FLUX 选一；pi-ai 只管文本 LLM，图像不经过它） |
 | 提案包导出 | HTML 模板 + Playwright 打印 PDF/PNG |
-| 运行时 | Node 20+ |
+| 运行时 | Node 22.19+（pi SDK 运行时要求） |
 
 集成方式选 **SDK 同进程嵌入**而非 RPC 子进程：自定义工具需要直接调数据层函数、权限闸需要拦截工具执行——SDK 文档明确此场景优先 SDK。
 
@@ -39,7 +39,7 @@ src/desk (React)                apps/server (TS)
        │                        │     └─ permission gate  │
        │                        │ ArtifactService (版本化) │
        │                        │ DeskStateService        │
-       │                        │ FileStorage (本地/S3)    │
+       │                        │ FileStorage（本地文件）  │
        │                        │ ExportService (PDF)     │
        │                        └───────────┬─────────────┘
        │                                    │
@@ -53,25 +53,44 @@ src/desk (React)                apps/server (TS)
 ### Session 创建骨架（对齐 pi SDK）
 
 ```ts
-import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  getAgentDir,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 
-const modelRuntime = await ModelRuntime.create();           // models.json 里配 Grok 兼容端点
+const settingsManager = SettingsManager.inMemory({ compaction: { enabled: true } });
 const loader = new DefaultResourceLoader({
-  systemPromptOverride: () => deskSystemPrompt(deskSnapshot), // 桌面快照进系统提示词
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
+  settingsManager,
+  noExtensions: true,
+  noSkills: true,
+  noPromptTemplates: true,
+  noContextFiles: true,
+  systemPrompt: deskSystemPrompt(deskSnapshot),
 });
 await loader.reload();
+
+const modelRuntime = await ModelRuntime.create();
+const model = modelRuntime.getModel(agentProvider, agentModel);
+if (!model) throw new Error(`未找到 Agent 模型：${agentProvider}/${agentModel}`);
 const { session } = await createAgentSession({
   modelRuntime,
+  model,
   resourceLoader: loader,
   sessionManager: SessionManager.inMemory(),
-  settingsManager: SettingsManager.inMemory({ compaction: { enabled: true } }),
+  settingsManager,
   noTools: "builtin",            // 禁用 read/bash/edit 等文件系统工具
   customTools: deskTools,        // 只有桌面工具
 });
 session.subscribe((event) => forwardToWebSocket(event));      // 事件流→前端
 ```
 
-## 数据模型（Drizzle schema 草案）
+## 数据模型（Drizzle schema）
 
 保留 Artifact 双表契约，裁剪 artifact_type 集合：
 
@@ -81,7 +100,7 @@ session.subscribe((event) => forwardToWebSocket(event));      // 事件流→前
 //                    payload(jsonb), input_refs(jsonb), created_by(designer|agent), created_at
 ```
 
-`artifact_type` 新集合（旧类型迁移或废弃）：
+`artifact_type` 当前集合：
 
 | 类型 | 说明 | 对应桌面物件 |
 |---|---|---|
@@ -135,30 +154,37 @@ const generateEffectImage = defineTool({
 **权限闸**（pi 无内置权限系统；SDK 无 ask 钩子，在工具 `execute` 开头自行拦截）：
 
 - `ask` 档：`permissionGate` 向客户端 WS 发 `approval_request`（工具名+参数+中文描述），挂起 Promise 等批准/拒绝；批准后继续执行。前端审批卡就是现有 ChatPanel 的 approval 组件
-- `auto` 档：低风险与生成类直接放行；`confirm_artifact` 也放行，但前端播可见动效 + 支持撤销（撤销 = `current_version` 指针回滚，Artifact 历史天然支持）
+- `auto` 档：工具写操作直接放行；服务端仍保留完整版本历史，并可通过 rollback API 回退当前版本指针
 - 档位存项目级设置，前端切换即时生效；`session.subscribe` 的 `tool_execution_start/end` 事件转发前端，渲染"AI 正在做什么"的活动流
 
 ## 上下文构造
 
-两层注入：① 系统提示词（`systemPromptOverride`）= 角色设定 + 桌面快照摘要（各物件类型/状态/位置 + 已确认内容）；② `read_desk` 工具供 agent 随时取全量当前状态。聊天历史只是指挥日志，状态唯一来源是 PostgreSQL——前端重连后从数据库重建桌面，不依赖会话历史。
+两层注入：① 系统提示词（`systemPrompt`）= 角色设定 + 会话创建时的桌面快照摘要；② `read_desk` 工具供 agent 随时取全量当前状态。聊天历史只是指挥日志，状态唯一来源是 PostgreSQL——前端重连后从数据库重建桌面，不依赖会话历史。
 
-## API 草案
+## 当前 API
 
 ```
+GET    /api/projects                      项目列表与桌面摘要
 POST   /api/projects                      创建项目（含空桌面）
+DELETE /api/projects/:id                  删除项目、Artifact 与本地文件
 GET    /api/projects/:id/desk             桌面全量状态（artifacts + desk_state）
+PATCH  /api/projects/:id/desk             保存桌面视口
 PATCH  /api/projects/:id/desk/objects/:artifactId   移动/摆放物件
+POST   /api/projects/:id/artifacts        创建 Artifact 首版本并可选摆放物件
 POST   /api/projects/:id/files            上传资料（PDF/JPG/PNG）
+GET    /api/files/:id                     读取上传或导出的文件
 POST   /api/artifacts/:id/versions        追加版本（草稿/确认）
+POST   /api/artifacts/:id/confirm         确认当前 Artifact
 POST   /api/artifacts/:id/rollback        current_version 回滚（撤销）
 WS     /api/projects/:id/chat             对话 + agent 事件流
                                         （text_delta→消息流；tool_execution_start/end→活动指示；
                                          approval_request→审批卡；object_changed→桌面增量更新）
-POST   /api/projects/:id/export           导出提案包 PDF
-GET    /api/projects/:id/permission  PUT  同左   权限档位
+POST   /api/projects/:id/export           导出提案包 PDF 与逐页 PNG
+GET    /api/projects/:id/permission       读取权限档位
+PUT    /api/projects/:id/permission       更新权限档位
 ```
 
-前端通过 `src/desk/api.ts` 连接 WS 上的真智能体；原 `src/desk/agent.ts` mock 解释器已删除，DeskObject 模型由 Artifact 当前版本与 `desk_state.objects` 共同重建。
+前端通过 `src/lib/api.ts` 连接 REST 与 WebSocket；DeskObject 模型由 Artifact 当前版本与 `desk_state.objects` 共同重建。
 
 ## 提案包导出
 
