@@ -1,0 +1,164 @@
+/* Hallmark · macrostructure: Workbench (app-shell) · nav: process-rail (N3-spirit) · footer: none (app) · theme: custom — locked by DESIGN.md "Qijian Paper Atelier" (paper #faf9f5 · warm neutrals · terracotta accent #b5532a · Fraunces+Noto Serif SC display / Instrument Sans+Noto Sans SC body / JetBrains Mono meta)
+ * genre: editorial · audience: 家装设计师 · use: 全流程提案工作台 · tone: 安静优雅
+ * pre-emit critique: P5 H5 E4 S5 R5 V5
+ * contrast: pass (40–41) · nav: N/A app chrome · footer: N/A app · slop: pass (42–45)
+ * honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · icons: pass (30)
+ * mobile: pass (34, 49, 50–57)
+ */
+
+:root {
+  /* ── color (locked by DESIGN.md) ── */
+  --color-canvas: #faf9f5;
+  --color-surface: #f3f0e9;
+  --color-card: #fdfcf9;
+  --color-ink: #1c1a16;
+  --color-ink-soft: #3d3a33;
+  --color-mute: #6e6a61;
+  --color-mute-soft: #9b968a;
+  --color-hairline: #e3ded4;
+  --color-hairline-strong: #d4cec0;
+  --color-accent: #b5532a;
+  --color-accent-hover: #9a4623;
+  --color-accent-soft: #f5e8e0;
+  --color-accent-ink: #ffffff;
+  --color-success: #4a7a5c;
+  --color-success-soft: #e9f0ea;
+  --color-warning: #8a641f;
+  --color-warning-soft: #f7efdd;
+  --color-error: #b0443c;
+  --color-error-soft: #f7e9e7;
+  --color-info: #587a8a;
+  --color-focus: #b5532a;
+  --color-shadow: rgba(28, 26, 22, 0.05);
+  --color-scrim: rgba(28, 26, 22, 0.32);
+
+  /* ── typography (locked by DESIGN.md) ── */
+  --font-display: "Fraunces", "Noto Serif SC", "Songti SC", serif;
+  --font-body: "Instrument Sans", "Noto Sans SC", "PingFang SC", sans-serif;
+  --font-outlier: "JetBrains Mono", "SFMono-Regular", monospace;
+
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-display-xs: 18px;
+  --text-display-sm: 22px;
+  --text-display-md: 28px;
+  --text-display-lg: 36px;
+
+  /* ── spacing (4pt scale) ── */
+  --space-3xs: 2px;
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 20px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+  --space-4xl: 64px;
+  --space-5xl: 96px;
+
+  /* ── radius ── */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-full: 9999px;
+
+  /* ── motion ── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --dur-long: 420ms;
+
+  /* ── elevation (hairline-first; float only) ── */
+  --shadow-float: 0 1px 2px rgba(28, 26, 22, 0.04), 0 8px 24px rgba(28, 26, 22, 0.06);
+
+  /* ── z-index (named scale) ── */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-sticky: 200;
+  --z-sticky-nav: 300;
+  --z-overlay: 400;
+  --z-toast: 500;
+
+  --banner-height: 52px;
+  --sidebar-width: 232px;
+}
+
+[data-theme="dark"] {
+  --color-canvas: #1c1a16;
+  --color-surface: #24211c;
+  --color-card: #2a2721;
+  --color-ink: #f0ede6;
+  --color-ink-soft: #d8d4ca;
+  --color-mute: #a39e92;
+  --color-mute-soft: #6e6a61;
+  --color-hairline: #3a362e;
+  --color-hairline-strong: #4a453a;
+  --color-accent: #d0693f;
+  --color-accent-hover: #dd7a4e;
+  --color-accent-soft: #3d2a20;
+  --color-accent-ink: #1c1410;
+  --color-success: #6ea583;
+  --color-success-soft: #24352a;
+  --color-warning: #d0a44e;
+  --color-warning-soft: #38301c;
+  --color-error: #cd6a61;
+  --color-error-soft: #3d241f;
+  --color-info: #7fa3b3;
+  --color-focus: #d0693f;
+  --color-shadow: rgba(0, 0, 0, 0.4);
+  --color-scrim: rgba(12, 10, 8, 0.55);
+  --shadow-float: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.36);
+}
+
+/* ── base ── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow-x: clip;
+}
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: none; padding: 0; }
+h1, h2, h3, h4 { font-style: normal; overflow-wrap: anywhere; min-width: 0; }
+p { margin: 0; }
+img { max-width: 100%; display: block; }
+::selection { background: var(--color-accent-soft); color: var(--color-accent); }
+
+/* numeric discipline for metadata */
+.mono, .badge, .seal, .hud-pill, .meta-row { font-variant-numeric: tabular-nums; }
+
+/* ── motion: one orchestrated entrance ── */
+.reveal {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: reveal var(--dur-long) var(--ease-out) forwards;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+@keyframes reveal {
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 150ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 150ms !important;
+  }
+  .reveal { animation: reveal-reduced 150ms linear forwards; }
+  @keyframes reveal-reduced { to { opacity: 1; transform: none; } }
+}

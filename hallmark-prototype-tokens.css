@@ -1,0 +1,52 @@
+/* Hallmark · macrostructure: Map / Diagram · genre: modern-minimal · designed-as-app */
+:root {
+  --color-paper: #faf9f5;
+  --color-paper-2: #f3f0e9;
+  --color-surface: #ffffff;
+  --color-ink: #1c1a16;
+  --color-ink-2: #3d3a33;
+  --color-muted: #6e6a61;
+  --color-muted-soft: #9b968a;
+  --color-rule: #e3ded4;
+  --color-rule-strong: #d4cec0;
+  --color-accent: #b5532a;
+  --color-accent-hover: #9a4623;
+  --color-accent-soft: #f5e8e0;
+  --color-accent-wash: rgb(181 83 42 / 9%);
+  --color-success: #4a7a5c;
+  --color-info: #587a8a;
+  --color-info-soft: rgb(88 122 138 / 9%);
+  --color-shadow: rgb(28 26 22 / 12%);
+  --color-shadow-soft: rgb(28 26 22 / 6%);
+  --color-canvas-grid: rgb(110 106 97 / 25%);
+  --color-overlay: rgb(28 26 22 / 52%);
+  --color-focus: #587a8a;
+
+  --font-display: "Fraunces", "Noto Serif SC", serif;
+  --font-body: "Instrument Sans", "Noto Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --space-3xs: 4px;
+  --space-2xs: 8px;
+  --space-xs: 12px;
+  --space-sm: 16px;
+  --space-md: 24px;
+  --space-lg: 32px;
+  --space-xl: 48px;
+
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+
+  --radius-control: 4px;
+  --radius-panel: 6px;
+  --rule-thin: 1px;
+  --rule-strong: 2px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-short: 140ms;
+  --dur-medium: 240ms;
+}

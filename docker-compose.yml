@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: qijian
+      POSTGRES_USER: qijian
+      POSTGRES_PASSWORD: qijian
+    ports:
+      - "5433:5432"
+    volumes:
+      - qijian_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qijian -d qijian"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  qijian_postgres:

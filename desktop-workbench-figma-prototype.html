@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Qijian - Figma Design Baseline Prototype</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --black: #000;
+      --white: #fff;
+      --hairline: #e6e6e6;
+      --surface: #f7f7f5;
+      --lilac: #c5b0f4;
+      --lime: #dceeb1;
+      --pink: #ff3d8b;
+      --success: #1ea64a;
+      --font-sans: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      color: var(--black);
+      background: var(--white);
+      font-family: var(--font-sans);
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-width: 1180px; height: 100%; margin: 0; overflow: hidden; }
+    button { color: inherit; font: inherit; cursor: pointer; }
+    button:focus-visible, [contenteditable="true"]:focus-visible { outline: 3px solid var(--pink); outline-offset: 2px; }
+    svg { flex: 0 0 auto; }
+
+    .app { display: grid; grid-template-rows: 64px minmax(0, 1fr); width: 100vw; height: 100vh; background: var(--white); }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--hairline); background: var(--white); }
+    .top-left, .top-right { display: flex; align-items: center; gap: 10px; }
+    .brand { display: flex; align-items: center; gap: 10px; margin-right: 18px; }
+    .brand .brand-mark { display: grid; width: 36px; height: 36px; margin: 0; place-items: center; border-radius: 8px; background: var(--black); color: var(--white); font-family: var(--font-sans); font-size: 17px; font-weight: 750; letter-spacing: 0; }
+    .brand strong { font-size: 17px; font-weight: 700; }
+    .brand > div > span { display: block; margin-top: 1px; font-family: var(--font-mono); font-size: 9px; letter-spacing: .6px; }
+    .crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 330; }
+    .crumbs strong { font-weight: 540; }
+    .save-label { display: inline-flex; align-items: center; gap: 7px; margin-right: 4px; font-size: 12px; font-weight: 330; }
+    .save-label::before { width: 7px; height: 7px; border-radius: 50%; background: var(--success); content: ""; }
+    .circle-button { display: grid; width: 40px; height: 40px; place-items: center; border: 0; border-radius: 50%; background: var(--surface); }
+    .circle-button:hover { background: var(--black); color: var(--white); }
+    .pill-button { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; gap: 8px; padding: 0 18px; border: 0; border-radius: 50px; background: var(--black); color: var(--white); font-size: 14px; font-weight: 480; }
+    .pill-button:hover { transform: translateY(-1px); }
+    .pill-button.secondary { border: 1px solid var(--black); background: var(--white); color: var(--black); }
+
+    .workspace-wrap { min-height: 0; padding: 16px; background: var(--white); }
+    .workspace { position: relative; display: grid; grid-template-columns: 78px minmax(520px, 1fr) 410px; grid-template-rows: 116px minmax(0, 1fr); width: 100%; height: 100%; overflow: hidden; border-radius: 24px; background: var(--lilac); }
+
+    .project-head { grid-column: 1 / 4; grid-row: 1; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 22px 26px 18px; border-bottom: 1px solid rgba(0,0,0,.18); }
+    .project-title { display: flex; min-width: 0; align-items: flex-start; gap: 16px; }
+    .project-code { padding-top: 6px; font-family: var(--font-mono); font-size: 11px; font-weight: 400; letter-spacing: .6px; white-space: nowrap; }
+    .project-title h1 { margin: 0; font-size: 27px; line-height: 1.15; font-weight: 540; }
+    .project-title p { margin: 6px 0 0; font-size: 14px; line-height: 1.4; font-weight: 330; }
+    .stage-pills { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
+    .stage-pill { display: inline-flex; min-height: 34px; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid rgba(0,0,0,.25); border-radius: 50px; background: transparent; font-size: 12px; font-weight: 450; white-space: nowrap; }
+    .stage-pill:hover { background: rgba(255,255,255,.45); }
+    .stage-pill.active { border-color: var(--black); background: var(--black); color: var(--white); }
+    .stage-pill.done::before { display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: var(--black); color: var(--white); content: "✓"; font-size: 10px; }
+
+    .tool-rail { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 0; border-right: 1px solid rgba(0,0,0,.18); }
+    .tool-button { display: grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 50%; background: rgba(255,255,255,.55); }
+    .tool-button:hover, .tool-button.active { background: var(--black); color: var(--white); }
+    .tool-spacer { flex: 1; }
+
+    .drawing-area { position: relative; grid-column: 2; grid-row: 2; min-width: 0; min-height: 0; overflow: hidden; }
+    .drawing-meta { position: absolute; top: 18px; left: 22px; z-index: 4; display: flex; align-items: center; gap: 8px; }
+    .mono-label { padding: 8px 10px; border-radius: 6px; background: var(--white); font-family: var(--font-mono); font-size: 10px; font-weight: 400; letter-spacing: .5px; }
+    .status-chip { padding: 8px 10px; border-radius: 50px; background: var(--lime); font-size: 11px; font-weight: 480; }
+    .sheet-stage { position: absolute; inset: 0; display: grid; place-items: center; padding: 68px 30px 70px; }
+    .sheet { position: relative; width: min(94%, 780px); aspect-ratio: 1448 / 1086; overflow: hidden; border: 2px solid var(--black); border-radius: 8px; background: var(--white); box-shadow: 10px 10px 0 var(--black); transform: scale(1); transform-origin: center; transition: transform .16s ease; }
+    .sheet img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .annotation { position: absolute; display: grid; width: 31px; height: 31px; place-items: center; border: 3px solid var(--white); border-radius: 50%; background: var(--black); color: var(--white); font-family: var(--font-mono); font-size: 11px; font-weight: 700; box-shadow: 0 0 0 2px var(--black); }
+    .annotation.active { background: var(--pink); box-shadow: 0 0 0 2px var(--black), 0 0 0 8px rgba(255,61,139,.25); }
+    .annotation-a { left: 43%; top: 60%; }
+    .annotation-b { left: 69%; top: 73%; }
+    .annotation-c { left: 29%; top: 75%; }
+    .zoom { position: absolute; right: 18px; bottom: 18px; z-index: 4; display: flex; align-items: center; gap: 4px; padding: 5px; border-radius: 50px; background: var(--white); }
+    .zoom .circle-button { width: 34px; height: 34px; background: transparent; }
+    .zoom .circle-button:hover { background: var(--black); }
+    .zoom-value { min-width: 46px; font-family: var(--font-mono); font-size: 10px; text-align: center; }
+
+    .brief-panel { grid-column: 3; grid-row: 2; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 18px 18px 0; overflow: hidden; border: 2px solid var(--black); border-radius: 24px; background: var(--white); }
+    .brief-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 22px 17px; border-bottom: 1px solid var(--hairline); }
+    .eyebrow { font-family: var(--font-mono); font-size: 10px; font-weight: 400; letter-spacing: .6px; }
+    .brief-head h2 { margin: 6px 0 0; font-size: 24px; line-height: 1.2; font-weight: 540; }
+    .edit-button { display: inline-flex; min-height: 34px; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid var(--black); border-radius: 50px; background: var(--white); font-size: 12px; font-weight: 480; }
+    .edit-button:hover { background: var(--black); color: var(--white); }
+    .brief-scroll { min-height: 0; flex: 1; overflow-y: auto; }
+    .brief-section { padding: 18px 22px; border-bottom: 1px solid var(--hairline); }
+    .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .section-heading h3 { margin: 0; font-size: 15px; font-weight: 540; }
+    .section-heading span { font-family: var(--font-mono); font-size: 9px; letter-spacing: .5px; }
+    .facts { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--black); border-radius: 8px; overflow: hidden; }
+    .fact { padding: 12px; border-right: 1px solid var(--black); border-bottom: 1px solid var(--black); }
+    .fact:nth-child(2n) { border-right: 0; }
+    .fact:nth-last-child(-n+2) { border-bottom: 0; }
+    .fact label { display: block; margin-bottom: 5px; font-family: var(--font-mono); font-size: 9px; letter-spacing: .4px; }
+    .fact strong { display: block; font-size: 13px; font-weight: 540; }
+    .requirements { display: flex; flex-direction: column; gap: 8px; }
+    .requirement { display: grid; grid-template-columns: 30px minmax(0,1fr); gap: 10px; padding: 11px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); transition: border-color .15s, background .15s; }
+    .requirement.active { border-color: var(--black); background: var(--lime); }
+    .requirement-no { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: var(--black); color: var(--white); font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
+    .requirement p { margin: 0; font-size: 13px; line-height: 1.45; font-weight: 330; }
+    .requirement small { display: block; margin-top: 5px; font-family: var(--font-mono); font-size: 9px; letter-spacing: .3px; }
+    .preference { font-size: 14px; line-height: 1.5; font-weight: 330; }
+    .swatches { display: flex; gap: 7px; margin-top: 12px; }
+    .swatches span { width: 32px; height: 32px; border: 1px solid var(--black); border-radius: 6px; }
+    .swatches span:nth-child(1) { background: #d9d2c5; }
+    .swatches span:nth-child(2) { background: #a2917b; }
+    .swatches span:nth-child(3) { background: #66736a; }
+    .swatches span:nth-child(4) { background: #343a36; }
+    .brief-footer { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px 0 22px; border-top: 1px solid var(--hairline); }
+    .brief-footer span { font-family: var(--font-mono); font-size: 9px; letter-spacing: .4px; }
+    [contenteditable="true"] { border-radius: 4px; background: var(--lime); outline: 5px solid var(--lime); }
+    .prototype-note { position: fixed; left: 28px; bottom: 5px; z-index: 10; font-family: var(--font-mono); font-size: 7px; letter-spacing: .4px; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="top-left">
+        <div class="brand"><span class="brand-mark">砌</span><div><strong>Qijian</strong><span>AI DESIGN STUDIO</span></div></div>
+        <div class="crumbs"><span>项目工作台</span><i data-lucide="chevron-right" size="14"></i><strong>浏览器真实流程验证</strong></div>
+      </div>
+      <div class="top-right"><span class="save-label">所有更改已保存</span><button class="circle-button" aria-label="搜索" title="搜索"><i data-lucide="search" size="17"></i></button><button class="circle-button" aria-label="通知" title="通知"><i data-lucide="bell" size="17"></i></button><button class="pill-button"><i data-lucide="plus" size="15"></i>新建设计项目</button></div>
+    </header>
+
+    <div class="workspace-wrap">
+      <section class="workspace">
+        <header class="project-head">
+          <div class="project-title"><span class="project-code">PROJECT / 001</span><div><h1>两层住宅空间更新</h1><p>118 ㎡ · 三口之家 · 保留结构边界，重新组织家庭公共生活。</p></div></div>
+          <nav class="stage-pills" aria-label="项目阶段"><button class="stage-pill active">01 Brief</button><button class="stage-pill done">项目理解</button><button class="stage-pill done">设计方向</button><button class="stage-pill done">方案约束</button><button class="stage-pill done">提案画布</button></nav>
+        </header>
+
+        <nav class="tool-rail" aria-label="图纸工具"><button class="tool-button active" aria-label="选择" title="选择"><i data-lucide="mouse-pointer-2" size="18"></i></button><button class="tool-button" aria-label="抓手" title="抓手"><i data-lucide="hand" size="18"></i></button><button class="tool-button" aria-label="标记" title="标记"><i data-lucide="map-pin" size="18"></i></button><button class="tool-button" aria-label="测量" title="测量"><i data-lucide="ruler" size="18"></i></button><div class="tool-spacer"></div><button class="tool-button" aria-label="资料" title="资料"><i data-lucide="layers-3" size="18"></i></button><button class="tool-button" aria-label="帮助" title="帮助"><i data-lucide="circle-help" size="18"></i></button></nav>
+
+        <main class="drawing-area">
+          <div class="drawing-meta"><span class="mono-label">A101 / SOURCE DRAWING</span><span class="status-chip">3 个 Brief 标记</span></div>
+          <div class="sheet-stage"><figure class="sheet" id="sheet"><img src="http://localhost:8001/api/v1/files/5b930c12-695e-4d11-8469-6bef86c76de5/content" alt="A101 建筑图纸" /><button class="annotation annotation-a" data-target="requirement-a">A</button><button class="annotation annotation-b" data-target="requirement-b">B</button><button class="annotation annotation-c" data-target="requirement-c">C</button></figure></div>
+          <div class="zoom"><button class="circle-button" id="zoom-out" aria-label="缩小"><i data-lucide="minus" size="15"></i></button><span class="zoom-value" id="zoom-value">100%</span><button class="circle-button" id="zoom-in" aria-label="放大"><i data-lucide="plus" size="15"></i></button><button class="circle-button" id="zoom-reset" aria-label="重置"><i data-lucide="scan" size="15"></i></button></div>
+        </main>
+
+        <aside class="brief-panel">
+          <header class="brief-head"><div><span class="eyebrow">PROJECT BRIEF / BASELINE</span><h2>项目设计依据</h2></div><button class="edit-button" id="edit"><i data-lucide="pencil" size="13"></i><b>编辑</b></button></header>
+          <div class="brief-scroll">
+            <section class="brief-section"><div class="section-heading"><h3>项目概况</h3><span>BRIEF V1</span></div><div class="facts"><div class="fact"><label>TYPE</label><strong class="editable">住宅室内更新</strong></div><div class="fact"><label>AREA</label><strong class="editable">118.00 ㎡</strong></div><div class="fact"><label>HOUSEHOLD</label><strong class="editable">两位成人 + 一位儿童</strong></div><div class="fact"><label>BUDGET</label><strong class="editable">35–50 万</strong></div></div></section>
+            <section class="brief-section"><div class="section-heading"><h3>需求与图纸标记</h3><span>3 ITEMS</span></div><div class="requirements"><article class="requirement" id="requirement-a"><span class="requirement-no">A</span><div><p class="editable">保留现有墙体、门窗、楼梯与主要结构开口，不进行结构性拆改。</p><small>HARD CONSTRAINT</small></div></article><article class="requirement" id="requirement-b"><span class="requirement-no">B</span><div><p class="editable">改善玄关收纳，建立入户、餐厨与公共活动区的连续关系。</p><small>CORE REQUIREMENT</small></div></article><article class="requirement" id="requirement-c"><span class="requirement-no">C</span><div><p class="editable">儿童活动、成年人阅读与日常会客共享公共区但互不干扰。</p><small>SPACE STRATEGY</small></div></article></div></section>
+            <section class="brief-section"><div class="section-heading"><h3>氛围与材料</h3><span>REFERENCE</span></div><div class="preference editable">温暖、克制、自然。保留足够留白，以木材和石材形成触感对比，使用柔和间接光与局部任务照明。</div><div class="swatches"><span></span><span></span><span></span><span></span></div></section>
+          </div>
+          <footer class="brief-footer"><span>CONFIRMED · 2026-08-03</span><button class="pill-button">查看项目理解<i data-lucide="arrow-right" size="14"></i></button></footer>
+        </aside>
+      </section>
+    </div>
+  </div>
+  <span class="prototype-note">FIGMA DESIGN.MD BASELINE · 1440 × 900 PROTOTYPE</span>
+  <script>
+    lucide.createIcons({ strokeWidth: 1.7 });
+    const sheet = document.getElementById('sheet');
+    const zoomValue = document.getElementById('zoom-value');
+    let zoom = 1;
+    const renderZoom = () => { sheet.style.transform = `scale(${zoom})`; zoomValue.textContent = `${Math.round(zoom * 100)}%`; };
+    document.getElementById('zoom-in').addEventListener('click', () => { zoom = Math.min(1.25, zoom + .1); renderZoom(); });
+    document.getElementById('zoom-out').addEventListener('click', () => { zoom = Math.max(.75, zoom - .1); renderZoom(); });
+    document.getElementById('zoom-reset').addEventListener('click', () => { zoom = 1; renderZoom(); });
+
+    document.querySelectorAll('.annotation').forEach((marker) => marker.addEventListener('click', () => {
+      document.querySelectorAll('.annotation').forEach((node) => node.classList.remove('active'));
+      document.querySelectorAll('.requirement').forEach((node) => node.classList.remove('active'));
+      marker.classList.add('active');
+      const target = document.getElementById(marker.dataset.target);
+      target.classList.add('active');
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }));
+
+    const edit = document.getElementById('edit');
+    let editing = false;
+    edit.addEventListener('click', () => {
+      editing = !editing;
+      document.querySelectorAll('.editable').forEach((node) => node.contentEditable = String(editing));
+      edit.querySelector('b').textContent = editing ? '完成' : '编辑';
+    });
+  </script>
+</body>
+</html>
