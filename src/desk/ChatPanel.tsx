@@ -63,9 +63,6 @@ export function ChatPanel({
       <div className="chat-head">
         <span className="chat-title">设计助手</span>
         <div className="chat-head-actions">
-          <button type="button" className={`perm ${permission}`} title="切换助手权限" onClick={onTogglePermission}>
-            {permission === "ask" ? "每步请示" : "完全放手"}
-          </button>
           <button
             type="button"
             className="chat-collapse"
@@ -113,6 +110,9 @@ export function ChatPanel({
             }
           }}
         />
+        <button type="button" className={`perm composer-perm ${permission}`} title="切换助手权限" onClick={onTogglePermission}>
+          {permission === "ask" ? "每步请示" : "完全放手"}
+        </button>
         <button type="button" className="send" onClick={submit} disabled={!input.trim()}>发送</button>
       </div>
         </>
