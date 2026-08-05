@@ -3,7 +3,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ok, type ToolContext } from "./shared.js";
 
-export function createDirectionSetTool({ projectId, deps, place }: ToolContext) {
+export function createDirectionSetTool({ projectId, deps, changed }: ToolContext) {
   return defineTool({
     name: "create_direction_set",
     label: "创建设计方向",
@@ -24,7 +24,7 @@ export function createDirectionSetTool({ projectId, deps, place }: ToolContext) 
       x: Type.Number(),
       y: Type.Number(),
     }),
-    execute: async (_id, params, signal) => {
+    execute: async (_id, params) => {
       const snapshot = await deps.desks.snapshot(projectId);
       if (!snapshot.artifacts.some((artifact) => artifact.artifactType === "understanding_note" && artifact.status === "confirmed")) {
         throw new Error("请先确认至少一条 understanding_note");
@@ -32,12 +32,16 @@ export function createDirectionSetTool({ projectId, deps, place }: ToolContext) 
       if (new Set(params.directions.map((direction) => direction.id)).size !== 3) {
         throw new Error("三个方向必须使用不同的 id");
       }
-      await deps.gate.check(projectId, "create_direction_set", params, "创建三张方向草图", signal);
-      const result = await deps.artifacts.create(projectId, "design_directions", {
-        payload: { directions: params.directions, selected_direction_id: null },
-        createdBy: "agent",
-      });
-      await place(result.artifact.id, "direction_set", params.x, params.y);
+      const result = await deps.artifacts.createPlaced(
+        projectId,
+        "design_directions",
+        {
+          payload: { directions: params.directions, selected_direction_id: null },
+          createdBy: "agent",
+        },
+        { kind: "direction_set", x: params.x, y: params.y, rot: 0 },
+      );
+      changed(result.artifact.id);
       return ok("三个设计方向已创建", { artifactId: result.artifact.id });
     },
   });

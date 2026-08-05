@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, connectChat, type ArtifactSnapshot, type DeskSnapshot, type ProjectSummary } from "../lib/api";
+import { api, connectChat, type ArtifactSnapshot, type ChatConnectionStatus, type ChatThread, type DeskSnapshot, type ProjectSummary } from "../lib/api";
 import { Desk } from "../desk/Desk";
 import { DeskObjectView } from "../desk/nodes";
-import { ChatPanel, type PendingApproval } from "../desk/ChatPanel";
+import { ChatPanel } from "../desk/ChatPanel";
 import { Home } from "../desk/Home";
 import { SpaceMapSetup } from "../desk/SpaceMapSetup";
 import { mapSnapshot } from "../desk/map";
@@ -11,39 +11,18 @@ import type { ChatItem, DeskObject } from "../desk/types";
 let seq = 0;
 const nextId = () => `m-${Date.now().toString(36)}-${(seq++).toString(36)}`;
 
-function BriefSetup({ onSave }: { onSave: (text: string) => Promise<void> }) {
-  const [text, setText] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string>();
-  return (
-    <div className="note-card brief-card brief-setup">
-      <span className="pin" />
-      <span className="who">客户说 · Brief · 待补写</span>
-      <textarea
-        className="brief-edit"
-        rows={4}
-        value={text}
-        placeholder="客户是谁、预算、想要什么、痛点是什么"
-        onChange={(e) => setText(e.target.value)}
-      />
-      <button
-        type="button"
-        className="mini-btn primary"
-        disabled={saving || !text.trim()}
-        onClick={() => {
-          setSaving(true);
-          setError(undefined);
-          void onSave(text.trim())
-            .catch((e) => setError(e instanceof Error ? e.message : "保存失败，请重试"))
-            .finally(() => setSaving(false));
-        }}
-      >
-        {saving ? "保存中…" : "钉到桌面上"}
-      </button>
-      {error && <p className="error-text">{error}</p>}
-    </div>
-  );
-}
+const toolActivityLabel = (toolName: string) => ({
+  move_object: "移动物件",
+  place_object: "摆放物件",
+  create_understanding_notes: "创建理解便签",
+  create_direction_set: "创建设计方向",
+  generate_effect_image: "生成效果图",
+  adopt_variant: "采用效果图",
+  discard_variant: "弃用效果图",
+  edit_payload: "修改内容",
+  confirm_artifact: "确认内容",
+  export_package: "导出提案包",
+}[toolName] ?? toolName);
 
 export function App() {
   const [view, setView] = useState<{ mode: "home" } | { mode: "desk"; projectId: string }>({ mode: "home" });
@@ -53,14 +32,22 @@ export function App() {
   const [snapshot, setSnapshot] = useState<DeskSnapshot>();
   const [objects, setObjects] = useState<DeskObject[]>([]);
   const [chatItems, setChatItems] = useState<ChatItem[]>([]);
+  const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
+  const [activeChatThreadId, setActiveChatThreadId] = useState<string>();
+  const [threadChanging, setThreadChanging] = useState(false);
   const [streaming, setStreaming] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState<PendingApproval>();
+  const [connection, setConnection] = useState<ChatConnectionStatus>("disconnected");
+  const [focusRequest, setFocusRequest] = useState<{ id: string; token: number }>();
   const [setupOpen, setSetupOpen] = useState(false);
   const [floorPlanFileId, setFloorPlanFileId] = useState<string>();
   const chatRef = useRef<ReturnType<typeof connectChat>>();
   const streamBuf = useRef("");
   const activeProjectRef = useRef<string>();
+  const activeChatThreadRef = useRef<string>();
+  const activeToolsRef = useRef(new Map<string, string>());
+  const refreshSequence = useRef(0);
+  const threadLoadSequence = useRef(0);
   const persistViewport = useRef<number>();
   const viewportSaveFailed = useRef(false);
 
@@ -77,8 +64,9 @@ export function App() {
   }, [view.mode, loadProjects]);
 
   const refreshDesk = useCallback(async (projectId: string) => {
+    const sequence = ++refreshSequence.current;
     const snap = await api.desk(projectId);
-    if (activeProjectRef.current === projectId) {
+    if (activeProjectRef.current === projectId && refreshSequence.current === sequence) {
       setSnapshot(snap);
       setObjects(mapSnapshot(snap));
     }
@@ -89,67 +77,136 @@ export function App() {
     async (projectId: string) => {
       chatRef.current?.close();
       activeProjectRef.current = projectId;
+      refreshSequence.current += 1;
+      threadLoadSequence.current += 1;
       window.clearTimeout(persistViewport.current);
       viewportSaveFailed.current = false;
       setSnapshot(undefined);
       setObjects([]);
       setChatItems([]);
+      setChatThreads([]);
+      setActiveChatThreadId(undefined);
+      activeChatThreadRef.current = undefined;
+      setThreadChanging(false);
       setStreaming(undefined);
       streamBuf.current = "";
-      setPending(undefined);
+      activeToolsRef.current.clear();
+      setBusy(false);
+      setConnection("connecting");
+      setFocusRequest(undefined);
       setSetupOpen(false);
       setFloorPlanFileId(undefined);
       setView({ mode: "desk", projectId });
       try {
-        const snap = await refreshDesk(projectId);
+        const [snap, threads] = await Promise.all([refreshDesk(projectId), api.chatThreads(projectId)]);
         if (activeProjectRef.current !== projectId) return;
+        const activeThread = threads[0];
+        if (!activeThread) throw new Error("项目没有可用的对话线程");
+        const history = await api.chatHistory(projectId, activeThread.id);
+        if (activeProjectRef.current !== projectId) return;
+        setChatThreads(threads);
+        setActiveChatThreadId(activeThread.id);
+        activeChatThreadRef.current = activeThread.id;
+        setChatItems(history.messages.map((message) => ({
+          id: message.id,
+          role: message.role === "assistant" ? "agent" : "user",
+          text: message.text,
+        })));
         const plan = snap.artifacts.find((a) => a.artifactType === "space_map");
         setFloorPlanFileId(typeof plan?.payload.source_file_id === "string" ? plan.payload.source_file_id : undefined);
         setSetupOpen(!plan);
         const chat = connectChat(projectId, (event) => {
+          if (activeProjectRef.current !== projectId) return;
           if (event.type === "agent_event") {
             const inner = event.event;
+            if (inner.threadId && inner.threadId !== activeChatThreadRef.current) return;
             if (inner.type === "message_update" && inner.assistantMessageEvent?.type === "text_delta" && inner.assistantMessageEvent.delta) {
               streamBuf.current += inner.assistantMessageEvent.delta;
               setStreaming(streamBuf.current);
             }
-            if (inner.type === "message_end" || inner.type === "agent_end") {
-              if (streamBuf.current) {
-                setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: streamBuf.current }]);
-                streamBuf.current = "";
-                setStreaming(undefined);
-              }
+            if (inner.type === "agent_start") setBusy(true);
+            if (inner.type === "agent_settled") {
+              activeToolsRef.current.clear();
+              setChatItems((cur) => cur.filter((it) => it.role !== "activity"));
               setBusy(false);
             }
-            if (inner.type === "agent_start") setBusy(true);
             if (inner.type === "tool_execution_start" && inner.toolName) {
-              setChatItems((cur) => [...cur.filter((it) => it.role !== "activity"), { id: nextId(), role: "activity", text: `正在执行：${inner.toolName}` }]);
+              const toolCallId = inner.toolCallId ?? `${inner.toolName}-${activeToolsRef.current.size}`;
+              activeToolsRef.current.set(toolCallId, toolActivityLabel(inner.toolName));
+              setChatItems((cur) => [
+                ...cur.filter((it) => it.role !== "activity"),
+                { id: "active-tools", role: "activity", text: `正在执行：${[...activeToolsRef.current.values()].join("、")}` },
+              ]);
             }
             if (inner.type === "tool_execution_end") {
-              setChatItems((cur) => cur.filter((it) => it.role !== "activity"));
+              if (inner.toolCallId) activeToolsRef.current.delete(inner.toolCallId);
+              else activeToolsRef.current.clear();
+              setChatItems((cur) => activeToolsRef.current.size === 0
+                ? cur.filter((it) => it.role !== "activity")
+                : [
+                    ...cur.filter((it) => it.role !== "activity"),
+                    { id: "active-tools", role: "activity", text: `正在执行：${[...activeToolsRef.current.values()].join("、")}` },
+                  ]);
             }
             return;
           }
-          if (event.type === "approval_request") {
-            setPending({ approvalId: event.approvalId, description: event.description });
+          if (event.type === "chat_message") {
+            if (event.message.threadId !== activeChatThreadRef.current) return;
+            if (event.message.role === "assistant") {
+              streamBuf.current = "";
+              setStreaming(undefined);
+            }
+            setChatItems((cur) => cur.some((item) => item.id === event.message.id)
+              ? cur
+              : [...cur, {
+                  id: event.message.id,
+                  role: event.message.role === "assistant" ? "agent" : "user",
+                  text: event.message.text,
+                }]);
+            if (event.message.role === "user") {
+              setChatThreads((current) => current.map((thread) => thread.id === event.message.threadId
+                ? {
+                    ...thread,
+                    title: thread.title === "新对话" ? event.message.text.replace(/\s+/g, " ").slice(0, 28) : thread.title,
+                    updatedAt: event.message.createdAt,
+                  }
+                : thread));
+            }
             return;
           }
-          if (event.type === "approval_resolved") {
-            setPending(undefined);
+          if (event.type === "agent_stopped") {
+            if (event.threadId !== activeChatThreadRef.current) return;
+            activeToolsRef.current.clear();
+            setChatItems((cur) => cur.filter((it) => it.role !== "activity"));
+            setBusy(false);
             return;
           }
           if (event.type === "object_changed") {
-            void refreshDesk(projectId);
+            if (event.artifactId) {
+              setFocusRequest({ id: event.artifactId, token: Date.now() });
+            }
+            void refreshDesk(projectId).catch((e) => {
+              if (activeProjectRef.current !== projectId) return;
+              setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `画布刷新失败：${e instanceof Error ? e.message : "未知错误"}` }]);
+            });
             return;
           }
           if (event.type === "error") {
-            setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `出错了：${event.message}` }]);
+            activeToolsRef.current.clear();
+            streamBuf.current = "";
+            setStreaming(undefined);
+            setChatItems((cur) => [
+              ...cur.filter((item) => item.role !== "activity"),
+              { id: nextId(), role: "agent", text: `出错了：${event.message}` },
+            ]);
             setBusy(false);
           }
-        });
+        }, setConnection);
         chatRef.current = chat;
       } catch (e) {
         if (activeProjectRef.current !== projectId) return;
+        setConnection("disconnected");
+        setBusy(false);
         setChatItems([{ id: nextId(), role: "agent", text: `打开项目失败：${e instanceof Error ? e.message : "未知错误"}` }]);
       }
     },
@@ -163,11 +220,19 @@ export function App() {
 
   const leaveProject = useCallback(() => {
     activeProjectRef.current = undefined;
+    refreshSequence.current += 1;
+    threadLoadSequence.current += 1;
     chatRef.current?.close();
     chatRef.current = undefined;
     window.clearTimeout(persistViewport.current);
     setSnapshot(undefined);
     setObjects([]);
+    setChatThreads([]);
+    setActiveChatThreadId(undefined);
+    activeChatThreadRef.current = undefined;
+    setThreadChanging(false);
+    setConnection("disconnected");
+    setBusy(false);
     setSetupOpen(false);
     setView({ mode: "home" });
   }, []);
@@ -252,54 +317,157 @@ export function App() {
   );
 
   const onConfirm = useCallback(
-    (artifactId: string) => withRefresh(() => api.confirmArtifact(artifactId)),
+    async (artifactId: string) => {
+      if (await withRefresh(() => api.confirmArtifact(artifactId))) {
+        setFocusRequest({ id: artifactId, token: Date.now() });
+      }
+    },
     [withRefresh],
   );
 
   const onSelectDirection = useCallback(
-    (artifactId: string, directionId: string) =>
-      withRefresh(async () => {
+    async (artifactId: string, directionId: string) => {
+      const saved = await withRefresh(async () => {
         const artifact = artifactOf(artifactId);
         if (!artifact) return;
         await api.appendVersion(artifactId, { ...artifact.payload, selected_direction_id: directionId });
-      }),
+      });
+      if (saved) {
+        setFocusRequest({ id: artifactId, token: Date.now() });
+      }
+    },
     [artifactOf, withRefresh],
   );
 
   const onAdopt = useCallback(
-    (artifactId: string, adopted: boolean) =>
-      withRefresh(async () => {
+    async (artifactId: string, adopted: boolean) => {
+      const saved = await withRefresh(async () => {
         const artifact = artifactOf(artifactId);
         if (!artifact) return;
         await api.appendVersion(artifactId, { ...artifact.payload, adopted });
-      }),
-    [artifactOf, withRefresh],
-  );
-
-  const onSaveBrief = useCallback(
-    (artifactId: string, text: string) =>
-      withRefresh(async () => {
-        const artifact = artifactOf(artifactId);
-        if (!artifact || !text) return;
-        await api.appendVersion(artifactId, { ...artifact.payload, text });
-      }),
+      });
+      if (saved) {
+        setFocusRequest({ id: artifactId, token: Date.now() });
+      }
+    },
     [artifactOf, withRefresh],
   );
 
   const sendChat = useCallback(
     (text: string) => {
-      setChatItems((cur) => [...cur, { id: nextId(), role: "user", text }]);
+      const threadId = activeChatThreadRef.current;
+      if (connection !== "connected" || busy || !threadId) return;
+      if (!chatRef.current?.prompt(text, threadId, nextId())) {
+        setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: "消息未发送，请等待连接恢复后重试。" }]);
+        return;
+      }
       setBusy(true);
-      chatRef.current?.prompt(text);
     },
-    [],
+    [busy, connection],
   );
 
-  const togglePermission = useCallback(() => {
-    if (!projectId || !snapshot) return;
-    const next = snapshot.project.permission === "ask" ? "auto" : "ask";
-    void api.setPermission(projectId, next).then(() => refreshDesk(projectId)).catch(() => undefined);
-  }, [projectId, snapshot, refreshDesk]);
+  const stopChat = useCallback(() => {
+    const threadId = activeChatThreadRef.current;
+    if (!busy || connection !== "connected" || !threadId) return;
+    if (!chatRef.current?.stop(threadId)) {
+      setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: "停止指令未发送，请等待连接恢复后重试。" }]);
+    }
+  }, [busy, connection]);
+
+  const selectChatThread = useCallback(async (threadId: string) => {
+    const currentProjectId = activeProjectRef.current;
+    if (!currentProjectId || threadId === activeChatThreadRef.current || busy || threadChanging) return;
+    const sequence = ++threadLoadSequence.current;
+    setThreadChanging(true);
+    try {
+      const history = await api.chatHistory(currentProjectId, threadId);
+      if (activeProjectRef.current !== currentProjectId || threadLoadSequence.current !== sequence) return;
+      activeChatThreadRef.current = threadId;
+      setActiveChatThreadId(threadId);
+      streamBuf.current = "";
+      setStreaming(undefined);
+      activeToolsRef.current.clear();
+      setChatItems(history.messages.map((message) => ({
+        id: message.id,
+        role: message.role === "assistant" ? "agent" : "user",
+        text: message.text,
+      })));
+    } catch (error) {
+      setChatItems((current) => [...current, {
+        id: nextId(),
+        role: "agent",
+        text: `切换对话失败：${error instanceof Error ? error.message : "未知错误"}`,
+      }]);
+    } finally {
+      if (threadLoadSequence.current === sequence) setThreadChanging(false);
+    }
+  }, [busy, threadChanging]);
+
+  const createChatThread = useCallback(async () => {
+    const currentProjectId = activeProjectRef.current;
+    if (!currentProjectId || busy || threadChanging) return;
+    setThreadChanging(true);
+    try {
+      const thread = await api.createChatThread(currentProjectId);
+      if (activeProjectRef.current !== currentProjectId) return;
+      activeChatThreadRef.current = thread.id;
+      setActiveChatThreadId(thread.id);
+      setChatThreads((current) => [thread, ...current]);
+      streamBuf.current = "";
+      setStreaming(undefined);
+      activeToolsRef.current.clear();
+      setChatItems([]);
+    } catch (error) {
+      setChatItems((current) => [...current, {
+        id: nextId(),
+        role: "agent",
+        text: `新建对话失败：${error instanceof Error ? error.message : "未知错误"}`,
+      }]);
+    } finally {
+      setThreadChanging(false);
+    }
+  }, [busy, threadChanging]);
+
+  const deleteChatThread = useCallback(async (threadId: string) => {
+    const currentProjectId = activeProjectRef.current;
+    if (!currentProjectId || busy || threadChanging) return;
+    const sequence = ++threadLoadSequence.current;
+    setThreadChanging(true);
+    try {
+      await api.deleteChatThread(currentProjectId, threadId);
+      if (activeProjectRef.current !== currentProjectId || threadLoadSequence.current !== sequence) return;
+      let remaining = chatThreads.filter((thread) => thread.id !== threadId);
+      setChatThreads(remaining);
+      if (threadId !== activeChatThreadRef.current) return;
+
+      let nextThread = remaining[0];
+      if (!nextThread) {
+        nextThread = await api.createChatThread(currentProjectId);
+        remaining = [nextThread];
+        setChatThreads(remaining);
+      }
+      const history = await api.chatHistory(currentProjectId, nextThread.id);
+      if (activeProjectRef.current !== currentProjectId || threadLoadSequence.current !== sequence) return;
+      activeChatThreadRef.current = nextThread.id;
+      setActiveChatThreadId(nextThread.id);
+      streamBuf.current = "";
+      setStreaming(undefined);
+      activeToolsRef.current.clear();
+      setChatItems(history.messages.map((message) => ({
+        id: message.id,
+        role: message.role === "assistant" ? "agent" : "user",
+        text: message.text,
+      })));
+    } catch (error) {
+      setChatItems((current) => [...current, {
+        id: nextId(),
+        role: "agent",
+        text: `删除对话失败：${error instanceof Error ? error.message : "未知错误"}`,
+      }]);
+    } finally {
+      if (threadLoadSequence.current === sequence) setThreadChanging(false);
+    }
+  }, [busy, chatThreads, threadChanging]);
 
   const exportPackage = useCallback(() => {
     if (!projectId) return;
@@ -338,7 +506,6 @@ export function App() {
   const deskSnapshot = snapshot?.project.id === deskProjectId ? snapshot : undefined;
   const direction = objects.find((o) => o.kind === "direction_set" && o.status === "confirmed" && o.selectedId);
   const planObj = objects.find((o) => o.kind === "plan");
-  const briefObj = objects.find((o) => o.kind === "brief");
 
   return (
     <div className="app-shell">
@@ -362,26 +529,11 @@ export function App() {
           onMove={onMove}
           onMoveEnd={onMoveEnd}
           onViewportChange={onViewportChange}
+          focusRequest={focusRequest}
           renderObject={(obj) => (
-            <DeskObjectView obj={obj} handlers={{ onConfirm, onSelectDirection, onAdopt, onSaveBrief, onRedrawPlan: () => setSetupOpen(true) }} />
+            <DeskObjectView obj={obj} handlers={{ onConfirm, onSelectDirection, onAdopt, onRedrawPlan: () => setSetupOpen(true) }} />
           )}
         >
-          {deskSnapshot && !briefObj && (
-            <div className="obj obj-setup" style={{ left: 60, top: 70, transform: "rotate(-1.5deg)" }}>
-              <BriefSetup
-                onSave={async (text) => {
-                  const saved = await withRefresh(() =>
-                    api.createArtifact(deskProjectId, {
-                      artifactType: "design_brief",
-                      payload: { text, files: [] },
-                      layout: { kind: "brief", x: 60, y: 70, rot: -1.5 },
-                    }),
-                  );
-                  if (!saved) throw new Error("Brief 未保存，请检查错误后重试");
-                }}
-              />
-            </div>
-          )}
           {deskSnapshot && setupOpen && (
             <div className="obj obj-setup" style={{ left: 420, top: 90 }}>
               <SpaceMapSetup
@@ -413,12 +565,15 @@ export function App() {
           items={chatItems}
           streaming={streaming}
           busy={busy}
-          permission={deskSnapshot?.project.permission ?? "ask"}
-          pending={pending}
-          onTogglePermission={togglePermission}
+          connection={connection}
+          threads={chatThreads}
+          activeThreadId={activeChatThreadId}
+          threadChanging={threadChanging}
           onSend={sendChat}
-          onApprove={() => pending && chatRef.current?.respondApproval(pending.approvalId, true)}
-          onReject={() => pending && chatRef.current?.respondApproval(pending.approvalId, false)}
+          onStop={stopChat}
+          onNewThread={() => void createChatThread()}
+          onSelectThread={(threadId) => void selectChatThread(threadId)}
+          onDeleteThread={(threadId) => void deleteChatThread(threadId)}
         />
       </div>
     </div>

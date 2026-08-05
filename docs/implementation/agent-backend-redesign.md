@@ -7,7 +7,7 @@
 - 单画布"设计桌面"：项目 = 桌面，客户资料为起点，户型图居中，物件生长式推进
 - 移除：6 阶段流程、约束包（design_system）、空间提案卡（space_proposal）
 - AI 助手 = 画布行动者：对话栏指挥，直接操作桌面物件
-- 权限两档：`ask`（每步请示）/ `auto`（完全放手），工具层实现
+- 默认完全访问：移除逐步审批档位，工具直接执行
 - 桌面即上下文：智能体始终可见整张桌面当前状态
 - 效果图接图像生成模型；提案包导出 PDF/图片
 - 后端整体 TS 重写，弃 Python/FastAPI；agent 底层用 `earendil-works/pi`
@@ -85,7 +85,6 @@ session.subscribe((event) => forwardToWebSocket(event));      // 事件流→前
 
 | 类型 | 说明 | 对应桌面物件 |
 |---|---|---|
-| `design_brief` | 客户资料与需求 | Brief 便签 |
 | `space_map` | 空间区域基线（含关键空间★） | 户型图 |
 | `understanding_note` | 单条空间理解（拆成多条，钉在空间旁） | 理解便签 |
 | `design_directions` | 方向集（3 卡 + selected_direction_id） | 方向草图 |
@@ -124,7 +123,7 @@ const generateEffectImage = defineTool({
 |---|---|---|
 | `read_desk` | 返回整张桌面状态（Artifact 当前版本 + 位置） | 只读 |
 | `place_object` / `move_object` | 摆放/移动物件（写 desk_state） | 低风险 |
-| `create_understanding_notes` | 读 Brief+图纸 → 生成理解便签草稿 | 生成 |
+| `create_understanding_notes` | 读空间地图和当前对话 → 生成理解便签草稿 | 生成 |
 | `create_direction_set` | 生成三张方向草图 | 生成 |
 | `generate_effect_image` | 调图像模型，为 space_id 出一个变体 | 生成（计成本） |
 | `adopt_variant` / `discard_variant` | 采用/弃用效果图变体 | 低风险 |
@@ -132,11 +131,7 @@ const generateEffectImage = defineTool({
 | `confirm_artifact` | 盖章（status→confirmed） | **确认门** |
 | `export_package` | 排版导出 PDF/图片 | 低风险 |
 
-**权限闸**（pi 无内置权限系统；SDK 无 ask 钩子，在工具 `execute` 开头自行拦截）：
-
-- `ask` 档：`permissionGate` 向客户端 WS 发 `approval_request`（工具名+参数+中文描述），挂起 Promise 等批准/拒绝；批准后继续执行。前端审批卡就是现有 ChatPanel 的 approval 组件
-- `auto` 档：低风险与生成类直接放行；`confirm_artifact` 也放行，但前端播可见动效 + 支持撤销（撤销 = `current_version` 指针回滚，Artifact 历史天然支持）
-- 档位存项目级设置，前端切换即时生效；`session.subscribe` 的 `tool_execution_start/end` 事件转发前端，渲染"AI 正在做什么"的活动流
+**执行方式**：所有工具默认直接执行；`session.subscribe` 的 `tool_execution_start/end` 事件转发前端，渲染“AI 正在做什么”的活动流。付费生成和写操作后续通过费用配额、Stop、操作日志和版本回滚治理。
 
 ## 上下文构造
 
@@ -153,9 +148,8 @@ POST   /api/artifacts/:id/versions        追加版本（草稿/确认）
 POST   /api/artifacts/:id/rollback        current_version 回滚（撤销）
 WS     /api/projects/:id/chat             对话 + agent 事件流
                                         （text_delta→消息流；tool_execution_start/end→活动指示；
-                                         approval_request→审批卡；object_changed→桌面增量更新）
+                                         object_changed→桌面增量更新）
 POST   /api/projects/:id/export           导出提案包 PDF
-GET    /api/projects/:id/permission  PUT  同左   权限档位
 ```
 
 前端通过 `src/desk/api.ts` 连接 WS 上的真智能体；原 `src/desk/agent.ts` mock 解释器已删除，DeskObject 模型由 Artifact 当前版本与 `desk_state.objects` 共同重建。

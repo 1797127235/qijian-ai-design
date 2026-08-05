@@ -14,6 +14,8 @@ import type { ArtifactService } from "../services/artifact-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
 import type { ExportService } from "../services/export-service.js";
 import type { FileStorage } from "../services/file-storage.js";
+import type { ChatService } from "../services/chat-service.js";
+import type { AgentSessionRegistry } from "../agent/session-registry.js";
 
 interface HttpDependencies {
   config: ServerConfig;
@@ -22,6 +24,8 @@ interface HttpDependencies {
   desks: DeskStateService;
   files: FileStorage;
   exports: ExportService;
+  chats: ChatService;
+  sessions: AgentSessionRegistry;
 }
 
 const artifactTypeSchema = z.enum(artifactTypes);
@@ -56,12 +60,30 @@ export function createHttpApp(deps: HttpDependencies) {
 
   app.delete("/api/projects/:id", async (c) => {
     const projectId = c.req.param("id");
+    await deps.sessions.forgetProject(projectId);
     const result = await deps.desks.deleteProject(projectId);
     await deps.files.removeProjectFiles(projectId, result.objectKeys);
     return c.body(null, 204);
   });
 
   app.get("/api/projects/:id/desk", async (c) => c.json(await deps.desks.snapshot(c.req.param("id"))));
+
+  app.get("/api/projects/:id/chat/threads", async (c) => c.json(await deps.chats.listThreads(c.req.param("id"))));
+
+  app.post("/api/projects/:id/chat/threads", async (c) => c.json(await deps.chats.createThread(c.req.param("id")), 201));
+
+  app.delete("/api/projects/:id/chat/threads/:threadId", async (c) => {
+    const projectId = c.req.param("id");
+    const threadId = c.req.param("threadId");
+    await deps.sessions.forget(projectId, threadId);
+    await deps.chats.deleteThread(projectId, threadId);
+    return c.body(null, 204);
+  });
+
+  app.get("/api/projects/:id/chat/messages", async (c) => c.json(await deps.chats.history(
+    c.req.param("id"),
+    c.req.query("threadId") || undefined,
+  )));
 
   app.patch("/api/projects/:id/desk", async (c) => {
     const input = await body(c.req.raw, z.object({ viewport: z.object({ x: z.number().finite(), y: z.number().finite(), zoom: z.number().min(0.1).max(4) }) }));
@@ -107,16 +129,6 @@ export function createHttpApp(deps: HttpDependencies) {
     if (!stored) throw new HttpError(404, "文件不存在");
     const bytes = await deps.files.read(stored.objectKey);
     return new Response(bytes, { headers: { "content-type": stored.mediaType, "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(stored.originalFilename)}`, "cross-origin-resource-policy": "cross-origin" } });
-  });
-
-  app.get("/api/projects/:id/permission", async (c) => {
-    const snapshot = await deps.desks.snapshot(c.req.param("id"));
-    return c.json({ permission: snapshot.project.permission });
-  });
-
-  app.put("/api/projects/:id/permission", async (c) => {
-    const input = await body(c.req.raw, z.object({ permission: z.enum(["ask", "auto"]) }));
-    return c.json({ permission: await deps.desks.setPermission(c.req.param("id"), input.permission) });
   });
 
   app.post("/api/projects/:id/export", async (c) => c.json(await deps.exports.export(c.req.param("id")), 201));

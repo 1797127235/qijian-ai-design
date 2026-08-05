@@ -4,7 +4,6 @@ import { Type } from "typebox";
 import { ok, type ToolContext } from "./shared.js";
 
 const artifactTypeSchema = Type.Union([
-  Type.Literal("design_brief"),
   Type.Literal("space_map"),
   Type.Literal("understanding_note"),
   Type.Literal("design_directions"),
@@ -23,8 +22,7 @@ export function createEditPayloadTool({ projectId, deps, ownedCurrent, changed }
       payload: Type.Record(Type.String(), Type.Unknown()),
       reason: Type.Optional(Type.String()),
     }),
-    execute: async (_id, params, signal) => {
-      await deps.gate.check(projectId, "edit_payload", params, "修改 Artifact 内容", signal);
+    execute: async (_id, params) => {
       const current = await ownedCurrent(params.artifact_id);
       if (current.artifact.artifactType !== params.artifact_type) {
         throw new Error("artifact_type 与目标 Artifact 不一致");

@@ -43,12 +43,6 @@ function mapArtifact(artifact: ArtifactSnapshot, layout: { x: number; y: number;
   const { payload, status } = artifact;
   const base = { id: artifact.id, x: layout.x, y: layout.y, rot: layout.rot, status };
   switch (artifact.artifactType) {
-    case "design_brief":
-      return {
-        ...base, kind: "brief",
-        text: text(payload.text ?? payload.summary),
-        files: Array.isArray(payload.files) ? payload.files.filter((f): f is string => typeof f === "string") : [],
-      };
     case "space_map":
       return { ...base, kind: "plan", w: layout.w ?? 640, sourceFileId: text(payload.source_file_id) || undefined, spaces: spacesOf(payload) };
     case "understanding_note":

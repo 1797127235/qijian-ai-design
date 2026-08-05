@@ -9,8 +9,7 @@ export function createConfirmArtifactTool({ projectId, deps, ownedCurrent, chang
     label: "确认内容",
     description: "确认当前 Artifact；会追加不可变的 confirmed 版本",
     parameters: Type.Object({ artifact_id: Type.String() }),
-    execute: async (_id, params, signal) => {
-      await deps.gate.check(projectId, "confirm_artifact", params, "确认 Artifact", signal);
+    execute: async (_id, params) => {
       await ownedCurrent(params.artifact_id);
       const version = await deps.artifacts.confirm(params.artifact_id, "agent");
       changed(params.artifact_id, true);

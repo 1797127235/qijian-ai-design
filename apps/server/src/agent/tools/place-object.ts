@@ -1,4 +1,4 @@
-/** 写工具：经权限确认后，将已有 Artifact 放入当前项目桌面。 */
+/** 写工具：将已有 Artifact 放入当前项目桌面。 */
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ok, type ToolContext } from "./shared.js";
@@ -16,8 +16,7 @@ export function createPlaceObjectTool({ projectId, deps, place }: ToolContext) {
       rot: Type.Optional(Type.Number()),
       w: Type.Optional(Type.Number()),
     }),
-    execute: async (_id, params, signal) => {
-      await deps.gate.check(projectId, "place_object", params, "摆放桌面物件", signal);
+    execute: async (_id, params) => {
       await place(params.artifact_id, params.kind, params.x, params.y, params.rot, params.w);
       return ok("物件已摆放");
     },

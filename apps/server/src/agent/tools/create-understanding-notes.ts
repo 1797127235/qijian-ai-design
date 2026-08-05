@@ -1,4 +1,4 @@
-/** 生成工具：基于已有 Brief 和空间地图创建理解便签 Artifact。 */
+/** 生成工具：基于已有空间地图和当前对话创建理解便签 Artifact。 */
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ok, type ToolContext } from "./shared.js";
@@ -7,7 +7,7 @@ export function createUnderstandingNotesTool({ projectId, deps, place }: ToolCon
   return defineTool({
     name: "create_understanding_notes",
     label: "创建理解便签",
-    description: "基于 Brief 和空间地图创建若干条独立的理解便签草稿",
+    description: "基于空间地图和当前对话创建若干条独立的理解便签草稿",
     parameters: Type.Object({
       notes: Type.Array(Type.Object({
         space_id: Type.String(),
@@ -16,11 +16,8 @@ export function createUnderstandingNotesTool({ projectId, deps, place }: ToolCon
         y: Type.Number(),
       }), { minItems: 1 }),
     }),
-    execute: async (_id, params, signal) => {
+    execute: async (_id, params) => {
       const snapshot = await deps.desks.snapshot(projectId);
-      if (!snapshot.artifacts.some((artifact) => artifact.artifactType === "design_brief")) {
-        throw new Error("请先创建 design_brief");
-      }
       const spaceMap = snapshot.artifacts.find((artifact) => artifact.artifactType === "space_map");
       if (!spaceMap) throw new Error("请先创建 space_map");
       const spaces = Array.isArray(spaceMap.payload.spaces)
@@ -35,7 +32,6 @@ export function createUnderstandingNotesTool({ projectId, deps, place }: ToolCon
       if (params.notes.some((note) => !spaceIds.has(note.space_id))) {
         throw new Error("理解便签的 space_id 必须来自空间地图");
       }
-      await deps.gate.check(projectId, "create_understanding_notes", params, `创建 ${params.notes.length} 张理解便签`, signal);
       const artifactIds: string[] = [];
       for (const [index, note] of params.notes.entries()) {
         const result = await deps.artifacts.create(projectId, "understanding_note", {

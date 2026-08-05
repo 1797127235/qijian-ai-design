@@ -4,14 +4,12 @@ import type { DeskStateService } from "../../services/desk-state-service.js";
 import type { ExportService } from "../../services/export-service.js";
 import type { ImageGenerator } from "../../services/image-generator.js";
 import type { EventSink } from "../events.js";
-import type { PermissionGate } from "../permission-gate.js";
 
 export interface ToolDependencies {
   artifacts: ArtifactService;
   desks: DeskStateService;
   effects: ImageGenerator;
   exports: ExportService;
-  gate: PermissionGate;
   emit: EventSink;
 }
 

@@ -17,7 +17,6 @@ function escapeHtml(value: unknown): string {
 
 function artifactSection(artifact: ArtifactSnapshot): string {
   const title = {
-    design_brief: "客户需求",
     space_map: "空间地图",
     understanding_note: "项目理解",
     design_directions: "设计方向",

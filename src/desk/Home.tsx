@@ -15,7 +15,6 @@ function DeskPreview({ project }: { project: ProjectSummary }) {
       <div className="desk-thumb-plan" />
       <div className="desk-thumb-note n1" />
       <div className="desk-thumb-note n2" />
-      {project.briefExcerpt && <div className="desk-thumb-note n3" />}
     </div>
   );
 }
@@ -23,8 +22,6 @@ function DeskPreview({ project }: { project: ProjectSummary }) {
 function statusLabel(p: ProjectSummary): string {
   if (p.directionTitle) return p.directionTitle;
   if (p.effectCount > 0) return `效果图 ${p.adoptedCount}/${p.effectCount}`;
-  if (p.briefStatus === "confirmed") return "Brief 已确认";
-  if (p.briefExcerpt) return "资料已入桌";
   return "空桌面";
 }
 
@@ -131,7 +128,7 @@ export function Home({
         <div className="home-overlay" role="dialog" aria-modal="true" onClick={() => !submitting && setCreating(false)}>
           <div className="home-dialog" onClick={(e) => e.stopPropagation()}>
             <h2>新建设计桌面</h2>
-            <p className="home-dialog-hint">先开一张桌面。户型、Brief、效果图都在桌面上长出来。</p>
+            <p className="home-dialog-hint">先开一张桌面。户型、项目理解、设计方向和效果图都在桌面上展开。</p>
             <label className="field">
               <span>项目名称</span>
               <input

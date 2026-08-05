@@ -8,6 +8,7 @@ export function Desk({
   onMoveEnd,
   initialViewport,
   onViewportChange,
+  focusRequest,
   renderObject,
   children,
 }: {
@@ -16,6 +17,7 @@ export function Desk({
   onMoveEnd?: (id: string, x: number, y: number) => void;
   initialViewport?: Viewport;
   onViewportChange?: (viewport: Viewport) => void;
+  focusRequest?: { id: string; token: number };
   renderObject: (obj: DeskObject) => ReactNode;
   children?: ReactNode;
 }) {
@@ -25,6 +27,7 @@ export function Desk({
   const drag = useRef<{ id: string; ox: number; oy: number }>();
   const lastDragPos = useRef<{ id: string; x: number; y: number }>();
   const vpRef = useRef<HTMLDivElement>(null);
+  const handledFocusToken = useRef<number>();
 
   useEffect(() => {
     if (initialViewport) setView(initialViewport);
@@ -33,6 +36,22 @@ export function Desk({
   useEffect(() => {
     onViewportChange?.(view);
   }, [onViewportChange, view]);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    if (handledFocusToken.current === focusRequest.token) return;
+    const object = objects.find((item) => item.id === focusRequest.id);
+    const rect = vpRef.current?.getBoundingClientRect();
+    if (!object || !rect) return;
+    handledFocusToken.current = focusRequest.token;
+    const width = object.kind === "plan" ? object.w : object.kind === "direction_set" ? 780 : 230;
+    const height = object.kind === "plan" ? 480 : object.kind === "direction_set" ? 300 : 220;
+    setView((current) => ({
+      ...current,
+      x: rect.width / 2 - (object.x + width / 2) * current.zoom,
+      y: rect.height / 2 - (object.y + height / 2) * current.zoom,
+    }));
+  }, [focusRequest, objects]);
 
   const startPan = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest(".obj")) return;
@@ -94,8 +113,8 @@ export function Desk({
       <div className="desk-stage" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
         {objects.map((obj) => (
           <div
-            key={obj.id}
-            className={`obj obj-${obj.kind}`}
+            key={`${obj.id}-${focusRequest?.id === obj.id ? focusRequest.token : "idle"}`}
+            className={`obj obj-${obj.kind} ${focusRequest?.id === obj.id ? "obj-focused" : ""}`}
             style={{ left: obj.x, top: obj.y, transform: `rotate(${obj.rot}deg)` }}
             onPointerDown={(e) => startNodeDrag(e, obj)}
           >

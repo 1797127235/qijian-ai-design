@@ -1,9 +1,9 @@
-/** 付费生成工具：为已确认的关键空间和设计方向生成效果图变体。 */
+/** 生成工具：为已确认的关键空间和设计方向生成效果图变体。 */
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ok, type ToolContext } from "./shared.js";
 
-export function createEffectImageTool({ projectId, deps, place }: ToolContext) {
+export function createEffectImageTool({ projectId, deps, changed }: ToolContext) {
   return defineTool({
     name: "generate_effect_image",
     label: "生成效果图",
@@ -30,22 +30,30 @@ export function createEffectImageTool({ projectId, deps, place }: ToolContext) {
       }
       const directions = snapshot.artifacts.find((artifact) => artifact.artifactType === "design_directions" && artifact.status === "confirmed");
       if (!directions?.payload.selected_direction_id) throw new Error("请先选择并确认设计方向");
-      await deps.gate.check(projectId, "generate_effect_image", params, `为 ${params.space_id} 生成效果图（会产生模型费用）`, signal);
       const generated = await deps.effects.generate({
+        projectId,
         spaceId: params.space_id,
         intent: params.intent,
         context: JSON.stringify(snapshot.artifacts),
-      });
-      const result = await deps.artifacts.create(projectId, "effect_image", {
-        payload: {
-          space_id: params.space_id,
-          url: generated.url,
-          provider_id: generated.providerId,
-          adopted: false,
+      }, signal);
+      const result = await deps.artifacts.createPlaced(
+        projectId,
+        "effect_image",
+        {
+          payload: {
+            space_id: params.space_id,
+            url: generated.url,
+            file_id: generated.fileId,
+            source_url: generated.sourceUrl,
+            provider_id: generated.providerId,
+            adopted: false,
+          },
+          inputRefs: [{ file_id: generated.fileId }],
+          createdBy: "agent",
         },
-        createdBy: "agent",
-      });
-      await place(result.artifact.id, "effect_image", params.x ?? 1320, params.y ?? 590);
+        { kind: "effect_image", x: params.x ?? 1320, y: params.y ?? 590, rot: 0 },
+      );
+      changed(result.artifact.id);
       return ok("效果图变体已生成", { artifactId: result.artifact.id, url: generated.url });
     },
   });
