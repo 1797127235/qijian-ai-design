@@ -215,6 +215,7 @@ button { font-family: inherit; }
   display: flex; justify-content: space-between; align-items: center;
   padding: 10px 14px; border-bottom: 1px solid var(--color-hairline);
 }
+.chat-head-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .chat-title { font-family: var(--font-display); font-size: 15px; }
 .chat-head-actions { display: flex; align-items: center; gap: 6px; }
 .chat-collapse {
