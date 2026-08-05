@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { PermissionMode } from "../lib/api";
 import type { ChatItem } from "./types";
 
@@ -29,6 +30,7 @@ export function ChatPanel({
   onReject: () => void;
 }) {
   const [input, setInput] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,12 +45,38 @@ export function ChatPanel({
   };
 
   return (
-    <aside className="chat">
+    <aside className={`chat ${collapsed ? "chat-collapsed" : ""}`}>
+      {collapsed ? (
+        <button
+          type="button"
+          className="chat-collapsed-toggle"
+          aria-label="展开设计助手"
+          title="展开设计助手"
+          aria-expanded={false}
+          onClick={() => setCollapsed(false)}
+        >
+          <PanelRightOpen size={18} strokeWidth={1.8} />
+          {pending && <span className="chat-pending-dot" aria-label="有待处理的审批" />}
+        </button>
+      ) : (
+        <>
       <div className="chat-head">
         <span className="chat-title">设计助手</span>
-        <button type="button" className={`perm ${permission}`} title="切换助手权限" onClick={onTogglePermission}>
-          {permission === "ask" ? "每步请示" : "完全放手"}
-        </button>
+        <div className="chat-head-actions">
+          <button type="button" className={`perm ${permission}`} title="切换助手权限" onClick={onTogglePermission}>
+            {permission === "ask" ? "每步请示" : "完全放手"}
+          </button>
+          <button
+            type="button"
+            className="chat-collapse"
+            aria-label="折叠设计助手"
+            title="折叠设计助手"
+            aria-expanded={true}
+            onClick={() => setCollapsed(true)}
+          >
+            <PanelRightClose size={17} strokeWidth={1.8} />
+          </button>
+        </div>
       </div>
       <div className="chat-list" ref={listRef}>
         {items.length === 0 && !streaming && (
@@ -87,6 +115,8 @@ export function ChatPanel({
         />
         <button type="button" className="send" onClick={submit} disabled={!input.trim()}>发送</button>
       </div>
+        </>
+      )}
     </aside>
   );
 }
