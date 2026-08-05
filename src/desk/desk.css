@@ -192,7 +192,7 @@ button { font-family: inherit; }
 
 /* ── 对话栏 ── */
 .chat {
-  width: 400px; min-width: 0; flex: none; display: flex; flex-direction: column; overflow: hidden;
+  width: 520px; min-width: 0; flex: none; display: flex; flex-direction: column; overflow: hidden;
   background: var(--color-card); border-left: 1px solid var(--color-hairline);
   transition: width .2s var(--ease-out);
 }
@@ -439,6 +439,6 @@ button { font-family: inherit; }
 
 @media (max-width: 720px) {
   .proj-name, .top-right .pill, .top-right .icon-command span { display: none; }
-  .chat { width: min(400px, calc(100vw - 24px)); }
+  .chat { width: calc(100vw - 24px); }
   .chat.chat-collapsed { width: 44px; }
 }
