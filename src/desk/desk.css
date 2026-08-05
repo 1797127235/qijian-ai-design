@@ -242,15 +242,18 @@ button { font-family: inherit; }
 }
 .approval-btns { display: flex; gap: 8px; justify-content: flex-end; }
 
-.chat-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--color-hairline); }
+.chat-input {
+  display: flex; min-width: 0; gap: 8px; padding: 10px 12px;
+  border-top: 1px solid var(--color-hairline);
+}
 .chat-input textarea {
-  flex: 1; resize: none; font-family: inherit; font-size: 12.5px; line-height: 1.5;
+  flex: 1; min-width: 0; resize: none; font-family: inherit; font-size: 12.5px; line-height: 1.5;
   padding: 8px 10px; border: 1px solid var(--color-hairline-strong); border-radius: 8px;
   background: var(--desk-bg); color: var(--color-ink); outline: none;
 }
 .chat-input textarea:focus { border-color: var(--color-accent); }
 .chat-input .send {
-  align-self: flex-end; padding: 7px 14px; border: none; border-radius: 8px;
+  flex: none; align-self: flex-end; padding: 7px 14px; border: none; border-radius: 8px;
   background: var(--color-accent); color: #fff; font-size: 12px; cursor: pointer;
 }
 .chat-input .send:disabled { opacity: .4; cursor: default; }
