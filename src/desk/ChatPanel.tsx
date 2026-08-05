@@ -103,7 +103,7 @@ export function ChatPanel({
       <div className="chat-input">
         <textarea
           value={input}
-          rows={2}
+          rows={4}
           placeholder="指挥我，比如：给客厅再出一个效果图变体"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
