@@ -247,7 +247,7 @@ button { font-family: inherit; }
   border-top: 1px solid var(--color-hairline);
 }
 .chat-input textarea {
-  display: block; width: 100%; min-width: 0; min-height: 96px; resize: none; font-family: inherit; font-size: 12.5px; line-height: 1.5;
+  display: block; width: min(394px, 100%); min-width: 0; min-height: 96px; resize: none; font-family: inherit; font-size: 12.5px; line-height: 1.5;
   padding: 8px 68px 8px 10px; border: 1px solid var(--color-hairline-strong); border-radius: 8px;
   background: var(--color-card); color: var(--color-ink); outline: none;
 }
