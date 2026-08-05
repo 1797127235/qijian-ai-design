@@ -9,11 +9,13 @@ import type { ServerConfig } from "../config.js";
 import type { Database } from "../db/client.js";
 import { storedFiles } from "../db/schema.js";
 import { artifactTypes } from "../domain/types.js";
-import { HttpError } from "../lib/errors.js";
+import { AppError, HttpError } from "../lib/errors.js";
 import type { ArtifactService } from "../services/artifact-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
 import type { ExportService } from "../services/export-service.js";
 import type { FileStorage } from "../services/file-storage.js";
+import type { ChatService } from "../services/chat-service.js";
+import type { AgentSessionRegistry } from "../agent/session-registry.js";
 
 interface HttpDependencies {
   config: ServerConfig;
@@ -22,6 +24,8 @@ interface HttpDependencies {
   desks: DeskStateService;
   files: FileStorage;
   exports: ExportService;
+  chats: ChatService;
+  sessions: AgentSessionRegistry;
 }
 
 const artifactTypeSchema = z.enum(artifactTypes);
@@ -56,12 +60,30 @@ export function createHttpApp(deps: HttpDependencies) {
 
   app.delete("/api/projects/:id", async (c) => {
     const projectId = c.req.param("id");
+    await deps.sessions.forgetProject(projectId);
     const result = await deps.desks.deleteProject(projectId);
     await deps.files.removeProjectFiles(projectId, result.objectKeys);
     return c.body(null, 204);
   });
 
   app.get("/api/projects/:id/desk", async (c) => c.json(await deps.desks.snapshot(c.req.param("id"))));
+
+  app.get("/api/projects/:id/chat/threads", async (c) => c.json(await deps.chats.listThreads(c.req.param("id"))));
+
+  app.post("/api/projects/:id/chat/threads", async (c) => c.json(await deps.chats.createThread(c.req.param("id")), 201));
+
+  app.delete("/api/projects/:id/chat/threads/:threadId", async (c) => {
+    const projectId = c.req.param("id");
+    const threadId = c.req.param("threadId");
+    await deps.sessions.forget(projectId, threadId);
+    await deps.chats.deleteThread(projectId, threadId);
+    return c.body(null, 204);
+  });
+
+  app.get("/api/projects/:id/chat/messages", async (c) => c.json(await deps.chats.history(
+    c.req.param("id"),
+    c.req.query("threadId") || undefined,
+  )));
 
   app.patch("/api/projects/:id/desk", async (c) => {
     const input = await body(c.req.raw, z.object({ viewport: z.object({ x: z.number().finite(), y: z.number().finite(), zoom: z.number().min(0.1).max(4) }) }));
@@ -93,13 +115,25 @@ export function createHttpApp(deps: HttpDependencies) {
   });
 
   app.post("/api/projects/:id/files", async (c) => {
+    const contentLength = c.req.header("content-length");
+    if (!contentLength) throw new AppError(400, "BAD_REQUEST", "上传请求必须提供 Content-Length");
+    const declaredLength = Number(contentLength);
+    if (!Number.isFinite(declaredLength) || declaredLength <= 0) throw new AppError(400, "BAD_REQUEST", "Content-Length 无效");
+    if (declaredLength > 31 * 1024 * 1024) {
+      throw new AppError(413, "UPLOAD_TOO_LARGE", "单个文件不能超过 30MB");
+    }
     const form = await c.req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) throw new HttpError(422, "请在 file 字段上传文件");
     const allowed = new Set(["application/pdf", "image/jpeg", "image/png"]);
-    if (!allowed.has(file.type)) throw new HttpError(422, "仅支持 PDF、JPG 和 PNG");
-    if (file.size > 30 * 1024 * 1024) throw new HttpError(422, "单个文件不能超过 30MB");
+    if (!allowed.has(file.type)) throw new AppError(422, "UNSUPPORTED_FILE_TYPE", "仅支持 PDF、JPG 和 PNG");
+    if (file.size > 30 * 1024 * 1024) throw new AppError(413, "UPLOAD_TOO_LARGE", "单个文件不能超过 30MB");
     return c.json(await deps.files.put(c.req.param("id"), basename(file.name), file.type, new Uint8Array(await file.arrayBuffer())), 201);
+  });
+
+  app.delete("/api/projects/:id/files/:fileId", async (c) => {
+    await deps.files.deleteUnattached(c.req.param("id"), c.req.param("fileId"));
+    return c.body(null, 204);
   });
 
   app.get("/api/files/:id", async (c) => {
@@ -109,23 +143,16 @@ export function createHttpApp(deps: HttpDependencies) {
     return new Response(bytes, { headers: { "content-type": stored.mediaType, "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(stored.originalFilename)}`, "cross-origin-resource-policy": "cross-origin" } });
   });
 
-  app.get("/api/projects/:id/permission", async (c) => {
-    const snapshot = await deps.desks.snapshot(c.req.param("id"));
-    return c.json({ permission: snapshot.project.permission });
-  });
-
-  app.put("/api/projects/:id/permission", async (c) => {
-    const input = await body(c.req.raw, z.object({ permission: z.enum(["ask", "auto"]) }));
-    return c.json({ permission: await deps.desks.setPermission(c.req.param("id"), input.permission) });
-  });
-
   app.post("/api/projects/:id/export", async (c) => c.json(await deps.exports.export(c.req.param("id")), 201));
 
-  app.notFound((c) => c.json({ error: "接口不存在" }, 404));
+  app.notFound((c) => c.json({ error: { code: "NOT_FOUND", message: "接口不存在", retryable: false } }, 404));
   app.onError((error, c) => {
-    const status = error instanceof HttpError ? error.status : 500;
+    const status = error instanceof AppError ? error.status : 500;
     if (status === 500) console.error(error);
-    return c.json({ error: error instanceof Error ? error.message : "服务器错误" }, status);
+    const payload = error instanceof AppError
+      ? { code: error.code, message: error.message, retryable: error.retryable, details: error.details }
+      : { code: "INTERNAL_ERROR", message: "服务器错误", retryable: true };
+    return c.json({ error: payload }, status);
   });
   return app;
 }

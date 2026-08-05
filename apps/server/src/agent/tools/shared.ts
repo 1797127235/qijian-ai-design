@@ -4,14 +4,12 @@ import type { DeskStateService } from "../../services/desk-state-service.js";
 import type { ExportService } from "../../services/export-service.js";
 import type { ImageGenerator } from "../../services/image-generator.js";
 import type { EventSink } from "../events.js";
-import type { PermissionGate } from "../permission-gate.js";
 
 export interface ToolDependencies {
   artifacts: ArtifactService;
   desks: DeskStateService;
   effects: ImageGenerator;
   exports: ExportService;
-  gate: PermissionGate;
   emit: EventSink;
 }
 
@@ -25,6 +23,10 @@ export interface ToolContext {
 
 export function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: "text" as const, text }], details };
+}
+
+export function storedFileInputRefs(fileIds: string[] | undefined) {
+  return [...new Set(fileIds ?? [])].map((fileId) => ({ file_id: fileId }));
 }
 
 export function createToolContext(projectId: string, deps: ToolDependencies): ToolContext {

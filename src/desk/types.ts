@@ -19,7 +19,6 @@ export interface Direction {
 }
 
 export type DeskObject =
-  | { id: string; kind: "brief"; x: number; y: number; rot: number; status: "draft" | "confirmed"; text: string; files: string[] }
   | { id: string; kind: "plan"; x: number; y: number; rot: number; w: number; status: "draft" | "confirmed"; sourceFileId?: string; spaces: Space[] }
   | { id: string; kind: "note"; x: number; y: number; rot: number; status: "draft" | "confirmed"; spaceId: string; who: string; text: string }
   | { id: string; kind: "direction_set"; x: number; y: number; rot: number; status: "draft" | "confirmed"; directions: Direction[]; selectedId?: string }
@@ -27,5 +26,5 @@ export type DeskObject =
   | { id: string; kind: "setup"; x: number; y: number; rot: number };
 
 export type ChatItem =
-  | { id: string; role: "user" | "agent"; text: string }
+  | { id: string; role: "user" | "agent"; text: string; attachments?: import("../lib/api").ChatAttachment[] }
   | { id: string; role: "activity"; text: string };

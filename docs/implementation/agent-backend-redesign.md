@@ -6,9 +6,8 @@
 
 - 单画布"设计桌面"：项目 = 桌面，客户资料为起点，户型图居中，物件生长式推进
 - 移除：6 阶段流程、约束包（design_system）、空间提案卡（space_proposal）
-- AI 助手 = 画布行动者：对话栏指挥，直接操作桌面物件
-- 权限两档：`ask`（每步请示）/ `auto`（完全放手），工具层实现
-- 桌面即上下文：智能体始终可见整张桌面当前状态
+- AI 助手当前直接分析用户文字和附件，不操作桌面数据
+- 旧的自定义业务工具已删除，保留空的工具注册边界
 - 效果图接图像生成模型；提案包导出 PDF/图片
 - 后端整体 TS 重写，弃 Python/FastAPI；agent 底层用 `earendil-works/pi`
 - PostgreSQL 保留；Artifact 版本化契约保留
@@ -25,7 +24,7 @@
 | 提案包导出 | HTML 模板 + Playwright 打印 PDF/PNG |
 | 运行时 | Node 22.19+（pi SDK 运行时要求） |
 
-集成方式选 **SDK 同进程嵌入**而非 RPC 子进程：自定义工具需要直接调数据层函数、权限闸需要拦截工具执行——SDK 文档明确此场景优先 SDK。
+集成方式选 **SDK 同进程嵌入**而非 RPC 子进程，聊天会话、附件和事件流均由服务端进程直接管理。
 
 ## 架构
 
@@ -35,8 +34,7 @@ src/desk (React)                apps/server (TS)
 │ Desk + Chat  │ ◄────────────► │ ChatGateway             │
 │ (pi agent)   │   REST         │  └─ AgentSession        │
 └──────┬───────┘ ◄────────────► │     ├─ pi-agent-core    │
-       │                        │     ├─ tools (见下)      │
-       │                        │     └─ permission gate  │
+       │                        │     └─ customTools: []   │
        │                        │ ArtifactService (版本化) │
        │                        │ DeskStateService        │
        │                        │ FileStorage（本地文件）  │
@@ -47,7 +45,7 @@ src/desk (React)                apps/server (TS)
 ```
 
 - **数据平面**：ArtifactService + DeskStateService + FileStorage，纯 CRUD + 版本化，不含 AI
-- **控制平面**：每个项目一个 `AgentSession`（`createAgentSession()`，`SessionManager.inMemory()`——聊天记录是指挥日志，桌面状态唯一来源是 PostgreSQL），`customTools` 挂数据平面函数
+- **控制平面**：每个项目、线程一个 `AgentSession`；恢复持久化聊天记录和附件，`customTools` 当前为空
 - 桌面状态（物件位置/旋转/视口）持久化于 `desk_state`，与 Artifact 内容分离（沿用旧"画布布局不改设计事实"原则）
 
 ### Session 创建骨架（对齐 pi SDK）
@@ -85,7 +83,7 @@ const { session } = await createAgentSession({
   sessionManager: SessionManager.inMemory(),
   settingsManager,
   noTools: "builtin",            // 禁用 read/bash/edit 等文件系统工具
-  customTools: deskTools,        // 只有桌面工具
+  customTools: createDeskTools(projectId, dependencies), // 当前返回空数组
 });
 session.subscribe((event) => forwardToWebSocket(event));      // 事件流→前端
 ```
@@ -104,7 +102,6 @@ session.subscribe((event) => forwardToWebSocket(event));      // 事件流→前
 
 | 类型 | 说明 | 对应桌面物件 |
 |---|---|---|
-| `design_brief` | 客户资料与需求 | Brief 便签 |
 | `space_map` | 空间区域基线（含关键空间★） | 户型图 |
 | `understanding_note` | 单条空间理解（拆成多条，钉在空间旁） | 理解便签 |
 | `design_directions` | 方向集（3 卡 + selected_direction_id） | 方向草图 |
@@ -115,51 +112,13 @@ session.subscribe((event) => forwardToWebSocket(event));      // 事件流→前
 
 新增 `desk_state` 表：`project_id (pk), objects(jsonb: [{artifact_id, kind, x, y, rot, w}]), viewport(jsonb), updated_at`。位置可改，内容不可改。
 
-## 智能体工具集（pi `defineTool`）
+## 智能体工具状态
 
-每个工具 = `defineTool` + typebox 参数 schema，`execute` 调数据平面：
-
-```ts
-import { Type } from "typebox";
-import { defineTool } from "@earendil-works/pi-coding-agent";
-
-const generateEffectImage = defineTool({
-  name: "generate_effect_image",
-  label: "生成效果图",
-  description: "为指定关键空间生成一个效果图变体，摞到该空间的照片堆上",
-  parameters: Type.Object({
-    space_id: Type.String({ description: "空间地图中的 space_id" }),
-    intent: Type.Optional(Type.String({ description: "设计师补充的一句话意图" })),
-  }),
-  execute: async (_id, params) => {
-    await permissionGate("generate_effect_image", params);   // 见权限闸
-    const variant = await effects.generate(params);
-    return { content: [{ type: "text", text: `已生成变体 ${variant.id}` }], details: {} };
-  },
-});
-```
-
-| 工具 | 动作 | 权限类别 |
-|---|---|---|
-| `read_desk` | 返回整张桌面状态（Artifact 当前版本 + 位置） | 只读 |
-| `place_object` / `move_object` | 摆放/移动物件（写 desk_state） | 低风险 |
-| `create_understanding_notes` | 读 Brief+图纸 → 生成理解便签草稿 | 生成 |
-| `create_direction_set` | 生成三张方向草图 | 生成 |
-| `generate_effect_image` | 调图像模型，为 space_id 出一个变体 | 生成（计成本） |
-| `adopt_variant` / `discard_variant` | 采用/弃用效果图变体 | 低风险 |
-| `edit_payload` | 修改草稿 Artifact 内容（追加新版本） | 生成 |
-| `confirm_artifact` | 盖章（status→confirmed） | **确认门** |
-| `export_package` | 排版导出 PDF/图片 | 低风险 |
-
-**权限闸**（pi 无内置权限系统；SDK 无 ask 钩子，在工具 `execute` 开头自行拦截）：
-
-- `ask` 档：`permissionGate` 向客户端 WS 发 `approval_request`（工具名+参数+中文描述），挂起 Promise 等批准/拒绝；批准后继续执行。前端审批卡就是现有 ChatPanel 的 approval 组件
-- `auto` 档：工具写操作直接放行；服务端仍保留完整版本历史，并可通过 rollback API 回退当前版本指针
-- 档位存项目级设置，前端切换即时生效；`session.subscribe` 的 `tool_execution_start/end` 事件转发前端，渲染"AI 正在做什么"的活动流
+原有桌面业务工具实现已删除。`apps/server/src/agent/tools/index.ts` 和 Session 的 `customTools` 注册边界继续保留，但当前注册列表为空；工具事件持久化与前端执行状态 UI 也未删除，供后续重新设计时复用。
 
 ## 上下文构造
 
-两层注入：① 系统提示词（`systemPrompt`）= 角色设定 + 会话创建时的桌面快照摘要；② `read_desk` 工具供 agent 随时取全量当前状态。聊天历史只是指挥日志，状态唯一来源是 PostgreSQL——前端重连后从数据库重建桌面，不依赖会话历史。
+Agent 从持久化聊天历史、当前用户文字和消息附件构造上下文。图片附件以多模态内容发送给模型；当前不读取或修改桌面 Artifact。
 
 ## 当前 API
 
@@ -178,10 +137,8 @@ POST   /api/artifacts/:id/confirm         确认当前 Artifact
 POST   /api/artifacts/:id/rollback        current_version 回滚（撤销）
 WS     /api/projects/:id/chat             对话 + agent 事件流
                                         （text_delta→消息流；tool_execution_start/end→活动指示；
-                                         approval_request→审批卡；object_changed→桌面增量更新）
+                                         object_changed→桌面增量更新）
 POST   /api/projects/:id/export           导出提案包 PDF 与逐页 PNG
-GET    /api/projects/:id/permission       读取权限档位
-PUT    /api/projects/:id/permission       更新权限档位
 ```
 
 前端通过 `src/lib/api.ts` 连接 REST 与 WebSocket；DeskObject 模型由 Artifact 当前版本与 `desk_state.objects` 共同重建。

@@ -5,14 +5,6 @@ import { ArtifactService } from "./artifact-service.js";
 const service = new ArtifactService({} as Database);
 
 describe("Artifact confirmation contract", () => {
-  it("rejects an empty confirmed brief before touching the database", async () => {
-    await expect(service.create("project", "design_brief", {
-      payload: { text: "" },
-      status: "confirmed",
-      createdBy: "designer",
-    })).rejects.toThrow("确认 design_brief 前必须填写内容");
-  });
-
   it("requires a selected direction among exactly three cards", async () => {
     await expect(service.create("project", "design_directions", {
       payload: {

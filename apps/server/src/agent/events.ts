@@ -1,8 +1,18 @@
+import type { ChatMessageDto } from "../services/chat-service.js";
+
+export interface ServerErrorPayload {
+  code: string;
+  message: string;
+  retryable: boolean;
+  details?: unknown;
+}
+
 export type ServerEvent =
   | { type: "agent_event"; event: unknown }
-  | { type: "approval_request"; projectId: string; approvalId: string; tool: string; params: unknown; description: string }
-  | { type: "approval_resolved"; projectId: string; approvalId: string; approved: boolean }
+  | { type: "agent_stopped"; projectId: string; threadId: string; stopped: boolean }
+  | { type: "prompt_ack"; projectId: string; threadId: string; clientMessageId?: string; message: ChatMessageDto }
+  | { type: "chat_message"; projectId: string; message: ChatMessageDto }
   | { type: "object_changed"; projectId: string; artifactId?: string; undoable?: boolean }
-  | { type: "error"; message: string };
+  | { type: "error"; projectId?: string; clientMessageId?: string; error: ServerErrorPayload };
 
 export type EventSink = (event: ServerEvent) => void;

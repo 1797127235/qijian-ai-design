@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, lt, max } from "drizzle-orm";
 import type { Database } from "../db/client.js";
-import { artifacts, artifactVersions, projects, storedFiles } from "../db/schema.js";
-import { artifactTypes, type ArtifactStatus, type ArtifactType, type CreatedBy } from "../domain/types.js";
+import { artifacts, artifactVersions, deskStates, projects, storedFiles } from "../db/schema.js";
+import { artifactTypes, type ArtifactStatus, type ArtifactType, type CreatedBy, type DeskLayoutObject } from "../domain/types.js";
 import { HttpError } from "../lib/errors.js";
 import { contentHash } from "../lib/json.js";
 
@@ -13,20 +13,29 @@ export interface AppendVersionInput {
   changeReason?: string;
 }
 
+type DatabaseTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+type NewDeskObject = Omit<DeskLayoutObject, "artifact_id">;
+
 export class ArtifactService {
   constructor(private readonly db: Database) {}
 
   async create(projectId: string, artifactType: ArtifactType, input: AppendVersionInput) {
     if (!artifactTypes.includes(artifactType)) throw new HttpError(422, "不支持的 Artifact 类型");
     this.validateConfirmedPayload(artifactType, input);
+    return this.db.transaction((tx) => this.createInTransaction(tx, projectId, artifactType, input));
+  }
+
+  async createPlaced(projectId: string, artifactType: ArtifactType, input: AppendVersionInput, layout: NewDeskObject) {
+    if (!artifactTypes.includes(artifactType)) throw new HttpError(422, "不支持的 Artifact 类型");
+    this.validateConfirmedPayload(artifactType, input);
     return this.db.transaction(async (tx) => {
-      const [project] = await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId));
-      if (!project) throw new HttpError(404, "未找到该设计项目");
-      await this.validateInputRefs(tx, projectId, input.inputRefs ?? []);
-      const [artifact] = await tx.insert(artifacts).values({ projectId, artifactType }).returning();
-      const version = await this.insertVersion(tx, artifact.id, 1, input);
-      await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifact.id));
-      return { artifact, version };
+      const result = await this.createInTransaction(tx, projectId, artifactType, input);
+      const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
+      if (!state) throw new HttpError(404, "未找到该设计项目");
+      const object: DeskLayoutObject = { artifact_id: result.artifact.id, ...layout };
+      const objects = [...state.objects.filter((item) => item.artifact_id !== result.artifact.id), object];
+      await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
+      return { ...result, object };
     });
   }
 
@@ -34,13 +43,17 @@ export class ArtifactService {
     return this.db.transaction(async (tx) => {
       const [artifact] = await tx.select().from(artifacts).where(eq(artifacts.id, artifactId)).for("update");
       if (!artifact) throw new HttpError(404, "未找到该 Artifact");
-      this.validateConfirmedPayload(artifact.artifactType as ArtifactType, input);
-      await this.validateInputRefs(tx, artifact.projectId, input.inputRefs ?? []);
+      const [current] = artifact.currentVersionId
+        ? await tx.select({ inputRefs: artifactVersions.inputRefs }).from(artifactVersions).where(eq(artifactVersions.id, artifact.currentVersionId))
+        : [];
+      const nextInput = { ...input, inputRefs: input.inputRefs ?? current?.inputRefs ?? [] };
+      this.validateConfirmedPayload(artifact.artifactType as ArtifactType, nextInput);
+      await this.validateInputRefs(tx, artifact.projectId, nextInput.inputRefs);
       const [{ next }] = await tx
         .select({ next: max(artifactVersions.versionNo) })
         .from(artifactVersions)
         .where(eq(artifactVersions.artifactId, artifactId));
-      const version = await this.insertVersion(tx, artifactId, (next ?? 0) + 1, input);
+      const version = await this.insertVersion(tx, artifactId, (next ?? 0) + 1, nextInput);
       await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifactId));
       return version;
     });
@@ -92,7 +105,7 @@ export class ArtifactService {
   }
 
   private async validateInputRefs(
-    tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+    tx: DatabaseTransaction,
     projectId: string,
     inputRefs: unknown[],
   ) {
@@ -106,17 +119,27 @@ export class ArtifactService {
       throw new HttpError(422, "文件引用 ID 格式不正确");
     }
     const owned = await tx
-      .select({ id: storedFiles.id })
+      .select({ id: storedFiles.id, pageCount: storedFiles.pageCount })
       .from(storedFiles)
       .where(and(eq(storedFiles.projectId, projectId), inArray(storedFiles.id, fileIds)));
     if (owned.length !== fileIds.length) throw new HttpError(422, "存在不属于当前项目的文件引用");
+    const pageCountById = new Map(owned.map((file) => [file.id, file.pageCount]));
+    for (const ref of inputRefs) {
+      if (!ref || typeof ref !== "object") continue;
+      const value = ref as Record<string, unknown>;
+      if (value.page === undefined) continue;
+      if (typeof value.file_id !== "string" || !Number.isInteger(value.page) || (value.page as number) < 1) {
+        throw new HttpError(422, "文件页码引用格式不正确");
+      }
+      const pageCount = pageCountById.get(value.file_id);
+      if (!pageCount || (value.page as number) > pageCount) throw new HttpError(422, "文件页码超出 PDF 实际页数");
+    }
   }
 
   private validateConfirmedPayload(artifactType: ArtifactType, input: AppendVersionInput) {
     if (input.status !== "confirmed") return;
     const payload = input.payload;
     const nonEmpty = (value: unknown) => typeof value === "string" && value.trim().length > 0;
-    if (artifactType === "design_brief" && !nonEmpty(payload.text)) throw new HttpError(422, "确认 design_brief 前必须填写内容");
     if (artifactType === "space_map") {
       const spaces = Array.isArray(payload.spaces) ? payload.spaces : Array.isArray(payload.regions) ? payload.regions : [];
       if (spaces.length === 0) throw new HttpError(422, "确认 space_map 前必须标注空间区域");
@@ -132,8 +155,23 @@ export class ArtifactService {
     if (artifactType === "proposal_package" && !payload.pdf_file && !payload.pdf_path) throw new HttpError(422, "proposal_package 必须包含 PDF 文件引用");
   }
 
+  private async createInTransaction(
+    tx: DatabaseTransaction,
+    projectId: string,
+    artifactType: ArtifactType,
+    input: AppendVersionInput,
+  ) {
+    const [project] = await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId));
+    if (!project) throw new HttpError(404, "未找到该设计项目");
+    await this.validateInputRefs(tx, projectId, input.inputRefs ?? []);
+    const [artifact] = await tx.insert(artifacts).values({ projectId, artifactType }).returning();
+    const version = await this.insertVersion(tx, artifact.id, 1, input);
+    await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifact.id));
+    return { artifact, version };
+  }
+
   private async insertVersion(
-    tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+    tx: DatabaseTransaction,
     artifactId: string,
     versionNo: number,
     input: AppendVersionInput,

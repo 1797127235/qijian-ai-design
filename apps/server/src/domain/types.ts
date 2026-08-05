@@ -1,5 +1,4 @@
 export const artifactTypes = [
-  "design_brief",
   "space_map",
   "understanding_note",
   "design_directions",
@@ -10,7 +9,6 @@ export const artifactTypes = [
 export type ArtifactType = (typeof artifactTypes)[number];
 export type ArtifactStatus = "draft" | "confirmed";
 export type CreatedBy = "designer" | "agent";
-export type PermissionMode = "ask" | "auto";
 
 export interface DeskLayoutObject {
   artifact_id: string;
@@ -40,7 +38,7 @@ export interface ArtifactSnapshot {
 }
 
 export interface DeskSnapshot {
-  project: { id: string; name: string; permission: PermissionMode };
+  project: { id: string; name: string };
   artifacts: ArtifactSnapshot[];
   deskState: { objects: DeskLayoutObject[]; viewport: DeskViewport; updatedAt: Date };
 }

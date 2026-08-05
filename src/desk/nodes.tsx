@@ -1,72 +1,33 @@
-import { useState } from "react";
-import { api } from "../lib/api";
+import { FloorPlanPreview } from "./FloorPlanPreview";
 import type { DeskObject } from "./types";
 
 export interface Handlers {
   onConfirm: (artifactId: string) => void;
   onSelectDirection: (artifactId: string, directionId: string) => void;
   onAdopt: (artifactId: string, adopted: boolean) => void;
-  onSaveBrief: (artifactId: string, text: string) => void;
   onRedrawPlan: (artifactId: string) => void;
-}
-
-function BriefCard({ obj, handlers }: { obj: Extract<DeskObject, { kind: "brief" }>; handlers: Handlers }) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(obj.text);
-
-  if (editing) {
-    return (
-      <div className="note-card brief-card">
-        <span className="pin" />
-        <span className="who">客户说 · Brief · 修改中</span>
-        <textarea className="brief-edit" rows={5} value={text} onChange={(e) => setText(e.target.value)} />
-        <div style={{ display: "flex", gap: 6 }}>
-          <button type="button" className="mini-btn" onClick={() => { setText(obj.text); setEditing(false); }}>取消</button>
-          <button type="button" className="mini-btn primary" onClick={() => { handlers.onSaveBrief(obj.id, text.trim()); setEditing(false); }}>保存</button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="note-card brief-card">
-      <span className="pin" />
-      <span className="who">客户说 · Brief</span>
-      <p>{obj.text}</p>
-      {obj.files.length > 0 && <div className="chips">{obj.files.map((f) => <span className="chip" key={f}>{f}</span>)}</div>}
-      {obj.status === "confirmed"
-        ? <span className="stamp">✓ Brief 已确认</span>
-        : (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button type="button" className="mini-btn" onClick={() => setEditing(true)}>修改</button>
-            <button type="button" className="mini-btn primary" onClick={() => handlers.onConfirm(obj.id)}>确认 Brief</button>
-          </div>
-        )}
-    </div>
-  );
 }
 
 export function DeskObjectView({ obj, handlers }: { obj: DeskObject; handlers: Handlers }) {
   switch (obj.kind) {
-    case "brief":
-      return <BriefCard obj={obj} handlers={handlers} />;
-
     case "plan":
       return (
         <div className="plan" style={{ width: obj.w }}>
           <span className="plan-tag">空间地图 {obj.status === "confirmed" ? "· 已确认 ✓" : "· 草稿"}</span>
-          {obj.sourceFileId
-            ? <img src={api.fileUrl(obj.sourceFileId)} alt="户型图" draggable={false} />
-            : <div className="plan-empty">无图纸</div>}
-          {obj.spaces.map((s) => (
-            <div
-              key={s.id}
-              className={`region ${s.key ? "key" : ""}`}
-              style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.w * 100}%`, height: `${s.h * 100}%` }}
-            >
-              {s.name}{s.key ? " ★" : ""}
-            </div>
-          ))}
+          <div className="plan-media">
+            {obj.sourceFileId
+              ? <FloorPlanPreview fileId={obj.sourceFileId} alt="户型图" />
+              : <div className="plan-empty">无图纸</div>}
+            {obj.spaces.map((s) => (
+              <div
+                key={s.id}
+                className={`region ${s.key ? "key" : ""}`}
+                style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.w * 100}%`, height: `${s.h * 100}%` }}
+              >
+                {s.name}{s.key ? " ★" : ""}
+              </div>
+            ))}
+          </div>
           {obj.status !== "confirmed" && (
             <div className="plan-actions">
               <button type="button" className="mini-btn" onClick={() => handlers.onRedrawPlan(obj.id)}>重新绘制</button>

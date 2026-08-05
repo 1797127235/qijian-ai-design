@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { api } from "../lib/api";
+import { FloorPlanPreview } from "./FloorPlanPreview";
 import type { Space } from "./types";
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -120,7 +121,7 @@ export function SpaceMapSetup({
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
           >
-            <img src={api.fileUrl(fileId)} alt="户型图纸" draggable={false} />
+            <FloorPlanPreview fileId={fileId} />
             {spaces.map((s) => (
               <div
                 key={s.id}

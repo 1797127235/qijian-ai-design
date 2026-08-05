@@ -1,7 +1,7 @@
 ---
 version: beta
 name: Qijian-Paper-Atelier
-description: 砌间 AI Design 的设计系统 ——「纸面工作室」。为家装设计师打造的 AI 提案工作台，界面气质是建筑事务所的提案册：暖纸面画布、衬线标题、单一陶土强调色、hairline 分层。Chrome 退后，让 AI 生成的空间图像成为界面中唯一的色彩来源。工作台区（列表/画布/约束包）网格纪律、中高密度；阅读区（Brief/方向卡/提案包）编辑排版、叙事节奏。
+description: 砌间 AI Design 的设计系统 ——「纸面工作室」。为家装设计师打造的 AI 提案工作台，界面气质是建筑事务所的提案册：暖纸面画布、衬线标题、单一陶土强调色、hairline 分层。Chrome 退后，让 AI 生成的空间图像成为界面中唯一的色彩来源。工作台区（列表/画布/约束包）网格纪律、中高密度；阅读区（项目理解/方向卡/提案包）编辑排版、叙事节奏。
 
 colors:
   canvas: "#faf9f5"
@@ -210,7 +210,7 @@ components:
 # Design System — 砌间 Qijian AI Design
 
 ## Product Context
-- **What this is:** AI 驱动的家装前期提案工作台。设计师用它完成从 Brief、项目理解、设计方向集、方案约束包到提案画布与客户提案包的全流程。
+- **What this is:** AI 驱动的家装前期提案工作台。设计师从户型图和对话开始，完成项目理解、设计方向集、方案约束包、提案画布与客户提案包。
 - **Who it's for:** 家装设计师（专业、每天使用、对视觉品质敏感）。
 - **Space/industry:** 家装设计工具（ peers：酷家乐、Figma、Motiff、住小帮 ）。
 - **Project type:** 高密度 web 工作台 + 编辑式阅读视图。
