@@ -1,7 +1,7 @@
 /** 生成工具：在理解便签确认后，创建包含三个候选项的设计方向集。 */
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ok, type ToolContext } from "./shared.js";
+import { ok, storedFileInputRefs, type ToolContext } from "./shared.js";
 
 export function createDirectionSetTool({ projectId, deps, changed }: ToolContext) {
   return defineTool({
@@ -23,6 +23,7 @@ export function createDirectionSetTool({ projectId, deps, changed }: ToolContext
       }), { minItems: 3, maxItems: 3 }),
       x: Type.Number(),
       y: Type.Number(),
+      source_file_ids: Type.Optional(Type.Array(Type.String())),
     }),
     execute: async (_id, params) => {
       const snapshot = await deps.desks.snapshot(projectId);
@@ -37,6 +38,7 @@ export function createDirectionSetTool({ projectId, deps, changed }: ToolContext
         "design_directions",
         {
           payload: { directions: params.directions, selected_direction_id: null },
+          inputRefs: storedFileInputRefs(params.source_file_ids),
           createdBy: "agent",
         },
         { kind: "direction_set", x: params.x, y: params.y, rot: 0 },

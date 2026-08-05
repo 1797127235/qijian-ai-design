@@ -12,6 +12,18 @@ export interface StoredFile {
   id: string;
   originalFilename: string;
   mediaType: string;
+  sizeBytes: number;
+  pageCount?: number;
+  url: string;
+}
+
+export interface ChatAttachment {
+  id: string;
+  originalFilename: string;
+  mediaType: string;
+  sizeBytes: number;
+  pageCount?: number;
+  position: number;
 }
 
 export interface ArtifactSnapshot {
@@ -45,6 +57,7 @@ export interface StoredChatMessage {
   projectId: string;
   role: "user" | "assistant";
   text: string;
+  attachments: ChatAttachment[];
   createdAt: string;
 }
 
@@ -73,8 +86,11 @@ export interface StoredToolCall {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) {
-    const body = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
-    throw new Error(body?.error ?? `请求失败（${response.status}）`);
+    const body = (await response.json().catch(() => undefined)) as {
+      error?: string | { code?: string; message?: string; retryable?: boolean; details?: unknown };
+    } | undefined;
+    const payload = typeof body?.error === "string" ? { message: body.error } : body?.error;
+    throw new ApiError(payload?.message ?? `请求失败（${response.status}）`, payload?.code, payload?.retryable, payload?.details);
   }
   if (response.status === 204) return undefined as T;
   const text = await response.text();
@@ -106,29 +122,44 @@ export const api = {
     request<DeskLayoutObject>(`/api/projects/${projectId}/desk/objects/${artifactId}`, json("PATCH", patch)),
   setViewport: (projectId: string, viewport: { x: number; y: number; zoom: number }) =>
     request<{ viewport: DeskSnapshot["deskState"]["viewport"] }>(`/api/projects/${projectId}/desk`, json("PATCH", { viewport })),
-  createArtifact: (projectId: string, input: { artifactType: ArtifactSnapshot["artifactType"]; payload: Record<string, unknown>; status?: "draft" | "confirmed"; layout?: { kind: string; x: number; y: number; rot?: number; w?: number } }) =>
+  createArtifact: (projectId: string, input: { artifactType: ArtifactSnapshot["artifactType"]; payload: Record<string, unknown>; inputRefs?: unknown[]; status?: "draft" | "confirmed"; layout?: { kind: string; x: number; y: number; rot?: number; w?: number } }) =>
     request<{ artifact: { id: string } }>(`/api/projects/${projectId}/artifacts`, json("POST", input)),
-  appendVersion: (artifactId: string, payload: Record<string, unknown>) =>
-    request<{ versionNo: number }>(`/api/artifacts/${artifactId}/versions`, json("POST", { payload })),
+  appendVersion: (artifactId: string, payload: Record<string, unknown>, inputRefs?: unknown[]) =>
+    request<{ versionNo: number }>(`/api/artifacts/${artifactId}/versions`, json("POST", { payload, ...(inputRefs ? { inputRefs } : {}) })),
   confirmArtifact: (artifactId: string) => request(`/api/artifacts/${artifactId}/confirm`, json("POST", {})),
   rollbackArtifact: (artifactId: string, versionId?: string) =>
     request<{ versionNo: number }>(`/api/artifacts/${artifactId}/rollback`, json("POST", versionId ? { versionId } : {})),
   exportPackage: (projectId: string) =>
     request<{ artifactId: string; pdfUrl?: string; imageUrls?: string[] }>(`/api/projects/${projectId}/export`, json("POST", {})),
-  uploadFile: async (projectId: string, file: File) => {
+  uploadFile: async (projectId: string, file: File, signal?: AbortSignal) => {
     const form = new FormData();
     form.append("file", file);
-    return request<StoredFile>(`/api/projects/${projectId}/files`, { method: "POST", body: form });
+    return request<StoredFile>(`/api/projects/${projectId}/files`, { method: "POST", body: form, signal });
   },
+  deleteFile: (projectId: string, fileId: string) =>
+    request<void>(`/api/projects/${projectId}/files/${fileId}`, { method: "DELETE" }),
   fileUrl: (fileId: string) => `/api/files/${fileId}`,
 };
 
 export type ServerEvent =
   | { type: "agent_event"; event: { type?: string; assistantMessageEvent?: { type?: string; delta?: string }; toolName?: string; toolCallId?: string; isError?: boolean; projectId?: string; threadId?: string } }
   | { type: "agent_stopped"; projectId: string; threadId: string; stopped: boolean }
+  | { type: "prompt_ack"; projectId: string; threadId: string; clientMessageId?: string; message: StoredChatMessage }
   | { type: "chat_message"; projectId: string; message: StoredChatMessage }
   | { type: "object_changed"; artifactId?: string; undoable?: boolean }
-  | { type: "error"; message: string };
+  | { type: "error"; clientMessageId?: string; error: { code: string; message: string; retryable: boolean; details?: unknown } };
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly code?: string,
+    public readonly retryable = false,
+    public readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 
 export type ChatConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
@@ -167,7 +198,7 @@ export function connectChat(
       try {
         onEvent(JSON.parse(raw.data as string) as ServerEvent);
       } catch {
-        onEvent({ type: "error", message: "收到无法解析的助手消息" });
+        onEvent({ type: "error", error: { code: "INVALID_SERVER_EVENT", message: "收到无法解析的助手消息", retryable: true } });
       }
     };
     nextSocket.onerror = () => {
@@ -193,7 +224,7 @@ export function connectChat(
       return true;
     }
     if (queue.length >= 20) {
-      onEvent({ type: "error", message: "待发送消息过多，请等待连接恢复" });
+      onEvent({ type: "error", error: { code: "SEND_QUEUE_FULL", message: "待发送消息过多，请等待连接恢复", retryable: true } });
       return false;
     }
     queue.push(serialized);
@@ -204,11 +235,12 @@ export function connectChat(
   connect();
 
   return {
-    prompt: (text: string, threadId: string, clientMessageId?: string) => send({
+    prompt: (text: string, threadId: string, clientMessageId?: string, attachmentIds: string[] = []) => send({
       type: "prompt",
       text,
       threadId,
       ...(clientMessageId ? { clientMessageId } : {}),
+      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
     }),
     stop: (threadId: string) => send({ type: "stop", threadId }),
     close: () => {

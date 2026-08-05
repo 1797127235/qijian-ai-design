@@ -23,7 +23,7 @@ const exports = new ExportService(desks, artifacts, files);
 const chats = new ChatService(db);
 
 let publish: EventSink = () => undefined;
-const sessions = new AgentSessionRegistry({ artifacts, desks, effects, exports, chats, config, emit: (event) => publish(event) });
+const sessions = new AgentSessionRegistry({ artifacts, desks, effects, exports, chats, files, config, emit: (event) => publish(event) });
 const chat = new ChatGateway(sessions, chats);
 publish = chat.emit;
 

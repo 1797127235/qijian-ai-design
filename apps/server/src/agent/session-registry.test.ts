@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { deskSystemPrompt } from "./system-prompt.js";
-import { AgentSessionRegistry, jsonSnapshot, persistToolEvent, restoreChatMessages } from "./session-registry.js";
+import { AgentSessionRegistry, jsonSnapshot, loadHistoricalVisuals, persistToolEvent, restoreChatMessages } from "./session-registry.js";
 
 function seedSession(registry: AgentSessionRegistry, key: string, session: Partial<AgentSession>) {
   const internals = registry as unknown as { sessions: Map<string, Promise<AgentSession>> };
@@ -12,6 +12,35 @@ function seedSession(registry: AgentSessionRegistry, key: string, session: Parti
 afterEach(() => vi.useRealTimers());
 
 describe("restored chat context", () => {
+  it("restores newest attachment visuals within one global session budget", async () => {
+    const image = (data: string) => ({ type: "image" as const, data, mimeType: "image/png" });
+    const attachment = (id: string) => ({
+      id,
+      originalFilename: `${id}.png`,
+      mediaType: "image/png",
+      sizeBytes: 1,
+      position: 0,
+    });
+    const messages = [
+      { id: "old", threadId: "thread-1", projectId: "project-1", role: "user" as const, text: "old", attachments: [attachment("old-file")], createdAt: "2026-08-05T08:00:00.000Z" },
+      { id: "new", threadId: "thread-1", projectId: "project-1", role: "user" as const, text: "new", attachments: [attachment("new-file")], createdAt: "2026-08-05T08:00:01.000Z" },
+    ];
+    const files = {
+      loadAgentImages: vi.fn(async (_projectId: string, attachments: Array<{ id: string }>) => (
+        attachments[0].id === "new-file" ? [image("12345"), image("67890")] : [image("old")]
+      )),
+    };
+
+    const restored = await loadHistoricalVisuals("project-1", messages, files as never, {
+      maxImages: 2,
+      maxBase64Characters: 10,
+    });
+
+    expect(files.loadAgentImages.mock.calls.map((call) => call[1][0].id)).toEqual(["new-file"]);
+    expect(restored.get("new")?.images).toHaveLength(2);
+    expect(restored.get("old")).toEqual({ images: [], unavailable: ["old-file.png"] });
+  });
+
   it("does not embed user or artifact content in the system prompt", () => {
     const prompt = deskSystemPrompt();
 

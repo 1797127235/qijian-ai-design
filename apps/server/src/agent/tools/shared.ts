@@ -25,6 +25,10 @@ export function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: "text" as const, text }], details };
 }
 
+export function storedFileInputRefs(fileIds: string[] | undefined) {
+  return [...new Set(fileIds ?? [])].map((fileId) => ({ file_id: fileId }));
+}
+
 export function createToolContext(projectId: string, deps: ToolDependencies): ToolContext {
   const changed = (artifactId?: string, undoable = false) => {
     deps.emit({ type: "object_changed", projectId, artifactId, undoable });

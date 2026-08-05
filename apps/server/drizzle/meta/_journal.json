@@ -71,6 +71,20 @@
       "when": 1785905000000,
       "tag": "0009_chat_tool_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785985100000,
+      "tag": "0010_chat_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785988100000,
+      "tag": "0011_attachment_delete_cascade",
+      "breakpoints": true
     }
   ]
 }

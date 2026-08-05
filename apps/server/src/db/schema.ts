@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, jsonb, pgTable, serial, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, serial, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { CreatedBy, DeskLayoutObject, DeskViewport } from "../domain/types.js";
 
 export const projects = pgTable("projects", {
@@ -31,6 +31,7 @@ export const chatMessages = pgTable(
     role: text("role").$type<"user" | "assistant">().notNull(),
     text: text("text").notNull(),
     externalId: text("external_id"),
+    runId: uuid("run_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -56,6 +57,7 @@ export const chatRuns = pgTable(
   (table) => [
     index("chat_runs_thread_status_idx").on(table.threadId, table.status),
     index("chat_runs_project_status_idx").on(table.projectId, table.status),
+    uniqueIndex("chat_runs_thread_running_unique").on(table.threadId).where(sql`${table.status} = 'running'`),
   ],
 );
 
@@ -129,7 +131,22 @@ export const storedFiles = pgTable(
     sizeBytes: integer("size_bytes").notNull(),
     contentHash: text("content_hash").notNull(),
     objectKey: text("object_key").notNull().unique(),
+    pageCount: integer("page_count"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("stored_files_project_idx").on(table.projectId)],
+);
+
+export const chatMessageAttachments = pgTable(
+  "chat_message_attachments",
+  {
+    messageId: uuid("message_id").notNull().references(() => chatMessages.id, { onDelete: "cascade" }),
+    fileId: uuid("file_id").notNull().references(() => storedFiles.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+  },
+  (table) => [
+    unique("chat_message_attachments_message_file_unique").on(table.messageId, table.fileId),
+    unique("chat_message_attachments_message_position_unique").on(table.messageId, table.position),
+    index("chat_message_attachments_file_idx").on(table.fileId),
+  ],
 );

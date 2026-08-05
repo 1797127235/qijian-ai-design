@@ -1,7 +1,7 @@
 /** 生成工具：为已确认的关键空间和设计方向生成效果图变体。 */
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ok, type ToolContext } from "./shared.js";
+import { ok, storedFileInputRefs, type ToolContext } from "./shared.js";
 
 export function createEffectImageTool({ projectId, deps, changed }: ToolContext) {
   return defineTool({
@@ -13,6 +13,7 @@ export function createEffectImageTool({ projectId, deps, changed }: ToolContext)
       intent: Type.Optional(Type.String()),
       x: Type.Optional(Type.Number()),
       y: Type.Optional(Type.Number()),
+      source_file_ids: Type.Optional(Type.Array(Type.String())),
     }),
     execute: async (_id, params, signal) => {
       const snapshot = await deps.desks.snapshot(projectId);
@@ -48,7 +49,7 @@ export function createEffectImageTool({ projectId, deps, changed }: ToolContext)
             provider_id: generated.providerId,
             adopted: false,
           },
-          inputRefs: [{ file_id: generated.fileId }],
+          inputRefs: [{ file_id: generated.fileId }, ...storedFileInputRefs(params.source_file_ids)],
           createdBy: "agent",
         },
         { kind: "effect_image", x: params.x ?? 1320, y: params.y ?? 590, rot: 0 },

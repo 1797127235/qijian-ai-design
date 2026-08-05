@@ -26,5 +26,5 @@ export type DeskObject =
   | { id: string; kind: "setup"; x: number; y: number; rot: number };
 
 export type ChatItem =
-  | { id: string; role: "user" | "agent"; text: string }
+  | { id: string; role: "user" | "agent"; text: string; attachments?: import("../lib/api").ChatAttachment[] }
   | { id: string; role: "activity"; text: string };

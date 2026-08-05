@@ -43,13 +43,17 @@ export class ArtifactService {
     return this.db.transaction(async (tx) => {
       const [artifact] = await tx.select().from(artifacts).where(eq(artifacts.id, artifactId)).for("update");
       if (!artifact) throw new HttpError(404, "未找到该 Artifact");
-      this.validateConfirmedPayload(artifact.artifactType as ArtifactType, input);
-      await this.validateInputRefs(tx, artifact.projectId, input.inputRefs ?? []);
+      const [current] = artifact.currentVersionId
+        ? await tx.select({ inputRefs: artifactVersions.inputRefs }).from(artifactVersions).where(eq(artifactVersions.id, artifact.currentVersionId))
+        : [];
+      const nextInput = { ...input, inputRefs: input.inputRefs ?? current?.inputRefs ?? [] };
+      this.validateConfirmedPayload(artifact.artifactType as ArtifactType, nextInput);
+      await this.validateInputRefs(tx, artifact.projectId, nextInput.inputRefs);
       const [{ next }] = await tx
         .select({ next: max(artifactVersions.versionNo) })
         .from(artifactVersions)
         .where(eq(artifactVersions.artifactId, artifactId));
-      const version = await this.insertVersion(tx, artifactId, (next ?? 0) + 1, input);
+      const version = await this.insertVersion(tx, artifactId, (next ?? 0) + 1, nextInput);
       await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifactId));
       return version;
     });
@@ -115,10 +119,21 @@ export class ArtifactService {
       throw new HttpError(422, "文件引用 ID 格式不正确");
     }
     const owned = await tx
-      .select({ id: storedFiles.id })
+      .select({ id: storedFiles.id, pageCount: storedFiles.pageCount })
       .from(storedFiles)
       .where(and(eq(storedFiles.projectId, projectId), inArray(storedFiles.id, fileIds)));
     if (owned.length !== fileIds.length) throw new HttpError(422, "存在不属于当前项目的文件引用");
+    const pageCountById = new Map(owned.map((file) => [file.id, file.pageCount]));
+    for (const ref of inputRefs) {
+      if (!ref || typeof ref !== "object") continue;
+      const value = ref as Record<string, unknown>;
+      if (value.page === undefined) continue;
+      if (typeof value.file_id !== "string" || !Number.isInteger(value.page) || (value.page as number) < 1) {
+        throw new HttpError(422, "文件页码引用格式不正确");
+      }
+      const pageCount = pageCountById.get(value.file_id);
+      if (!pageCount || (value.page as number) > pageCount) throw new HttpError(422, "文件页码超出 PDF 实际页数");
+    }
   }
 
   private validateConfirmedPayload(artifactType: ArtifactType, input: AppendVersionInput) {

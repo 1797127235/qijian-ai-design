@@ -9,7 +9,7 @@ import type { ServerConfig } from "../config.js";
 import type { Database } from "../db/client.js";
 import { storedFiles } from "../db/schema.js";
 import { artifactTypes } from "../domain/types.js";
-import { HttpError } from "../lib/errors.js";
+import { AppError, HttpError } from "../lib/errors.js";
 import type { ArtifactService } from "../services/artifact-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
 import type { ExportService } from "../services/export-service.js";
@@ -115,13 +115,25 @@ export function createHttpApp(deps: HttpDependencies) {
   });
 
   app.post("/api/projects/:id/files", async (c) => {
+    const contentLength = c.req.header("content-length");
+    if (!contentLength) throw new AppError(400, "BAD_REQUEST", "上传请求必须提供 Content-Length");
+    const declaredLength = Number(contentLength);
+    if (!Number.isFinite(declaredLength) || declaredLength <= 0) throw new AppError(400, "BAD_REQUEST", "Content-Length 无效");
+    if (declaredLength > 31 * 1024 * 1024) {
+      throw new AppError(413, "UPLOAD_TOO_LARGE", "单个文件不能超过 30MB");
+    }
     const form = await c.req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) throw new HttpError(422, "请在 file 字段上传文件");
     const allowed = new Set(["application/pdf", "image/jpeg", "image/png"]);
-    if (!allowed.has(file.type)) throw new HttpError(422, "仅支持 PDF、JPG 和 PNG");
-    if (file.size > 30 * 1024 * 1024) throw new HttpError(422, "单个文件不能超过 30MB");
+    if (!allowed.has(file.type)) throw new AppError(422, "UNSUPPORTED_FILE_TYPE", "仅支持 PDF、JPG 和 PNG");
+    if (file.size > 30 * 1024 * 1024) throw new AppError(413, "UPLOAD_TOO_LARGE", "单个文件不能超过 30MB");
     return c.json(await deps.files.put(c.req.param("id"), basename(file.name), file.type, new Uint8Array(await file.arrayBuffer())), 201);
+  });
+
+  app.delete("/api/projects/:id/files/:fileId", async (c) => {
+    await deps.files.deleteUnattached(c.req.param("id"), c.req.param("fileId"));
+    return c.body(null, 204);
   });
 
   app.get("/api/files/:id", async (c) => {
@@ -133,11 +145,14 @@ export function createHttpApp(deps: HttpDependencies) {
 
   app.post("/api/projects/:id/export", async (c) => c.json(await deps.exports.export(c.req.param("id")), 201));
 
-  app.notFound((c) => c.json({ error: "接口不存在" }, 404));
+  app.notFound((c) => c.json({ error: { code: "NOT_FOUND", message: "接口不存在", retryable: false } }, 404));
   app.onError((error, c) => {
-    const status = error instanceof HttpError ? error.status : 500;
+    const status = error instanceof AppError ? error.status : 500;
     if (status === 500) console.error(error);
-    return c.json({ error: error instanceof Error ? error.message : "服务器错误" }, status);
+    const payload = error instanceof AppError
+      ? { code: error.code, message: error.message, retryable: error.retryable, details: error.details }
+      : { code: "INTERNAL_ERROR", message: "服务器错误", retryable: true };
+    return c.json({ error: payload }, status);
   });
   return app;
 }

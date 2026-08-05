@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { ArrowUp, History, LoaderCircle, MessageSquarePlus, PanelRightOpen, Plus, Square, Trash2, X } from "lucide-react";
+import { ArrowUp, FileText, History, LoaderCircle, MessageSquarePlus, PanelRightOpen, Paperclip, Plus, RotateCcw, Square, Trash2, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatConnectionStatus, ChatThread } from "../lib/api";
+import { api, type ChatAttachment, type ChatConnectionStatus, type ChatThread } from "../lib/api";
+import { ATTACHMENT_ACCEPT } from "./attachments";
 import { safeMarkdownUrl } from "./markdown";
 import type { ChatItem } from "./types";
+import { useAttachmentDraft } from "./useAttachmentDraft";
 
 const connectionLabels: Record<ChatConnectionStatus, string> = {
   connecting: "连接中",
@@ -64,7 +66,34 @@ export function MarkdownMessage({ text }: { text: string }) {
   );
 }
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
+  if (attachments.length === 0) return null;
+  return (
+    <div className="message-attachments" aria-label="消息附件">
+      {attachments.map((attachment) => (
+        <a
+          key={attachment.id}
+          className="message-attachment"
+          href={api.fileUrl(attachment.id)}
+          target="_blank"
+          rel="noreferrer"
+          title={attachment.originalFilename}
+        >
+          {attachment.mediaType === "application/pdf" ? <FileText size={15} /> : <Paperclip size={15} />}
+          <span>{attachment.originalFilename}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 export function ChatPanel({
+  projectId,
   items,
   streaming,
   busy,
@@ -72,12 +101,18 @@ export function ChatPanel({
   threads,
   activeThreadId,
   threadChanging,
+  initialText,
+  initialFiles,
+  submissionOutcome,
   onSend,
   onStop,
   onNewThread,
   onSelectThread,
   onDeleteThread,
+  onInitialFilesConsumed,
+  onDraftStateChange,
 }: {
+  projectId: string;
   items: ChatItem[];
   streaming?: string;
   busy: boolean;
@@ -85,22 +120,57 @@ export function ChatPanel({
   threads: ChatThread[];
   activeThreadId?: string;
   threadChanging: boolean;
-  onSend: (text: string) => void;
+  initialText?: string;
+  initialFiles?: File[];
+  submissionOutcome?: { clientMessageId: string; status: "acknowledged" | "rejected" };
+  onSend: (input: { text: string; attachmentIds: string[]; clientMessageId: string }) => boolean;
   onStop: () => void;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void;
+  onInitialFilesConsumed?: () => void;
+  onDraftStateChange?: (hasDraft: boolean) => void;
 }) {
   const [input, setInput] = useState("");
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("qijian.chat.collapsed") === "true");
   const [panelWidth, setPanelWidth] = useState(storedChatWidth);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottom = useRef(true);
   const panelWidthRef = useRef(panelWidth);
   const resizing = useRef<{ startX: number; startWidth: number }>();
-  const sendDisabled = busy || connection !== "connected";
+  const submittedRef = useRef<{
+    clientMessageId: string;
+    text: string;
+    localIds: string[];
+  }>();
+  const [pendingClientMessageId, setPendingClientMessageId] = useState<string>();
+  const attachments = useAttachmentDraft(projectId);
+  const draftLocked = Boolean(pendingClientMessageId);
+  const attachmentsReady = attachments.items.every((item) => item.status === "uploaded");
+  const hasContent = Boolean(input.trim()) || attachments.items.some((item) => item.status === "uploaded");
+  const sendDisabled = busy || draftLocked || connection !== "connected" || !attachmentsReady;
+
+  useEffect(() => {
+    if (!initialText && !initialFiles?.length) return;
+    if (initialText) setInput(initialText);
+    if (initialFiles?.length) attachments.addFiles(initialFiles);
+    onInitialFilesConsumed?.();
+  }, [initialText, initialFiles, attachments.addFiles, onInitialFilesConsumed]);
+
+  useEffect(() => onDraftStateChange?.(attachments.items.length > 0), [attachments.items.length, onDraftStateChange]);
+
+  useEffect(() => {
+    const submitted = submittedRef.current;
+    if (!submissionOutcome || !submitted || submissionOutcome.clientMessageId !== submitted.clientMessageId) return;
+    setPendingClientMessageId(undefined);
+    if (submissionOutcome.status === "rejected") return;
+    submittedRef.current = undefined;
+    setInput("");
+    attachments.clearClaimed(submitted.localIds);
+  }, [submissionOutcome, attachments.clearClaimed]);
 
   useEffect(() => {
     const last = items.at(-1);
@@ -135,15 +205,26 @@ export function ChatPanel({
 
   const submit = () => {
     const text = input.trim();
-    if (!text || sendDisabled) return;
-    setInput("");
+    const ready = attachments.items.filter((item) => item.status === "uploaded" && item.stored);
+    if ((!text && ready.length === 0) || sendDisabled) return;
+    const localIds = ready.map((item) => item.localId);
+    const retry = submittedRef.current;
+    const clientMessageId = retry
+      && retry.text === text
+      && retry.localIds.length === localIds.length
+      && retry.localIds.every((id, index) => id === localIds[index])
+      ? retry.clientMessageId
+      : globalThis.crypto?.randomUUID?.() ?? `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    if (!onSend({ text, attachmentIds: ready.map((item) => item.stored!.id), clientMessageId })) return;
+    submittedRef.current = { clientMessageId, text, localIds };
+    setPendingClientMessageId(clientMessageId);
     stickToBottom.current = true;
-    onSend(text);
   };
 
-  const insertPrompt = (text: string) => {
-    setInput((current) => current.trim() ? `${current.trimEnd()} ${text}` : text);
-    requestAnimationFrame(() => inputRef.current?.focus());
+  const discardDraftBefore = (action: () => void) => {
+    if (attachments.items.length > 0 && !window.confirm("当前消息还有未发送的附件。离开后将丢弃这些附件，是否继续？")) return;
+    attachments.discardAll();
+    action();
   };
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
@@ -237,8 +318,10 @@ export function ChatPanel({
             aria-label="新建对话"
             title={busy ? "请等待当前任务完成" : "新建对话"}
             onClick={() => {
-              setHistoryOpen(false);
-              onNewThread();
+              discardDraftBefore(() => {
+                setHistoryOpen(false);
+                onNewThread();
+              });
             }}
           >
             {threadChanging ? <LoaderCircle className="is-spinning" size={17} /> : <MessageSquarePlus size={17} strokeWidth={1.7} />}
@@ -276,8 +359,10 @@ export function ChatPanel({
                     className="chat-thread-select"
                     disabled={threadChanging || busy}
                     onClick={() => {
-                      setHistoryOpen(false);
-                      onSelectThread(thread.id);
+                      discardDraftBefore(() => {
+                        setHistoryOpen(false);
+                        onSelectThread(thread.id);
+                      });
                     }}
                   >
                     <strong>{thread.title}</strong>
@@ -321,7 +406,10 @@ export function ChatPanel({
             </div>
             <div className="chat-suggestions">
               {suggestions.map((suggestion) => (
-                <button key={suggestion.title} type="button" disabled={sendDisabled} onClick={() => onSend(suggestion.title)}>
+                <button key={suggestion.title} type="button" disabled={sendDisabled} onClick={() => {
+                  setInput(suggestion.title);
+                  requestAnimationFrame(() => inputRef.current?.focus());
+                }}>
                   <strong>{suggestion.title}</strong>
                   <span>{suggestion.description}</span>
                 </button>
@@ -331,21 +419,87 @@ export function ChatPanel({
         )}
         {items.map((m) => (
           <div key={m.id} className={`msg ${m.role}`}>
-            {m.role === "agent" ? <MarkdownMessage text={m.text} /> : <PlainMessageText text={m.text} />}
+            {m.role === "agent" ? <MarkdownMessage text={m.text} /> : m.text ? <PlainMessageText text={m.text} /> : null}
+            {m.role === "user" && <MessageAttachments attachments={m.attachments ?? []} />}
           </div>
         ))}
         {streaming && <div className="msg agent"><MarkdownMessage text={streaming} /></div>}
         {busy && !streaming && <div className="msg activity" role="status">正在处理…</div>}
       </div>
-      <div className="chat-input">
+      <div
+        className="chat-input"
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (draftLocked || !event.dataTransfer.files.length) return;
+          event.preventDefault();
+          attachments.addFiles(Array.from(event.dataTransfer.files));
+        }}
+      >
+        {attachments.items.length > 0 && (
+          <div className="composer-attachments" aria-label="待发送附件">
+            {attachments.items.map((item) => (
+              <div key={item.localId} className={`composer-attachment ${item.status}`}>
+                <div className="composer-attachment-preview" aria-hidden="true">
+                  {item.previewUrl
+                    ? <img src={item.previewUrl} alt="" />
+                    : <FileText size={19} strokeWidth={1.6} />}
+                </div>
+                <div className="composer-attachment-copy">
+                  <span title={item.file.name}>{item.file.name}</span>
+                  <small>
+                    {item.status === "queued" && "等待上传"}
+                    {item.status === "uploading" && "上传中"}
+                    {item.status === "uploaded" && `${formatBytes(item.file.size)}${item.stored?.pageCount ? ` · ${item.stored.pageCount} 页` : ""}`}
+                    {item.status === "error" && item.error}
+                  </small>
+                </div>
+                {item.status === "uploading" && <LoaderCircle className="is-spinning composer-attachment-status" size={15} aria-label="上传中" />}
+                {item.status === "error" && !item.error?.includes("仅支持") && !item.error?.includes("30MB") && !item.error?.includes("60MB") && !item.error?.includes("内容为空") && (
+                  <button
+                    type="button"
+                    className="composer-attachment-action"
+                    aria-label={`重试上传 ${item.file.name}`}
+                    title="重试上传"
+                    disabled={draftLocked}
+                    onClick={() => attachments.retry(item.localId)}
+                  >
+                    <RotateCcw size={15} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="composer-attachment-action"
+                  aria-label={`移除 ${item.file.name}`}
+                  title="移除附件"
+                  disabled={draftLocked}
+                  onClick={() => attachments.remove(item.localId)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="sr-only" role="status" aria-live="polite">
+          {attachments.items.some((item) => item.status === "uploading") ? "附件正在上传" : ""}
+          {attachments.items.some((item) => item.status === "error") ? "有附件上传失败" : ""}
+        </div>
         <label className="sr-only" htmlFor="design-assistant-input">给设计助手发送消息</label>
         <textarea
           ref={inputRef}
           id="design-assistant-input"
           value={input}
+          disabled={draftLocked}
           rows={3}
           placeholder={connection === "connected" ? "描述你想推进的设计工作…" : `${connectionLabels[connection]}，可先输入消息`}
           onChange={(e) => setInput(e.target.value)}
+          onPaste={(event) => {
+            if (draftLocked) return;
+            const files = Array.from(event.clipboardData.files);
+            if (files.length > 0) attachments.addFiles(files);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -358,12 +512,24 @@ export function ChatPanel({
             <button
               type="button"
               className="composer-tool"
-              aria-label="引用当前画布"
-              title="引用当前画布"
-              onClick={() => insertPrompt("@当前画布 ")}
+              aria-label="添加附件"
+              title="添加附件"
+              disabled={draftLocked}
+              onClick={() => fileInputRef.current?.click()}
             >
               <Plus size={17} strokeWidth={1.7} />
             </button>
+            <input
+              ref={fileInputRef}
+              className="sr-only"
+              type="file"
+              multiple
+              accept={ATTACHMENT_ACCEPT}
+              onChange={(event) => {
+                attachments.addFiles(Array.from(event.target.files ?? []));
+                event.target.value = "";
+              }}
+            />
           </div>
           <div className="composer-actions">
             <button
@@ -372,7 +538,7 @@ export function ChatPanel({
               aria-label={busy ? "停止生成" : "发送消息"}
               title={connection === "connected" ? (busy ? "停止生成" : "发送消息") : connectionLabels[connection]}
               onClick={busy ? onStop : submit}
-              disabled={connection !== "connected" || (!busy && !input.trim())}
+              disabled={connection !== "connected" || (!busy && (!hasContent || !attachmentsReady))}
             >
               {busy ? <Square size={14} fill="currentColor" strokeWidth={1.5} /> : <ArrowUp size={18} strokeWidth={1.8} />}
             </button>

@@ -41,6 +41,11 @@ export function App() {
   const [focusRequest, setFocusRequest] = useState<{ id: string; token: number }>();
   const [setupOpen, setSetupOpen] = useState(false);
   const [floorPlanFileId, setFloorPlanFileId] = useState<string>();
+  const [composerHandoff, setComposerHandoff] = useState<{ text?: string; files?: File[] }>();
+  const [submissionOutcome, setSubmissionOutcome] = useState<{
+    clientMessageId: string;
+    status: "acknowledged" | "rejected";
+  }>();
   const chatRef = useRef<ReturnType<typeof connectChat>>();
   const streamBuf = useRef("");
   const activeProjectRef = useRef<string>();
@@ -50,6 +55,8 @@ export function App() {
   const threadLoadSequence = useRef(0);
   const persistViewport = useRef<number>();
   const viewportSaveFailed = useRef(false);
+  const hasAttachmentDraftRef = useRef(false);
+  const pendingPromptIdRef = useRef<string>();
 
   const loadProjects = useCallback(async () => {
     try {
@@ -74,9 +81,14 @@ export function App() {
   }, []);
 
   const openProject = useCallback(
-    async (projectId: string) => {
+    async (projectId: string, options?: { initialText?: string; initialFiles?: File[] }) => {
       chatRef.current?.close();
       activeProjectRef.current = projectId;
+      setComposerHandoff(options?.initialText || options?.initialFiles?.length
+        ? { text: options.initialText, files: options.initialFiles }
+        : undefined);
+      setSubmissionOutcome(undefined);
+      pendingPromptIdRef.current = undefined;
       refreshSequence.current += 1;
       threadLoadSequence.current += 1;
       window.clearTimeout(persistViewport.current);
@@ -111,10 +123,11 @@ export function App() {
           id: message.id,
           role: message.role === "assistant" ? "agent" : "user",
           text: message.text,
+          attachments: message.attachments,
         })));
         const plan = snap.artifacts.find((a) => a.artifactType === "space_map");
         setFloorPlanFileId(typeof plan?.payload.source_file_id === "string" ? plan.payload.source_file_id : undefined);
-        setSetupOpen(!plan);
+        setSetupOpen(false);
         const chat = connectChat(projectId, (event) => {
           if (activeProjectRef.current !== projectId) return;
           if (event.type === "agent_event") {
@@ -162,15 +175,25 @@ export function App() {
                   id: event.message.id,
                   role: event.message.role === "assistant" ? "agent" : "user",
                   text: event.message.text,
+                  attachments: event.message.attachments,
                 }]);
             if (event.message.role === "user") {
+              const titleSource = event.message.text || event.message.attachments[0]?.originalFilename || "新对话";
               setChatThreads((current) => current.map((thread) => thread.id === event.message.threadId
                 ? {
                     ...thread,
-                    title: thread.title === "新对话" ? event.message.text.replace(/\s+/g, " ").slice(0, 28) : thread.title,
+                    title: thread.title === "新对话" ? titleSource.replace(/\s+/g, " ").slice(0, 28) : thread.title,
                     updatedAt: event.message.createdAt,
                   }
                 : thread));
+            }
+            return;
+          }
+          if (event.type === "prompt_ack") {
+            if (event.threadId !== activeChatThreadRef.current) return;
+            if (event.clientMessageId && pendingPromptIdRef.current === event.clientMessageId) {
+              pendingPromptIdRef.current = undefined;
+              setSubmissionOutcome({ clientMessageId: event.clientMessageId, status: "acknowledged" });
             }
             return;
           }
@@ -192,16 +215,29 @@ export function App() {
             return;
           }
           if (event.type === "error") {
+            const pendingPromptId = pendingPromptIdRef.current;
+            if (pendingPromptId && (!event.clientMessageId || event.clientMessageId === pendingPromptId)) {
+              pendingPromptIdRef.current = undefined;
+              setSubmissionOutcome({ clientMessageId: pendingPromptId, status: "rejected" });
+            }
             activeToolsRef.current.clear();
             streamBuf.current = "";
             setStreaming(undefined);
             setChatItems((cur) => [
               ...cur.filter((item) => item.role !== "activity"),
-              { id: nextId(), role: "agent", text: `出错了：${event.message}` },
+              { id: nextId(), role: "agent", text: `出错了：${event.error.message}` },
             ]);
             setBusy(false);
           }
-        }, setConnection);
+        }, (status) => {
+          if (status !== "connected" && pendingPromptIdRef.current) {
+            const pendingPromptId = pendingPromptIdRef.current;
+            pendingPromptIdRef.current = undefined;
+            setSubmissionOutcome({ clientMessageId: pendingPromptId, status: "rejected" });
+            setBusy(false);
+          }
+          setConnection(status);
+        });
         chatRef.current = chat;
       } catch (e) {
         if (activeProjectRef.current !== projectId) return;
@@ -219,7 +255,10 @@ export function App() {
   }, []);
 
   const leaveProject = useCallback(() => {
+    if (hasAttachmentDraftRef.current && !window.confirm("当前消息还有未发送的附件。离开后将丢弃这些附件，是否继续？")) return;
     activeProjectRef.current = undefined;
+    hasAttachmentDraftRef.current = false;
+    setComposerHandoff(undefined);
     refreshSequence.current += 1;
     threadLoadSequence.current += 1;
     chatRef.current?.close();
@@ -238,10 +277,10 @@ export function App() {
   }, []);
 
   const createProject = useCallback(
-    async (input: { name: string }) => {
+    async (input: { name: string; files?: File[]; prompt?: string }) => {
       const project = await api.createProject(input.name);
       setFloorPlanFileId(undefined);
-      await openProject(project.id);
+      await openProject(project.id, { initialText: input.prompt, initialFiles: input.files });
     },
     [openProject],
   );
@@ -354,14 +393,17 @@ export function App() {
   );
 
   const sendChat = useCallback(
-    (text: string) => {
+    (input: { text: string; attachmentIds: string[]; clientMessageId: string }) => {
       const threadId = activeChatThreadRef.current;
-      if (connection !== "connected" || busy || !threadId) return;
-      if (!chatRef.current?.prompt(text, threadId, nextId())) {
+      if (connection !== "connected" || busy || !threadId) return false;
+      if (!chatRef.current?.prompt(input.text, threadId, input.clientMessageId, input.attachmentIds)) {
         setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: "消息未发送，请等待连接恢复后重试。" }]);
-        return;
+        return false;
       }
+      pendingPromptIdRef.current = input.clientMessageId;
+      setSubmissionOutcome(undefined);
       setBusy(true);
+      return true;
     },
     [busy, connection],
   );
@@ -391,6 +433,7 @@ export function App() {
         id: message.id,
         role: message.role === "assistant" ? "agent" : "user",
         text: message.text,
+        attachments: message.attachments,
       })));
     } catch (error) {
       setChatItems((current) => [...current, {
@@ -487,10 +530,6 @@ export function App() {
   if (view.mode === "home") {
     return (
       <div className="app-shell">
-        <header className="topbar">
-          <span className="seal-box">砌</span>
-          <div className="brand">砌间<small>QIJIAN AI DESIGN</small></div>
-        </header>
         <Home
           projects={projects}
           error={homeError}
@@ -534,22 +573,33 @@ export function App() {
             <DeskObjectView obj={obj} handlers={{ onConfirm, onSelectDirection, onAdopt, onRedrawPlan: () => setSetupOpen(true) }} />
           )}
         >
+          {deskSnapshot && !planObj && !setupOpen && (
+            <div className="obj obj-setup" style={{ left: 420, top: 90 }}>
+              <div className="plan-placeholder">
+                <span className="plan-placeholder-tag">空间地图</span>
+                <p>这张桌面还没有户型图。可以直接和助手聊需求，或上传户型图建立空间地图。</p>
+                <button type="button" className="mini-btn primary" onClick={() => setSetupOpen(true)}>上传户型图</button>
+              </div>
+            </div>
+          )}
           {deskSnapshot && setupOpen && (
             <div className="obj obj-setup" style={{ left: 420, top: 90 }}>
               <SpaceMapSetup
                 projectId={deskProjectId}
                 initialFileId={floorPlanFileId ?? (planObj?.kind === "plan" ? planObj.sourceFileId : undefined)}
                 existingSpaces={planObj?.kind === "plan" ? planObj.spaces : undefined}
-                onCancel={planObj ? () => setSetupOpen(false) : undefined}
+                onCancel={() => setSetupOpen(false)}
                 onSave={async (payload) => {
                   const saved = await withRefresh(async () => {
                     const existing = planObj && artifactOf(planObj.id);
+                    const inputRefs = typeof payload.source_file_id === "string" ? [{ file_id: payload.source_file_id }] : [];
                     if (existing) {
-                      await api.appendVersion(existing.id, payload);
+                      await api.appendVersion(existing.id, payload, inputRefs);
                     } else {
                       await api.createArtifact(deskProjectId, {
                         artifactType: "space_map",
                         payload,
+                        inputRefs,
                         layout: { kind: "plan", x: 420, y: 90, w: 640 },
                       });
                     }
@@ -562,6 +612,7 @@ export function App() {
           )}
         </Desk>
         <ChatPanel
+          projectId={deskProjectId}
           items={chatItems}
           streaming={streaming}
           busy={busy}
@@ -569,11 +620,16 @@ export function App() {
           threads={chatThreads}
           activeThreadId={activeChatThreadId}
           threadChanging={threadChanging}
+          initialText={composerHandoff?.text}
+          initialFiles={composerHandoff?.files}
+          submissionOutcome={submissionOutcome}
           onSend={sendChat}
           onStop={stopChat}
           onNewThread={() => void createChatThread()}
           onSelectThread={(threadId) => void selectChatThread(threadId)}
           onDeleteThread={(threadId) => void deleteChatThread(threadId)}
+          onInitialFilesConsumed={() => setComposerHandoff(undefined)}
+          onDraftStateChange={(hasDraft) => { hasAttachmentDraftRef.current = hasDraft; }}
         />
       </div>
     </div>

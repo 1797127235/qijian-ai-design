@@ -13,12 +13,13 @@ describe("ChatPanel", () => {
     });
 
     const html = renderToStaticMarkup(createElement(ChatPanel, {
+      projectId: "project-1",
       items: [],
       busy: true,
       connection: "connected",
       threads: [],
       threadChanging: false,
-      onSend: vi.fn(),
+      onSend: vi.fn().mockReturnValue(true),
       onStop: vi.fn(),
       onNewThread: vi.fn(),
       onSelectThread: vi.fn(),

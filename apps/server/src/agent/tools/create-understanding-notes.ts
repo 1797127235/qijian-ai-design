@@ -1,7 +1,7 @@
 /** 生成工具：基于已有空间地图和当前对话创建理解便签 Artifact。 */
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ok, type ToolContext } from "./shared.js";
+import { ok, storedFileInputRefs, type ToolContext } from "./shared.js";
 
 export function createUnderstandingNotesTool({ projectId, deps, place }: ToolContext) {
   return defineTool({
@@ -15,6 +15,7 @@ export function createUnderstandingNotesTool({ projectId, deps, place }: ToolCon
         x: Type.Number(),
         y: Type.Number(),
       }), { minItems: 1 }),
+      source_file_ids: Type.Optional(Type.Array(Type.String())),
     }),
     execute: async (_id, params) => {
       const snapshot = await deps.desks.snapshot(projectId);
@@ -36,6 +37,7 @@ export function createUnderstandingNotesTool({ projectId, deps, place }: ToolCon
       for (const [index, note] of params.notes.entries()) {
         const result = await deps.artifacts.create(projectId, "understanding_note", {
           payload: { space_id: note.space_id, who: "AI 理解", text: note.text },
+          inputRefs: storedFileInputRefs(params.source_file_ids),
           createdBy: "agent",
         });
         artifactIds.push(result.artifact.id);

@@ -12,13 +12,30 @@ async function receive(gateway: ChatGateway, client: ReturnType<typeof socket>, 
 }
 
 describe("ChatGateway run lifecycle", () => {
+  it("reports schema violations as non-retryable validation errors", async () => {
+    const sessions = { ensure: vi.fn(), prompt: vi.fn() };
+    const chats = { resolveThread: vi.fn(), appendPrompt: vi.fn() };
+    const gateway = new ChatGateway(sessions as never, chats as never);
+    const client = socket();
+
+    await receive(gateway, client, { type: "prompt", text: "", clientMessageId: "draft-invalid", attachmentIds: [] });
+
+    expect(JSON.parse(client.send.mock.calls[0][0])).toMatchObject({
+      type: "error",
+      clientMessageId: "draft-invalid",
+      error: { code: "VALIDATION_FAILED", retryable: false },
+    });
+    expect(sessions.ensure).not.toHaveBeenCalled();
+    expect(chats.appendPrompt).not.toHaveBeenCalled();
+  });
+
   it("persists a completed run around an agent prompt", async () => {
     const sessions = { ensure: vi.fn(), prompt: vi.fn().mockResolvedValue(undefined) };
     const chats = {
       resolveThread: vi.fn().mockResolvedValue({ id: "thread-1" }),
       appendPrompt: vi.fn().mockResolvedValue({
         created: true,
-        message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "继续设计", createdAt: "now" },
+        message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "继续设计", attachments: [], createdAt: "now" },
         run: { id: "run-1" },
       }),
       finishRun: vi.fn().mockResolvedValue(undefined),
@@ -27,8 +44,8 @@ describe("ChatGateway run lifecycle", () => {
 
     await receive(gateway, socket(), { type: "prompt", text: "继续设计", threadId: "thread-1" });
 
-    expect(chats.appendPrompt).toHaveBeenCalledWith("project-1", "thread-1", "继续设计", undefined);
-    expect(sessions.prompt).toHaveBeenCalledWith("project-1", "thread-1", "继续设计", "run-1");
+    expect(chats.appendPrompt).toHaveBeenCalledWith("project-1", "thread-1", "继续设计", undefined, []);
+    expect(sessions.prompt).toHaveBeenCalledWith("project-1", "thread-1", "继续设计", [], "run-1");
     expect(chats.finishRun).toHaveBeenCalledWith("run-1", "completed");
   });
 
@@ -46,7 +63,7 @@ describe("ChatGateway run lifecycle", () => {
       resolveThread: vi.fn().mockResolvedValue({ id: "thread-1" }),
       appendPrompt: vi.fn().mockResolvedValue({
         created: true,
-        message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "继续设计", createdAt: "now" },
+        message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "继续设计", attachments: [], createdAt: "now" },
         run: { id: "run-1" },
       }),
       finishRun: vi.fn().mockResolvedValue(statusMessage),
@@ -58,5 +75,46 @@ describe("ChatGateway run lifecycle", () => {
 
     expect(chats.finishRun).toHaveBeenCalledWith("run-1", "failed", "provider disconnected");
     expect(client.send).not.toHaveBeenCalledWith(expect.stringContaining('"type":"error"'));
+  });
+
+  it("accepts an attachment-only prompt and acknowledges the correlated draft", async () => {
+    const attachments = [{
+      id: "file-1",
+      originalFilename: "plan.pdf",
+      mediaType: "application/pdf",
+      sizeBytes: 1200,
+      pageCount: 2,
+      position: 0,
+    }];
+    const sessions = { ensure: vi.fn(), prompt: vi.fn().mockResolvedValue(undefined) };
+    const chats = {
+      resolveThread: vi.fn().mockResolvedValue({ id: "thread-1" }),
+      appendPrompt: vi.fn().mockResolvedValue({
+        created: true,
+        message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "", attachments, createdAt: "now" },
+        run: { id: "run-1" },
+      }),
+      finishRun: vi.fn().mockResolvedValue(undefined),
+    };
+    const gateway = new ChatGateway(sessions as never, chats as never);
+    const client = socket();
+
+    await receive(gateway, client, {
+      type: "prompt",
+      text: "",
+      threadId: "thread-1",
+      clientMessageId: "draft-1",
+      attachmentIds: ["file-1"],
+    });
+
+    expect(chats.appendPrompt).toHaveBeenCalledWith(
+      "project-1",
+      "thread-1",
+      "",
+      "client:project-1:draft-1",
+      ["file-1"],
+    );
+    expect(sessions.prompt).toHaveBeenCalledWith("project-1", "thread-1", "", attachments, "run-1");
+    expect(client.send).toHaveBeenCalledWith(expect.stringContaining('"type":"prompt_ack"'));
   });
 });

@@ -86,6 +86,22 @@ describe("connectChat", () => {
     chat.close();
   });
 
+  it("sends ordered attachment ids with the prompt", () => {
+    const chat = connectChat("project-1", vi.fn());
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+
+    expect(chat.prompt("参考这些资料", "thread-1", "client-message-2", ["file-1", "file-2"])).toBe(true);
+    expect(socket.sent).toEqual([JSON.stringify({
+      type: "prompt",
+      text: "参考这些资料",
+      threadId: "thread-1",
+      clientMessageId: "client-message-2",
+      attachmentIds: ["file-1", "file-2"],
+    })]);
+    chat.close();
+  });
+
   it("sends a stop command for the active thread", () => {
     const chat = connectChat("project-1", vi.fn());
     const socket = FakeWebSocket.instances[0];
