@@ -256,7 +256,7 @@ button { font-family: inherit; }
   position: absolute; right: 26px; bottom: 16px; padding: 7px 14px; border: none; border-radius: 8px;
   background: var(--color-accent); color: #fff; font-size: 12px; cursor: pointer;
 }
-.chat-input .composer-perm { position: absolute; right: 86px; bottom: 16px; }
+.chat-input .composer-perm { position: absolute; left: 44px; bottom: 16px; }
 .chat-input .send:disabled { opacity: .4; cursor: default; }
 
 /* ── 首页：设计桌面文件浏览器 ── */
