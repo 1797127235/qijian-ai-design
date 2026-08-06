@@ -145,11 +145,11 @@ export function useDeskPlacement(options: {
       const object = objects.find((item) => item.id === artifactId && item.kind === "sticky_note");
       if (!object || object.kind !== "sticky_note") return;
       const next = text;
-      if (next === object.text) return;
       if (next.trim().length === 0) {
         deleteObject(artifactId);
         return;
       }
+      if (next === object.text) return;
       void enqueue(async () => {
         try {
           await api.appendVersion(artifactId, { text: next });
