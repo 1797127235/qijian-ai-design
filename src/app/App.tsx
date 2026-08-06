@@ -235,6 +235,7 @@ export function App() {
   const resetChatUi = chat.resetChatUi;
   const clearViewportTimer = desk.clearViewportTimer;
   const bindProjectChat = chat.bindProjectChat;
+  const reconnectChat = chat.reconnectChat;
   const setChatConnection = chat.setConnection;
   const setChatBusy = chat.setBusy;
   const setChatItems = chat.setChatItems;
@@ -297,10 +298,27 @@ export function App() {
     [bindProjectChat, clearViewportTimer, refreshDesk, setChatBusy, setChatConnection, setChatItems],
   );
 
+  // 仅卸载时关 WS；依赖稳定，避免 HMR 重跑 effect 时反复 close 却不重连
   useEffect(() => () => {
     closeChat();
     clearViewportTimer();
-  }, [closeChat, clearViewportTimer]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount-only cleanup
+  }, []);
+
+  // 桌面页且已加载过线程：掉成 disconnected 时重绑 WS（后端热重启），不清消息
+  // 要求 activeChatThreadId：避免与首次 bindProjectChat 抢跑
+  useEffect(() => {
+    if (view.mode !== "desk") return;
+    if (chat.connection !== "disconnected") return;
+    if (!chat.activeChatThreadId) return;
+    const projectId = view.projectId;
+    if (!projectId || activeProjectRef.current !== projectId) return;
+    const timer = window.setTimeout(() => {
+      if (activeProjectRef.current !== projectId) return;
+      reconnectChat(projectId);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [view, chat.connection, chat.activeChatThreadId, reconnectChat]);
 
   const leaveProject = useCallback((options?: { history?: "push" | "none" }) => {
     if (hasAttachmentDraftRef.current && !window.confirm("当前消息还有未发送的附件。离开后将丢弃这些附件，是否继续？")) return false;
@@ -443,9 +461,16 @@ export function App() {
               onStartEdit={placement.startEdit}
               onCommitText={placement.commitText}
               onRetryGenerate={(id) => {
+                // id 是失败卡本身；真实参考源从连入边 from 解析，不能再当 source 新建一张
                 const target = objects.find((item) => item.id === id);
-                const prompt = target?.kind === "effect_image" ? (target.prompt ?? "") : "";
-                void gen.generate(id, prompt);
+                if (!target || target.kind !== "effect_image") return;
+                const inbound = connections.find((c) => c.to === id);
+                const sourceArtifactId = inbound?.from ?? id;
+                void gen.generate({
+                  sourceArtifactId,
+                  targetArtifactId: id,
+                  prompt: target.prompt ?? "",
+                });
               }}
             />
           )}
@@ -455,7 +480,7 @@ export function App() {
               source={panelSource}
               references={panelRefs}
               busy={gen.busySourceId === panelSource.id}
-              onGenerate={(prompt) => void gen.generate(panelSource.id, prompt)}
+              onGenerate={(prompt) => void gen.generate({ sourceArtifactId: panelSource.id, prompt })}
               onClose={gen.closePanel}
             />
           )}

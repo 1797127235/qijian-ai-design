@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, ne, or } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { chatMessageAttachments, chatMessages, chatRuns, chatThreads, chatToolCalls, storedFiles } from "../db/schema.js";
 import {
@@ -69,7 +69,6 @@ export class ChatService {
   }
 
   async listThreads(projectId: string): Promise<ChatThreadDto[]> {
-    await this.resolveThread(projectId);
     const rows = await this.db
       .select()
       .from(chatThreads)
@@ -178,7 +177,22 @@ export class ChatService {
         .from(chatRuns)
         .where(and(eq(chatRuns.threadId, threadId), eq(chatRuns.status, "running")))
         .limit(1);
-      if (running) throw new AppError(409, "ATTACHMENT_BUSY", "当前对话仍有任务在执行，请稍后再发送", true);
+      if (running) {
+        // 清扫陈旧 run：其他实例残留，或本实例挂死超过 10 分钟（模型调用无超时兜底）
+        const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
+        const swept = await tx
+          .update(chatRuns)
+          .set({ status: "interrupted", error: "任务残留自动清理", finishedAt: new Date() })
+          .where(and(
+            eq(chatRuns.id, running.id),
+            eq(chatRuns.status, "running"),
+            or(ne(chatRuns.ownerId, this.instanceId), lt(chatRuns.startedAt, staleBefore)),
+          ))
+          .returning({ id: chatRuns.id });
+        if (swept.length === 0) {
+          throw new AppError(409, "ATTACHMENT_BUSY", "当前对话仍有任务在执行，请稍后再发送", true);
+        }
+      }
 
       const files = uniqueAttachmentIds.length === 0
         ? []

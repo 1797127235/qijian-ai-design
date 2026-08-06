@@ -82,6 +82,8 @@ export function ChatPanel({
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("qijian.chat.collapsed") === "true");
   const [panelWidth, setPanelWidth] = useState(storedChatWidth);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const historyMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -142,9 +144,25 @@ export function ChatPanel({
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setHistoryOpen(false);
     };
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (historyMenuRef.current?.contains(target)) return;
+      if (historyButtonRef.current?.contains(target)) return;
+      setHistoryOpen(false);
+    };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    window.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("pointerdown", closeOnOutsidePointer);
+    };
   }, [historyOpen]);
+
+  // 对话删空后收起历史菜单，避免只剩个空壳标题
+  useEffect(() => {
+    if (threads.length === 0) setHistoryOpen(false);
+  }, [threads.length]);
 
   const submit = () => {
     const text = input.trim();
@@ -255,7 +273,7 @@ export function ChatPanel({
           />
           <div className="chat-head">
             <div className="chat-head-copy">
-              <span className="chat-title" title={activeThread?.title}>{activeThread?.title ?? "新对话"}</span>
+              <span className="chat-title" title={activeThread?.title}>{activeThread?.title ?? "设计助手"}</span>
               <span className="chat-beta">Beta</span>
               <span className={`chat-connection ${connection}`}>{connectionLabels[connection]}</span>
             </div>
@@ -282,6 +300,7 @@ export function ChatPanel({
                 aria-label="对话历史"
                 title="对话历史"
                 aria-expanded={historyOpen}
+                ref={historyButtonRef}
                 onClick={() => setHistoryOpen((open) => !open)}
               >
                 <History size={17} strokeWidth={1.7} />
@@ -299,6 +318,7 @@ export function ChatPanel({
             </div>
             {historyOpen && (
               <ChatThreadList
+                ref={historyMenuRef}
                 threads={threads}
                 activeThreadId={activeThreadId}
                 threadChanging={threadChanging}

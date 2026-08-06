@@ -14,6 +14,8 @@ export interface ServerConfig {
   imageModel?: string;
   /** 有参考图时的 model；edits 路径用（grok-imagine-edit 上游 404，改用 quality） */
   imageEditModel?: string;
+  /** 图像服务/结果 CDN 的 HTTP 代理；x.ai 图床被墙时必须，如 http://127.0.0.1:7897 */
+  imageFetchProxy?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -32,5 +34,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     imageApiKey: env.IMAGE_API_KEY,
     imageModel: env.IMAGE_MODEL ?? "grok-imagine-image-quality",
     imageEditModel: env.IMAGE_EDIT_MODEL ?? env.IMAGE_MODEL ?? "grok-imagine-image-quality",
+    imageFetchProxy: env.IMAGE_FETCH_PROXY ?? env.HTTPS_PROXY ?? env.https_proxy,
   };
 }

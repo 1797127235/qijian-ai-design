@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { api, type ChatAttachment } from "../../lib/api";
 import { safeMarkdownUrl } from "../markdown";
 import type { ChatItem } from "../types";
+import { ProcessPanel } from "./ProcessPanel";
 
 function PlainMessageText({ text }: { text: string }) {
   const parts = text.split(/(https?:\/\/[^\s]+)/g);
@@ -86,7 +87,7 @@ export function ChatMessageList({
         stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
       }}
     >
-      {items.length === 0 && !streaming && (
+      {items.filter((m) => m.role !== "process").length === 0 && !streaming && !busy && (
         <div className="chat-empty">
           <div className="chat-empty-intro">
             <span>砌间设计助手</span>
@@ -103,14 +104,22 @@ export function ChatMessageList({
           </div>
         </div>
       )}
-      {items.map((m) => (
-        <div key={m.id} className={`msg ${m.role}`}>
-          {m.role === "agent" ? <MarkdownMessage text={m.text} /> : m.text ? <PlainMessageText text={m.text} /> : null}
-          {m.role === "user" && <MessageAttachments attachments={m.attachments ?? []} />}
-        </div>
-      ))}
+      {items.map((m) => {
+        if (m.role === "process") {
+          return <ProcessPanel key={m.id} process={m.process} />;
+        }
+        return (
+          <div key={m.id} className={`msg ${m.role}`}>
+            {m.role === "agent" ? <MarkdownMessage text={m.text} /> : m.text ? <PlainMessageText text={m.text} /> : null}
+            {m.role === "user" && <MessageAttachments attachments={m.attachments ?? []} />}
+          </div>
+        );
+      })}
       {streaming && <div className="msg agent"><MarkdownMessage text={streaming} /></div>}
-      {busy && !streaming && <div className="msg activity" role="status">正在处理…</div>}
+      {/* 已有过程条时不要再叠「正在处理…」（工具失败后 status 可能短暂不是 running） */}
+      {busy && !streaming && !items.some((m) => m.role === "process") && (
+        <div className="msg activity" role="status">正在处理…</div>
+      )}
     </div>
   );
 }

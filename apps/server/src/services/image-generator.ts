@@ -1,8 +1,21 @@
+import { ProxyAgent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici";
 import type { ServerConfig } from "../config.js";
 import { HttpError } from "../lib/errors.js";
 import type { FileStorage } from "./file-storage.js";
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+/** 从错误响应里抠上游 message，避免「400」裸奔无法排查 */
+async function errorDetail(response: Response): Promise<string> {
+  try {
+    const body = (await response.clone().json()) as { error?: { message?: unknown }; message?: unknown };
+    const message = body.error?.message ?? body.message;
+    if (typeof message === "string" && message.trim()) return `：${message.trim().slice(0, 200)}`;
+  } catch {
+    // 非 JSON 响应忽略
+  }
+  return "";
+}
 const imageExtensions = new Map([
   ["image/jpeg", ".jpg"],
   ["image/png", ".png"],
@@ -47,22 +60,49 @@ export interface ImageGenerator {
 }
 
 export class HttpImageGenerator implements ImageGenerator {
-  constructor(
-    private readonly config: ServerConfig,
-    private readonly files: FileStorage,
-    private readonly fetcher: typeof fetch = fetch,
-  ) {}
+  private readonly config: ServerConfig;
+  private readonly files: FileStorage;
+  private readonly fetcher: typeof fetch;
+  /** 仅结果图下载走代理：x.ai 图床被墙，而生成 API（codex2api）直连可达 */
+  private readonly downloadFetcher: typeof fetch;
+
+  constructor(config: ServerConfig, files: FileStorage, fetcher?: typeof fetch) {
+    this.config = config;
+    this.files = files;
+    this.fetcher = fetcher ?? fetch;
+    const proxy = config.imageFetchProxy?.trim();
+    if (!fetcher && proxy) {
+      // 注意：只对 GET 下载用 undici@8 fetch；其 multipart 序列化会让上游丢字段
+      const dispatcher = new ProxyAgent(proxy);
+      this.downloadFetcher = ((url: string | URL | Request, init?: RequestInit) =>
+        undiciFetch(url as string, { ...(init as unknown as UndiciRequestInit), dispatcher })) as unknown as typeof fetch;
+    } else {
+      this.downloadFetcher = this.fetcher;
+    }
+  }
+
+  /** 包一层：undici 的「fetch failed」裸消息没营养，带上 cause（UND_ERR_CONNECT_TIMEOUT 等） */
+  private async send(fetcher: typeof fetch, url: string | URL, init?: RequestInit): Promise<Response> {
+    try {
+      return await fetcher(url, init);
+    } catch (error) {
+      const cause = (error as { cause?: { code?: string; message?: string } } | null)?.cause;
+      const detail = cause?.code ?? cause?.message ?? (error instanceof Error ? error.message : undefined);
+      throw new HttpError(503, `图像服务网络错误${detail ? `：${detail}` : ""}`);
+    }
+  }
 
   async generate(input: GenerateImageInput, signal?: AbortSignal): Promise<GeneratedImage> {
     if (!this.config.imageEndpoint || !this.config.imageApiKey) {
       throw new HttpError(503, "尚未配置 IMAGE_API_URL 和 IMAGE_API_KEY，无法生成效果图");
     }
     const prompt = `${input.context}\n补充意图：${input.intent ?? "无"}`;
-    const refs = input.referenceFiles ?? [];
+    // xAI grok-imagine edit 只接受单张参考图，多图必 400；取第一张（源图），其余靠 prompt 描述
+    const refs = (input.referenceFiles ?? []).slice(0, 1);
     const response = refs.length > 0
       ? await this.requestWithReferences(prompt, refs, signal)
       : await this.requestTextOnly(prompt, signal);
-    if (!response.ok) throw new HttpError(503, `图像服务调用失败：${response.status}`);
+    if (!response.ok) throw new HttpError(503, `图像服务调用失败：${response.status}${await errorDetail(response)}`);
     const body = (await response.json()) as {
       data?: Array<{ url?: string; b64_json?: string; id?: string }>;
       url?: string;
@@ -108,9 +148,10 @@ export class HttpImageGenerator implements ImageGenerator {
   }
 
   private async requestTextOnly(prompt: string, signal?: AbortSignal) {
-    const body: Record<string, unknown> = { prompt, n: 1 };
+    // b64_json 直出图数据，免去访问被墙的结果图床
+    const body: Record<string, unknown> = { prompt, n: 1, response_format: "b64_json" };
     if (this.config.imageModel) body.model = this.config.imageModel;
-    return this.fetcher(this.config.imageEndpoint!, {
+    return this.send(this.fetcher, this.config.imageEndpoint!, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.imageApiKey}`, "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -124,12 +165,13 @@ export class HttpImageGenerator implements ImageGenerator {
     const form = new FormData();
     form.append("prompt", prompt);
     form.append("n", "1");
+    form.append("response_format", "b64_json");
     if (this.config.imageEditModel) form.append("model", this.config.imageEditModel);
     for (const [index, ref] of refs.entries()) {
       const name = ref.filename ?? `ref-${index}${imageExtensions.get(ref.mediaType) ?? ".png"}`;
       form.append("image", new Blob([Buffer.from(ref.bytes)], { type: ref.mediaType }), name);
     }
-    return this.fetcher(endpoint, {
+    return this.send(this.fetcher, endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.imageApiKey}` },
       body: form,
@@ -154,7 +196,7 @@ export class HttpImageGenerator implements ImageGenerator {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new HttpError(503, "图像服务返回了不支持的图片 URL");
     }
-    const response = await this.fetcher(parsed, { signal });
+    const response = await this.send(this.downloadFetcher, parsed, { signal });
     if (!response.ok) throw new HttpError(503, `效果图归档下载失败：${response.status}`);
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() ?? "";
     if (!imageExtensions.has(mediaType)) throw new HttpError(503, "效果图归档仅支持 JPG、PNG 和 WebP");

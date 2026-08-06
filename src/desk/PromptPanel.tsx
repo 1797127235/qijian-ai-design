@@ -25,7 +25,7 @@ export function PromptPanel({
   const canSubmit = prompt.trim().length > 0 || source.kind === "canvas_image" || source.kind === "effect_image";
   const size = nodeSize(source);
   const top = source.y + size.h + 14;
-  // 相对物件水平居中（允许负偏移，面板可略宽于图）
+  
   const left = source.x + (size.w - PANEL_W) / 2;
 
   return (
@@ -62,9 +62,6 @@ export function PromptPanel({
       />
       <div className="desk-prompt-bar">
         <div className="desk-prompt-actions">
-          <button type="button" className="ghost" onClick={onClose} disabled={busy} aria-label="关闭">
-            取消
-          </button>
           <button
             type="button"
             className={busy ? "busy" : "primary"}

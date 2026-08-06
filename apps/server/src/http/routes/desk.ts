@@ -60,12 +60,15 @@ export function registerDeskRoutes(app: Hono, deps: {
       prompt: z.string().max(4000).default(""),
       sourceArtifactId: z.string().uuid(),
       clientOpId: z.string().min(1).max(80),
+      // 重试失败卡时传入，在原 effect_image 上 append，不新建
+      targetArtifactId: z.string().uuid().optional(),
     }));
     const result = await deps.generate.generate({
       projectId: c.req.param("id"),
       sourceArtifactId: input.sourceArtifactId,
       prompt: input.prompt,
       clientOpId: input.clientOpId,
+      targetArtifactId: input.targetArtifactId,
     });
     return c.json(result, result.status === "failed" ? 200 : 201);
   });

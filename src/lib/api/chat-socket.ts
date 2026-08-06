@@ -47,6 +47,7 @@ export function connectChat(
         updateStatus("disconnected");
         return;
       }
+      // 后端热重启时短暂拒绝连接：显示「正在重连」并指数退避
       reconnectAttempt += 1;
       updateStatus("reconnecting");
       const delay = Math.min(500 * 2 ** (reconnectAttempt - 1), 5_000);

@@ -16,6 +16,25 @@ export type DeskObject =
 
 export type DeskConnection = { id: string; from: string; to: string };
 
+/** 过程时间线上的一步：思考段或工具调用，按真实发生顺序排列 */
+export type ProcessStep =
+  | { id: string; kind: "thinking"; text: string }
+  | {
+      id: string;
+      kind: "tool";
+      name: string;
+      status: "running" | "succeeded" | "failed";
+      /** 一行给人看的说明，如「生成完整俯视图」或失败原因 */
+      label?: string;
+    };
+
+export type ProcessSnapshot = {
+  status: "running" | "done" | "failed";
+  startedAt: number;
+  endedAt?: number;
+  steps: ProcessStep[];
+};
+
 export type ChatItem =
   | { id: string; role: "user" | "agent"; text: string; attachments?: import("../lib/api").ChatAttachment[] }
-  | { id: string; role: "activity"; text: string };
+  | { id: string; role: "process"; process: ProcessSnapshot };

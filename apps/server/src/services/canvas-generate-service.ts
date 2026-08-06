@@ -20,9 +20,16 @@ export interface GenerateFromCanvasInput {
   sourceArtifactId: string;
   prompt: string;
   clientOpId: string;
+  /**
+   * 重试时传入已有失败/待生成的 effect_image id，在原卡上 append，不新建。
+   * 省略则 createPlaced 新卡。
+   */
+  targetArtifactId?: string;
   /** 默认 canvas_panel；Agent 工具传 agent_chat */
   source?: GenerateSource;
   createdBy?: GenerateCreatedBy;
+  /** 外部取消（agent stop / 工具 AbortSignal） */
+  signal?: AbortSignal;
 }
 
 export interface GenerateFromCanvasResult {
@@ -58,53 +65,40 @@ export class CanvasGenerateService {
     const sourceLayout = snapshot.deskState.objects.find((o) => o.artifact_id === input.sourceArtifactId);
     if (!source || !sourceLayout) throw new HttpError(404, "源物件不在桌面上");
 
+    // 参考图/便签来自「源物件」的入边，重试时仍按真实源解析，不按失败卡
     const inbound = snapshot.deskState.connections.filter((c) => c.to === input.sourceArtifactId);
     const { referenceFileIds, noteTexts } = this.collectReferences(snapshot, source, inbound);
-    const composedPrompt = this.composePrompt(input.prompt, noteTexts, referenceFileIds.length < this.expectedImageRefs(snapshot, source, inbound));
-
-    const layout: Omit<DeskLayoutObject, "artifact_id"> = {
-      kind: "effect_image",
-      x: Math.round(sourceLayout.x + (sourceLayout.w ?? EFFECT_WIDTH) + PLACE_GAP),
-      y: Math.round(sourceLayout.y),
-      rot: 0,
-      w: EFFECT_WIDTH,
-    };
-
-    const placed = await this.artifacts.createPlaced(
-      input.projectId,
-      "effect_image",
-      {
-        payload: { pending: true, prompt: composedPrompt, source: origin },
-        inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
-        status: "draft",
-        createdBy,
-      },
-      layout,
-      input.clientOpId,
+    const composedPrompt = this.composePrompt(
+      input.prompt,
+      noteTexts,
+      referenceFileIds.length < this.expectedImageRefs(snapshot, source, inbound),
     );
 
-    const connection = await this.desks.createConnection(
-      input.projectId,
-      input.sourceArtifactId,
-      placed.artifact.id,
-      `${input.clientOpId}:conn`,
-    );
+    const prepared = input.targetArtifactId
+      ? await this.prepareRetryTarget(input, snapshot, composedPrompt, referenceFileIds, origin, createdBy)
+      : await this.prepareNewTarget(input, sourceLayout, composedPrompt, referenceFileIds, origin, createdBy);
 
     const pending: GenerateFromCanvasResult = {
-      artifact: { id: placed.artifact.id },
-      version: { id: placed.version.id, status: placed.version.status },
-      object: placed.object,
-      connection,
+      artifact: { id: prepared.artifactId },
+      version: { id: prepared.versionId, status: prepared.versionStatus },
+      object: prepared.object,
+      connection: prepared.connection,
       status: "pending",
     };
     this.recent.set(input.clientOpId, { result: pending, expiresAt: Date.now() + 10 * 60 * 1000 });
 
-    // 同请求续跑生成（不占 desk enqueue）；按 source 互斥
-    const key = `${input.projectId}:${input.sourceArtifactId}`;
+    // 互斥键：重试锁目标卡，新建锁源（避免同源连点出多张）
+    const key = `${input.projectId}:${input.targetArtifactId ?? input.sourceArtifactId}`;
     this.inflight.get(key)?.abort();
     const controller = new AbortController();
     this.inflight.set(key, controller);
     const timer = setTimeout(() => controller.abort(), GENERATE_TIMEOUT_MS);
+    // 外部 stop → 一并取消图像 HTTP
+    const onExternalAbort = () => controller.abort();
+    if (input.signal) {
+      if (input.signal.aborted) controller.abort();
+      else input.signal.addEventListener("abort", onExternalAbort, { once: true });
+    }
 
     try {
       const referenceFiles = await this.loadReferenceFiles(input.projectId, referenceFileIds);
@@ -117,7 +111,7 @@ export class CanvasGenerateService {
         },
         controller.signal,
       );
-      const version = await this.artifacts.append(placed.artifact.id, {
+      const version = await this.artifacts.append(prepared.artifactId, {
         payload: {
           file_id: generated.fileId,
           prompt: composedPrompt,
@@ -141,7 +135,7 @@ export class CanvasGenerateService {
         ? (error.name === "AbortError" ? "生成已取消或超时" : error.message)
         : "生成失败";
       try {
-        await this.artifacts.append(placed.artifact.id, {
+        await this.artifacts.append(prepared.artifactId, {
           payload: { pending: false, prompt: composedPrompt, source: origin, error: message },
           inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
           status: "draft",
@@ -155,6 +149,7 @@ export class CanvasGenerateService {
       return failed;
     } finally {
       clearTimeout(timer);
+      input.signal?.removeEventListener("abort", onExternalAbort);
       if (this.inflight.get(key) === controller) this.inflight.delete(key);
     }
   }
@@ -163,6 +158,102 @@ export class CanvasGenerateService {
     const key = `${projectId}:${sourceArtifactId}`;
     this.inflight.get(key)?.abort();
     this.inflight.delete(key);
+  }
+
+  /** 取消该项目所有进行中的生图（agent stop） */
+  abortProject(projectId: string) {
+    const prefix = `${projectId}:`;
+    for (const [key, controller] of this.inflight) {
+      if (!key.startsWith(prefix)) continue;
+      controller.abort();
+      this.inflight.delete(key);
+    }
+  }
+
+  /** 新建 effect 卡 + 源→新图连线 */
+  private async prepareNewTarget(
+    input: GenerateFromCanvasInput,
+    sourceLayout: DeskLayoutObject,
+    composedPrompt: string,
+    referenceFileIds: string[],
+    origin: GenerateSource,
+    createdBy: GenerateCreatedBy,
+  ) {
+    const layout: Omit<DeskLayoutObject, "artifact_id"> = {
+      kind: "effect_image",
+      x: Math.round(sourceLayout.x + (sourceLayout.w ?? EFFECT_WIDTH) + PLACE_GAP),
+      y: Math.round(sourceLayout.y),
+      rot: 0,
+      w: EFFECT_WIDTH,
+    };
+    const placed = await this.artifacts.createPlaced(
+      input.projectId,
+      "effect_image",
+      {
+        payload: { pending: true, prompt: composedPrompt, source: origin },
+        inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
+        status: "draft",
+        createdBy,
+      },
+      layout,
+      input.clientOpId,
+    );
+    const connection = await this.desks.createConnection(
+      input.projectId,
+      input.sourceArtifactId,
+      placed.artifact.id,
+      `${input.clientOpId}:conn`,
+    );
+    return {
+      artifactId: placed.artifact.id,
+      versionId: placed.version.id,
+      versionStatus: placed.version.status,
+      object: placed.object,
+      connection,
+    };
+  }
+
+  /** 在已有失败/草稿 effect 卡上重置为 pending，不新建物件 */
+  private async prepareRetryTarget(
+    input: GenerateFromCanvasInput,
+    snapshot: Awaited<ReturnType<DeskStateService["snapshot"]>>,
+    composedPrompt: string,
+    referenceFileIds: string[],
+    origin: GenerateSource,
+    createdBy: GenerateCreatedBy,
+  ) {
+    const targetId = input.targetArtifactId!;
+    const target = snapshot.artifacts.find((a) => a.id === targetId);
+    const targetLayout = snapshot.deskState.objects.find((o) => o.artifact_id === targetId);
+    if (!target || !targetLayout) throw new HttpError(404, "重试目标不在桌面上");
+    if (target.artifactType !== "effect_image") throw new HttpError(422, "只能在效果图上重试生成");
+
+    // 优先用已有「源→目标」连线；没有则用请求里的 sourceArtifactId 补一条
+    let connection = snapshot.deskState.connections.find((c) => c.to === targetId && c.from === input.sourceArtifactId)
+      ?? snapshot.deskState.connections.find((c) => c.to === targetId);
+    if (!connection) {
+      connection = await this.desks.createConnection(
+        input.projectId,
+        input.sourceArtifactId,
+        targetId,
+        `${input.clientOpId}:conn`,
+      );
+    }
+
+    const version = await this.artifacts.append(targetId, {
+      payload: { pending: true, prompt: composedPrompt, source: origin },
+      inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
+      status: "draft",
+      createdBy,
+    });
+
+    return {
+      artifactId: targetId,
+      versionId: version.id,
+      versionStatus: version.status,
+      object: targetLayout,
+      connection,
+    };
   }
 
   private expectedImageRefs(

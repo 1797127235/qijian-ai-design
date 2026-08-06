@@ -19,6 +19,7 @@ export class AgentSessionRegistry {
   private readonly writes: EventWriteTracker;
   private readonly factory: SessionFactory;
   private readonly desks: SessionFactoryDependencies["desks"];
+  private readonly generate: SessionFactoryDependencies["generate"];
   /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源 */
   private readonly selectionBySession = new Map<string, string[]>();
   private shuttingDown = false;
@@ -30,6 +31,7 @@ export class AgentSessionRegistry {
     this.writes = new EventWriteTracker(deps.emit);
     this.factory = new SessionFactory(deps, this.writes, this.activeRunIds, this.selectionBySession);
     this.desks = deps.desks;
+    this.generate = deps.generate;
   }
 
   /**
@@ -104,9 +106,12 @@ export class AgentSessionRegistry {
   async stop(projectId: string, threadId: string) {
     const key = `${projectId}:${threadId}`;
     const pending = this.sessions.get(key);
-    if (!pending) return false;
+    // 先掐图像 HTTP，再 abort session（工具 execute 内 signal 会跟着 cancelled）
+    this.generate?.abortProject?.(projectId);
+    if (!pending) return true;
     try {
-      return await stopAgentSession(await pending);
+      const aborted = await stopAgentSession(await pending);
+      return aborted || true;
     } finally {
       this.scheduleIdle(key, pending);
     }

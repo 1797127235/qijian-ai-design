@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConnectionsLayer } from "./Connections";
 import { nodeSize, sourceAnchor, targetAnchor } from "./connection-geometry";
 import { positionFromPointer, screenToWorld, zoomAtPoint, type Viewport } from "./geometry";
 import type { DeskConnection, DeskObject } from "./types";
+
+// 缩放范围：与 infinite-canvas 主画布对齐（看全图到看细节）
+const ZOOM_MIN = 0.05;
+const ZOOM_MAX = 5;
 
 export function Desk({
   objects,
@@ -58,12 +62,19 @@ export function Desk({
   const [menu, setMenu] = useState<{ kind: "object" | "connection"; id: string; x: number; y: number }>();
 
   useEffect(() => {
-    if (initialViewport) setView(initialViewport);
+    if (initialViewport) {
+      const clamped = { ...initialViewport, zoom: clampZoom(initialViewport.zoom) };
+      setView(clamped);
+      onViewportChange?.(clamped);
+    }
   }, [initialViewport?.x, initialViewport?.y, initialViewport?.zoom]);
 
-  useEffect(() => {
-    onViewportChange?.(view);
-  }, [onViewportChange, view]);
+  // 视口变化通过事件调用即时上报（不再用 effect 触发避免 dep 抖动）
+  const reportViewport = useCallback((next: Viewport) => {
+    onViewportChange?.(next);
+  }, [onViewportChange]);
+
+  const clampZoom = (zoom: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
 
   useEffect(() => {
     if (!focusRequest) return;
@@ -133,7 +144,11 @@ export function Desk({
       return;
     }
     if (!pan.current) return;
-    setView((v) => ({ ...v, x: pan.current!.vx + e.clientX - pan.current!.sx, y: pan.current!.vy + e.clientY - pan.current!.sy }));
+    setView((v) => {
+      const next = { ...v, x: pan.current!.vx + e.clientX - pan.current!.sx, y: pan.current!.vy + e.clientY - pan.current!.sy };
+      reportViewport(next);
+      return next;
+    });
   };
 
   const endPointer = (e?: React.PointerEvent) => {
@@ -169,11 +184,13 @@ export function Desk({
     e.preventDefault();
     const d = e.deltaY < 0 ? 1.08 : 0.92;
     setView((v) => {
-      const z = Math.min(1.6, Math.max(0.3, v.zoom * d));
+      const z = clampZoom(v.zoom * d);
       const rect = vpRef.current!.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
-      return zoomAtPoint(v, { x: cx, y: cy }, z);
+      const next = zoomAtPoint(v, { x: cx, y: cy }, z);
+      reportViewport(next);
+      return next;
     });
   };
 
@@ -294,10 +311,41 @@ export function Desk({
         {children}
       </div>
       <div className="desk-tools">
-        <button type="button" aria-label="放大" onClick={() => setView((v) => ({ ...v, zoom: Math.min(1.6, v.zoom + 0.1) }))}>＋</button>
+        <button
+          type="button"
+          aria-label="放大"
+          disabled={view.zoom >= ZOOM_MAX}
+          onClick={() => setView((v) => {
+            const next = { ...v, zoom: clampZoom(v.zoom + 0.1) };
+            reportViewport(next);
+            return next;
+          })}
+        >
+          +
+        </button>
         <span className="zoom">{Math.round(view.zoom * 100)}%</span>
-        <button type="button" aria-label="缩小" onClick={() => setView((v) => ({ ...v, zoom: Math.max(0.3, v.zoom - 0.1) }))}>−</button>
-        <button type="button" onClick={() => setView({ x: 40, y: 20, zoom: 0.62 })}>复位</button>
+        <button
+          type="button"
+          aria-label="缩小"
+          disabled={view.zoom <= ZOOM_MIN}
+          onClick={() => setView((v) => {
+            const next = { ...v, zoom: clampZoom(v.zoom - 0.1) };
+            reportViewport(next);
+            return next;
+          })}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const next = { x: 40, y: 20, zoom: 0.62 };
+            setView(next);
+            reportViewport(next);
+          }}
+        >
+          复位
+        </button>
       </div>
       {overlay}
       {menu && (

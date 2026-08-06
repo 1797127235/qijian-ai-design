@@ -2,14 +2,7 @@ import { useRef, useState } from "react";
 import type { ProjectSummary } from "../lib/api";
 import { ATTACHMENT_ACCEPT, MAX_ATTACHMENTS_PER_MESSAGE, MAX_TOTAL_ATTACHMENT_BYTES, validateAttachmentFile } from "./attachments";
 
-function DeskPreview({ project }: { project: ProjectSummary }) {
-  if (project.coverUrl) {
-    return (
-      <div className="desk-thumb">
-        <img src={project.coverUrl} alt="" loading="lazy" />
-      </div>
-    );
-  }
+function DeskPreview() {
   return (
     <div className="desk-thumb desk-thumb-empty" aria-hidden="true">
       <div className="desk-thumb-dots" />
@@ -18,11 +11,6 @@ function DeskPreview({ project }: { project: ProjectSummary }) {
       <div className="desk-thumb-note n2" />
     </div>
   );
-}
-
-function statusLabel(p: ProjectSummary): string {
-  if (p.effectCount > 0) return `效果图 ${p.effectCount}`;
-  return "空桌面";
 }
 
 const EXAMPLES = ["静安寺老公房两居室改造", "滨江三居室 · 现代东方", "顶层复式 · 亲子宅"];
@@ -200,12 +188,10 @@ export function Home({
               {projects.map((p) => (
                 <div className="home-card" key={p.id}>
                   <button type="button" className="home-card-open" onClick={() => onOpen(p)}>
-                    <DeskPreview project={p} />
+                    <DeskPreview />
                     <div className="home-card-cap">
                       <span className="home-card-name">{p.name}</span>
                       <span className="home-card-meta">
-                        {statusLabel(p)}
-                        <span className="dot">·</span>
                         更新于 {new Date(p.updatedAt).toLocaleDateString("zh-CN")}
                       </span>
                     </div>

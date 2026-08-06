@@ -55,7 +55,13 @@ export const api = {
     request<{ connection: { id: string; from: string; to: string } }>(`/api/projects/${projectId}/desk/connections`, json("POST", input)),
   deleteConnection: (projectId: string, connectionId: string) =>
     request<{ connection: { id: string; from: string; to: string } }>(`/api/projects/${projectId}/desk/connections/${connectionId}`, { method: "DELETE" }),
-  generateImage: (projectId: string, input: { prompt: string; sourceArtifactId: string; clientOpId: string }) =>
+  generateImage: (projectId: string, input: {
+    prompt: string;
+    sourceArtifactId: string;
+    clientOpId: string;
+    /** 重试时传入失败卡 id，服务端在原卡上重跑 */
+    targetArtifactId?: string;
+  }) =>
     request<{
       artifact: { id: string };
       connection: { id: string; from: string; to: string };

@@ -63,7 +63,7 @@ Supersedes: docs/canvas-workbench-design.md（工作流原则）；本文件是�
 - `sticky_note` — payload `{ text }`，**允许空文本**（渲染占位「输入文字…」）
 - `canvas_image` — payload `{ file_id }`（eng review D4：file_id 为事实源，URL 由 `/api/files/:id` 派生；**创建时校验文件归属本项目且 mediaType∈jpeg/png**）
 
-`understanding_note` / `design_directions` / `effect_image` 保留供后续 Agent 使用；本切片创建路径只走 sticky_note/canvas_image。
+`understanding_note` / `design_directions` / `effect_image` 不在本切片范围内，且按 ADR 0012 已从 schema 删除；本切片创建路径只走 `sticky_note` / `canvas_image`。
 
 ### 会话内历史栈（修订后的撤销模型）
 

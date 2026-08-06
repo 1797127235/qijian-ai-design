@@ -83,6 +83,8 @@ export class SessionFactory {
       // 仅启用桌面工具，禁用 pi 内置 read/bash/edit/write
       tools: deskTools.map((tool) => tool.name),
       customTools: deskTools,
+      // 有 reasoning 的模型会吐 thinking_* 事件；不支持时 pi 会降到 off
+      thinkingLevel: "medium",
     });
     session.subscribe((event) => {
       this.deps.emit({ type: "agent_event", event: { projectId, threadId, ...event } });

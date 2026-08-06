@@ -17,6 +17,10 @@ export function useDeskActions(options: {
   const viewportSaveFailed = useRef(false);
   const queueRef = useRef<Promise<unknown>>(Promise.resolve());
 
+  // 回调 ref 稳定化：变化频繁的依赖（projectId/refreshDesk/setChatItems）通过 ref 持有，回调本身 deps 为空
+  const depsRef = useRef({ projectId, snapshot, activeProjectRef, refreshDesk, setChatItems });
+  depsRef.current = { projectId, snapshot, activeProjectRef, refreshDesk, setChatItems };
+
   /** desk 变更串行化：防止 undo/移动/删除等异步操作乱序（codex async ordering 结论）。 */
   const enqueue = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
     const run = queueRef.current.then(task, task);
@@ -33,6 +37,7 @@ export function useDeskActions(options: {
 
   const onMoveEnd = useCallback(
     (id: string, _from: { x: number; y: number }, to: { x: number; y: number }) => {
+      const { projectId, activeProjectRef, refreshDesk, setChatItems } = depsRef.current;
       if (!projectId) return;
       void enqueue(() =>
         api.moveObject(projectId, id, { x: Math.round(to.x), y: Math.round(to.y) }).catch((e) => {
@@ -42,11 +47,12 @@ export function useDeskActions(options: {
         }),
       );
     },
-    [projectId, activeProjectRef, enqueue, refreshDesk, setChatItems],
+    [enqueue],
   );
 
   const onViewportChange = useCallback(
     (viewport: { x: number; y: number; zoom: number }) => {
+      const { projectId, snapshot, activeProjectRef, refreshDesk, setChatItems } = depsRef.current;
       if (!projectId || snapshot?.project.id !== projectId) return;
       window.clearTimeout(persistViewport.current);
       persistViewport.current = window.setTimeout(() => {
@@ -65,7 +71,7 @@ export function useDeskActions(options: {
           });
       }, 800);
     },
-    [projectId, refreshDesk, snapshot?.project.id, activeProjectRef, setChatItems],
+    [],
   );
 
   const clearViewportTimer = useCallback(() => {

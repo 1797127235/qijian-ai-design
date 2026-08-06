@@ -30,7 +30,7 @@ describe("HttpImageGenerator", () => {
       "https://provider.example/images/generations",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ prompt: "context\n补充意图：无", n: 1, model: "grok-imagine-image-quality" }),
+        body: JSON.stringify({ prompt: "context\n补充意图：无", n: 1, response_format: "b64_json", model: "grok-imagine-image-quality" }),
       }),
     );
     expect(put).toHaveBeenCalledWith("project-1", "effect-provider-1.png", "image/png", new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));

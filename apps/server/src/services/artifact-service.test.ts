@@ -5,13 +5,6 @@ import { ArtifactService } from "./artifact-service.js";
 const service = new ArtifactService({} as Database);
 
 describe("Artifact payload validation", () => {
-  it("rejects empty understanding notes", async () => {
-    await expect(service.create("project", "understanding_note", {
-      payload: { text: "" },
-      createdBy: "agent",
-    })).rejects.toThrow("理解便签内容不能为空");
-  });
-
   it("rejects removed types", async () => {
     await expect(service.create("project", "space_map" as never, {
       payload: {},
