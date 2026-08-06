@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, lt, max } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { artifacts, artifactVersions, deskStates, projects, storedFiles } from "../db/schema.js";
+import { DomainValidationError, assertConfirmable } from "../domain/payload-rules.js";
 import { artifactTypes, type ArtifactStatus, type ArtifactType, type CreatedBy, type DeskLayoutObject } from "../domain/types.js";
 import { HttpError } from "../lib/errors.js";
 import { contentHash } from "../lib/json.js";
@@ -104,6 +105,24 @@ export class ArtifactService {
     return row;
   }
 
+  async referencesFile(fileId: string): Promise<boolean> {
+    // 结构化引用优先：input_refs 中的 file_id；payload 内嵌 id 作兼容（如 effect_image.file_id）。
+    const [hit] = await this.db
+      .select({ id: artifactVersions.id })
+      .from(artifactVersions)
+      .where(sql`(
+        EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${artifactVersions.inputRefs}) = 'array' THEN ${artifactVersions.inputRefs} ELSE '[]'::jsonb END) AS ref
+          WHERE ref->>'file_id' = ${fileId}
+        )
+        OR ${artifactVersions.payload}->>'file_id' = ${fileId}
+        OR ${artifactVersions.payload}->>'pdf_file' = ${fileId}
+      )`)
+      .limit(1);
+    return Boolean(hit);
+  }
+
   private async validateInputRefs(
     tx: DatabaseTransaction,
     projectId: string,
@@ -138,21 +157,12 @@ export class ArtifactService {
 
   private validateConfirmedPayload(artifactType: ArtifactType, input: AppendVersionInput) {
     if (input.status !== "confirmed") return;
-    const payload = input.payload;
-    const nonEmpty = (value: unknown) => typeof value === "string" && value.trim().length > 0;
-    if (artifactType === "space_map") {
-      const spaces = Array.isArray(payload.spaces) ? payload.spaces : Array.isArray(payload.regions) ? payload.regions : [];
-      if (spaces.length === 0) throw new HttpError(422, "确认 space_map 前必须标注空间区域");
+    try {
+      assertConfirmable(artifactType, input.payload);
+    } catch (error) {
+      if (error instanceof DomainValidationError) throw new HttpError(422, error.message);
+      throw error;
     }
-    if (artifactType === "understanding_note" && !nonEmpty(payload.text)) throw new HttpError(422, "理解便签内容不能为空");
-    if (artifactType === "design_directions") {
-      const directions = Array.isArray(payload.directions) ? payload.directions : [];
-      const selected = payload.selected_direction_id;
-      const selectedExists = directions.some((direction) => direction && typeof direction === "object" && (direction as Record<string, unknown>).id === selected);
-      if (directions.length !== 3 || !selectedExists) throw new HttpError(422, "确认 design_directions 前必须从三个方向中选择一个");
-    }
-    if (artifactType === "effect_image" && !nonEmpty(payload.url)) throw new HttpError(422, "effect_image 必须包含图片 URL");
-    if (artifactType === "proposal_package" && !payload.pdf_file && !payload.pdf_path) throw new HttpError(422, "proposal_package 必须包含 PDF 文件引用");
   }
 
   private async createInTransaction(

@@ -21,13 +21,15 @@ const files = new FileStorage(db, config);
 const effects = new HttpImageGenerator(config, files);
 const exports = new ExportService(desks, artifacts, files);
 const chats = new ChatService(db);
+files.setReferenceCheckers([chats, artifacts]);
 
 let publish: EventSink = () => undefined;
+// 预留桌面写路径依赖：业务 tools 暂时为空，但 Agent 仍是桌面行动者边界。
 const sessions = new AgentSessionRegistry({ artifacts, desks, effects, exports, chats, files, config, emit: (event) => publish(event) });
 const chat = new ChatGateway(sessions, chats);
 publish = chat.emit;
 
-const app = createHttpApp({ config, db, artifacts, desks, files, exports, chats, sessions });
+const app = createHttpApp({ config, artifacts, desks, files, exports, chats, sessions });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`Qijian agent server listening on http://localhost:${info.port}`);
 });

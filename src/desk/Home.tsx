@@ -70,7 +70,7 @@ export function Home({
     <div className="home-shell">
       <nav className="home-rail" aria-label="主导航">
         <span className="seal-box rail-seal">砌</span>
-        <button type="button" className="rail-btn" title="新建项目" aria-label="新建项目" onClick={focusInput}>
+        <button type="button" className="rail-btn" title="新建项目" aria-label="新建项目" disabled={submitting} onClick={() => void submit()}>
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
             <path d="M9 3.5v11M3.5 9h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
           </svg>
@@ -192,11 +192,11 @@ export function Home({
         <section className="home-recent" aria-label="最近项目">
             <h2>最近项目{projects.length > 0 ? ` · ${projects.length}` : ""}</h2>
             <div className="home-row">
-              <button type="button" className="home-card home-card-new" onClick={focusInput}>
+              <button type="button" className="home-card home-card-new" disabled={submitting} onClick={() => void submit()}>
                 <div className="desk-thumb desk-thumb-new">
                   <span className="home-card-plus">＋</span>
                 </div>
-                <span className="home-card-name">新建项目</span>
+                <span className="home-card-name">{submitting ? "创建中…" : "新建项目"}</span>
               </button>
               {projects.map((p) => (
                 <div className="home-card" key={p.id}>

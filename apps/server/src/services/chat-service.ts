@@ -2,152 +2,39 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { chatMessageAttachments, chatMessages, chatRuns, chatThreads, chatToolCalls, storedFiles } from "../db/schema.js";
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+} from "../domain/attachment-limits.js";
 import { AppError } from "../lib/errors.js";
+import { loadAttachmentMap, messageReferencesFile } from "./chat/attachment-map.js";
+import {
+  formatChatContext,
+  runStatusMessage,
+  toMessageDto,
+  toRunDto,
+  toThreadDto,
+  toToolCallDto,
+  type ChatMessageDto,
+  type ChatRole,
+  type ChatRunDto,
+  type ChatRunStatus,
+  type ChatThreadDto,
+  type ChatToolCallDto,
+  type ChatToolCallStatus,
+} from "./chat/types.js";
 
-export type ChatRole = "user" | "assistant";
-
-export interface ChatMessageDto {
-  id: string;
-  threadId: string;
-  projectId: string;
-  role: ChatRole;
-  text: string;
-  attachments: ChatAttachmentDto[];
-  createdAt: string;
-}
-
-export interface ChatAttachmentDto {
-  id: string;
-  originalFilename: string;
-  mediaType: string;
-  sizeBytes: number;
-  pageCount?: number;
-  position: number;
-}
-
-export interface ChatThreadDto {
-  id: string;
-  projectId: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type ChatRunStatus = "running" | "completed" | "failed" | "stopped" | "interrupted";
-
-export interface ChatRunDto {
-  id: string;
-  threadId: string;
-  projectId: string;
-  userMessageId: string;
-  status: ChatRunStatus;
-  error?: string;
-  startedAt: string;
-  finishedAt?: string;
-}
-
-export type ChatToolCallStatus = "running" | "succeeded" | "failed" | "interrupted";
-
-export interface ChatToolCallDto {
-  id: string;
-  runId: string;
-  toolCallId: string;
-  toolName: string;
-  status: ChatToolCallStatus;
-  args: unknown;
-  result?: unknown;
-  error?: string;
-  cost?: unknown;
-  startedAt: string;
-  finishedAt?: string;
-}
-
-function toDto(row: typeof chatMessages.$inferSelect, attachments: ChatAttachmentDto[] = []): ChatMessageDto {
-  return {
-    id: row.id,
-    threadId: row.threadId,
-    projectId: row.projectId,
-    role: row.role,
-    text: row.text,
-    attachments,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
-function toThreadDto(row: typeof chatThreads.$inferSelect): ChatThreadDto {
-  return {
-    id: row.id,
-    projectId: row.projectId,
-    title: row.title,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function toRunDto(row: typeof chatRuns.$inferSelect): ChatRunDto {
-  return {
-    id: row.id,
-    threadId: row.threadId,
-    projectId: row.projectId,
-    userMessageId: row.userMessageId,
-    status: row.status,
-    error: row.error ?? undefined,
-    startedAt: row.startedAt.toISOString(),
-    finishedAt: row.finishedAt?.toISOString(),
-  };
-}
-
-function toToolCallDto(row: typeof chatToolCalls.$inferSelect): ChatToolCallDto {
-  return {
-    id: row.id,
-    runId: row.runId,
-    toolCallId: row.toolCallId,
-    toolName: row.toolName,
-    status: row.status,
-    args: row.args,
-    result: row.result ?? undefined,
-    error: row.error ?? undefined,
-    cost: row.cost ?? undefined,
-    startedAt: row.startedAt.toISOString(),
-    finishedAt: row.finishedAt?.toISOString(),
-  };
-}
-
-export function runStatusMessage(run: ChatRunDto): ChatMessageDto | undefined {
-  const text = run.status === "interrupted"
-    ? "上一次任务因服务重启或异常退出而中断。为避免重复修改画布，系统没有自动重试；你可以重新发送这条要求。"
-    : run.status === "stopped"
-      ? "任务已停止。"
-      : run.status === "failed"
-        ? `任务执行失败：${run.error ?? "未知错误"}`
-        : undefined;
-  if (!text) return undefined;
-  return {
-    id: `run-status:${run.id}`,
-    threadId: run.threadId,
-    projectId: run.projectId,
-    role: "assistant",
-    text,
-    attachments: [],
-    createdAt: run.finishedAt ?? run.startedAt,
-  };
-}
-
-export function formatChatContext(
-  messages: Array<Pick<ChatMessageDto, "role" | "text">>,
-  maxCharacters = 30_000,
-): string {
-  const lines = messages.map((message) => `${message.role === "user" ? "设计师" : "设计助手"}：${message.text}`);
-  const selected: string[] = [];
-  let length = 0;
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index];
-    if (length + line.length > maxCharacters && selected.length > 0) break;
-    selected.unshift(line.slice(Math.max(0, line.length - maxCharacters)));
-    length += line.length;
-  }
-  return selected.join("\n\n");
-}
+export type {
+  ChatAttachmentDto,
+  ChatMessageDto,
+  ChatRole,
+  ChatRunDto,
+  ChatRunStatus,
+  ChatThreadDto,
+  ChatToolCallDto,
+  ChatToolCallStatus,
+} from "./chat/types.js";
+export { formatChatContext, runStatusMessage } from "./chat/types.js";
 
 export class ChatService {
   private readonly instanceId = randomUUID();
@@ -199,6 +86,10 @@ export class ChatService {
     if (!deleted) throw new Error("对话不存在或不属于当前项目");
   }
 
+  async referencesFile(fileId: string): Promise<boolean> {
+    return messageReferencesFile(this.db, fileId);
+  }
+
   async append(
     projectId: string,
     threadId: string,
@@ -212,7 +103,7 @@ export class ChatService {
 
     if (externalId) {
       const [existing] = await this.db.select().from(chatMessages).where(eq(chatMessages.externalId, externalId));
-      if (existing) return { message: toDto(existing), created: false };
+      if (existing) return { message: toMessageDto(existing), created: false };
     }
 
     const thread = await this.resolveThread(projectId, threadId);
@@ -236,11 +127,11 @@ export class ChatService {
         .update(chatThreads)
         .set({ title, updatedAt: now })
         .where(eq(chatThreads.id, thread.id));
-      return { message: toDto(created), created: true };
+      return { message: toMessageDto(created), created: true };
     }
     const [existing] = await this.db.select().from(chatMessages).where(eq(chatMessages.externalId, externalId!));
     if (!existing) throw new Error("聊天消息保存失败");
-    return { message: toDto(existing), created: false };
+    return { message: toMessageDto(existing), created: false };
   }
 
   async appendPrompt(
@@ -258,7 +149,9 @@ export class ChatService {
     if (uniqueAttachmentIds.length !== attachmentIds.length) {
       throw new AppError(422, "VALIDATION_FAILED", "附件列表包含重复项");
     }
-    if (attachmentIds.length > 8) throw new AppError(422, "VALIDATION_FAILED", "每条消息最多添加 8 个附件");
+    if (attachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+      throw new AppError(422, "VALIDATION_FAILED", `每条消息最多添加 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`);
+    }
 
     return this.db.transaction(async (tx) => {
       const [thread] = await tx
@@ -271,12 +164,12 @@ export class ChatService {
       if (externalId) {
         const [existing] = await tx.select().from(chatMessages).where(eq(chatMessages.externalId, externalId));
         if (existing) {
-          const attachments = (await this.attachmentMap([existing.id], tx)).get(existing.id) ?? [];
+          const attachments = (await loadAttachmentMap(tx, [existing.id])).get(existing.id) ?? [];
           const sameAttachments = attachments.map((item) => item.id).join(",") === attachmentIds.join(",");
           if (existing.projectId !== projectId || existing.threadId !== threadId || existing.text !== trimmed || !sameAttachments) {
             throw new AppError(409, "CONFLICT", "同一个消息标识不能用于不同内容");
           }
-          return { message: toDto(existing, attachments), created: false };
+          return { message: toMessageDto(existing, attachments), created: false };
         }
       }
 
@@ -296,7 +189,7 @@ export class ChatService {
       if (files.length !== uniqueAttachmentIds.length) {
         throw new AppError(422, "ATTACHMENT_NOT_FOUND", "一个或多个附件不存在或不属于当前项目");
       }
-      if (files.reduce((total, file) => total + file.sizeBytes, 0) > 60 * 1024 * 1024) {
+      if (files.reduce((total, file) => total + file.sizeBytes, 0) > MAX_TOTAL_ATTACHMENT_BYTES) {
         throw new AppError(422, "VALIDATION_FAILED", "每条消息的附件总大小不能超过 60MB");
       }
       const fileById = new Map(files.map((file) => [file.id, file]));
@@ -310,8 +203,8 @@ export class ChatService {
       if (!message) {
         const [existing] = await tx.select().from(chatMessages).where(eq(chatMessages.externalId, externalId!));
         if (!existing) throw new Error("聊天消息保存失败");
-        const attachments = (await this.attachmentMap([existing.id], tx)).get(existing.id) ?? [];
-        return { message: toDto(existing, attachments), created: false };
+        const attachments = (await loadAttachmentMap(tx, [existing.id])).get(existing.id) ?? [];
+        return { message: toMessageDto(existing, attachments), created: false };
       }
       if (attachmentIds.length > 0) {
         await tx.insert(chatMessageAttachments).values(attachmentIds.map((fileId, position) => ({
@@ -329,7 +222,7 @@ export class ChatService {
           sizeBytes: file.sizeBytes,
           pageCount: file.pageCount ?? undefined,
           position,
-        } satisfies ChatAttachmentDto;
+        };
       });
       const now = new Date();
       const titleSource = trimmed || attachments[0]?.originalFilename || "新对话";
@@ -344,7 +237,7 @@ export class ChatService {
         .insert(chatRuns)
         .values({ projectId, threadId, userMessageId: message.id, ownerId: this.instanceId })
         .returning();
-      return { message: toDto(message, attachments), run: toRunDto(run), created: true };
+      return { message: toMessageDto(message, attachments), run: toRunDto(run), created: true };
     });
   }
 
@@ -489,10 +382,10 @@ export class ChatService {
         .orderBy(desc(chatToolCalls.startedAt))
         .limit(100),
     ]);
-    const attachmentByMessage = await this.attachmentMap(rows.map((row) => row.id));
+    const attachmentByMessage = await loadAttachmentMap(this.db, rows.map((row) => row.id));
     const statusByMessage = new Map(runs.map((run) => [run.userMessageId, runStatusMessage(toRunDto(run))]));
     const messages = rows.flatMap((row) => {
-      const message = toDto(row, attachmentByMessage.get(row.id));
+      const message = toMessageDto(row, attachmentByMessage.get(row.id));
       const status = statusByMessage.get(message.id);
       return status ? [message, status] : [message];
     });
@@ -521,42 +414,7 @@ export class ChatService {
       .orderBy(desc(chatMessages.sequence))
       .limit(limit);
     rows.reverse();
-    const attachmentByMessage = await this.attachmentMap(rows.map((row) => row.id));
-    return rows.map((row) => toDto(row, attachmentByMessage.get(row.id)));
-  }
-
-  private async attachmentMap(
-    messageIds: string[],
-    executor: Pick<Database, "select"> = this.db,
-  ): Promise<Map<string, ChatAttachmentDto[]>> {
-    const result = new Map<string, ChatAttachmentDto[]>();
-    if (messageIds.length === 0) return result;
-    const rows = await executor
-      .select({
-        messageId: chatMessageAttachments.messageId,
-        id: storedFiles.id,
-        originalFilename: storedFiles.originalFilename,
-        mediaType: storedFiles.mediaType,
-        sizeBytes: storedFiles.sizeBytes,
-        pageCount: storedFiles.pageCount,
-        position: chatMessageAttachments.position,
-      })
-      .from(chatMessageAttachments)
-      .innerJoin(storedFiles, eq(storedFiles.id, chatMessageAttachments.fileId))
-      .where(inArray(chatMessageAttachments.messageId, messageIds))
-      .orderBy(asc(chatMessageAttachments.position));
-    for (const row of rows) {
-      const items = result.get(row.messageId) ?? [];
-      items.push({
-        id: row.id,
-        originalFilename: row.originalFilename,
-        mediaType: row.mediaType,
-        sizeBytes: row.sizeBytes,
-        pageCount: row.pageCount ?? undefined,
-        position: row.position,
-      });
-      result.set(row.messageId, items);
-    }
-    return result;
+    const attachmentByMessage = await loadAttachmentMap(this.db, rows.map((row) => row.id));
+    return rows.map((row) => toMessageDto(row, attachmentByMessage.get(row.id)));
   }
 }

@@ -1,5 +1,6 @@
 import type { WebSocket } from "ws";
 import { z } from "zod";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "../domain/attachment-limits.js";
 import { AppError } from "../lib/errors.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { EventSink, ServerEvent } from "./events.js";
@@ -11,7 +12,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     text: z.string().max(20_000).default(""),
     threadId: z.string().min(1).optional(),
     clientMessageId: z.string().min(1).max(200).optional(),
-    attachmentIds: z.array(z.string().min(1)).max(8).default([]),
+    attachmentIds: z.array(z.string().min(1)).max(MAX_ATTACHMENTS_PER_MESSAGE).default([]),
   }).refine((message) => message.text.trim().length > 0 || message.attachmentIds.length > 0, {
     message: "消息或附件至少需要一项",
   }),

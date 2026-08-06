@@ -3,7 +3,8 @@
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
 
 Key routing rules:
-- Product ideas/brainstorming -> invoke /office-hours
+- Product ideas/YC-style validation -> invoke /office-hours
+- Feature design before coding / brainstorming a change -> invoke /brainstorming
 - Strategy/scope -> invoke /plan-ceo-review
 - Architecture -> invoke /plan-eng-review
 - Design system/plan review -> invoke /design-consultation or /plan-design-review
