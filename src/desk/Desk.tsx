@@ -67,8 +67,8 @@ export function Desk({
 
   const startPan = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    setMenu(undefined);
     if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a")) return;
+    setMenu(undefined);
     onSelect?.(undefined);
     pan.current = { sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
     setPanning(true);
