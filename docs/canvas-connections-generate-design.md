@@ -35,10 +35,13 @@
 - 删除物件时级联删除其所有连线（同事务）。
 - 连线纳入会话内撤销：`place_connection` / `remove_connection` 两种历史 op（逆操作互逆，复用 useDeskHistory 模式）。
 
-### 生图 artifact
+### 生图 artifact（`effect_image`，与 `canvas_image` 分离）
 
-- 生成成功创建 `effect_image` artifact：payload `{ file_id, prompt, source: "canvas_panel" }`，inputRefs = 参考图 file_ids + 连线源 artifact_ids，落桌 layout 在源物件右侧（`x = source.x + sourceWidth + 60`，同 y）。
-- 自动补一条 源→新图 连线（同一请求服务端事务内完成）。
+- 白名单重新引入 `effect_image`（与 `sticky_note` / `canvas_image` 并列）。
+- **生成开始**：`createPlaced(effect_image, status=draft, payload: { pending: true, prompt, source: "canvas_panel" })`，**允许无 file_id**；layout 在源物件右侧（`x = source.x + 220 + 60`，同 y）；自动补一条 源→新图 连线（同事务）。
+- **生成成功**：`appendVersion` 填 `{ file_id, prompt, source: "canvas_panel", pending: false }`，status→confirmed；inputRefs = 参考图 file_ids + 连线源 artifact_ids。
+- **生成失败**：payload 加 `{ error: string, pending: false }`，status 保持 draft；卡片可右键删除 / 重试。
+- 前端 `map.ts`：`effect_image` 有 file_id → 渲染图；pending → 「生成中」骨架；error → 错误态 + 重试。
 
 ## 交互
 
@@ -71,11 +74,16 @@
 { prompt: string; sourceArtifactId: string; clientOpId: string }
 ```
 
-- 服务端自行解析 `sourceArtifactId` 的连入连线 → 收集参考 artifact（canvas_image 的 file_id、sticky_note 的 text）。
-- `ImageGenerator.generate` 扩展：`referenceFiles?: { mediaType, bytes }[]`（从 FileStorage 按 file_id 读取）；有参考走 provider 改图接口（multipart `/images/edits` 或对应 ark JSON 形态，按 config 的 endpoint 约定），无参考走现有纯文本路径。
-- prompt 合成：用户 prompt + 连线便签文本拼接（前缀「参考要求：」）。
-- 响应：`{ artifact, connection }`（artifact = 新 effect_image，connection = 自动连线）。
-- 幂等：clientOpId 复用现有机制；生成中超时 120s，AbortSignal 透传。
+流程（单请求、可中断）：
+
+1. 幂等查 clientOpId；已有则直接返回。
+2. 解析参考：`sourceArtifactId` 自身若为 canvas_image/effect_image 且有 file_id → 加入参考；其**连入**连线的 from 物件：图取 file_id、便签取 text。
+3. **同事务** createPlaced draft effect_image + 源→新图 connection → 返回 `{ artifact, connection }`（前端立刻显示「生成中」）。
+4. 异步/同请求续跑：`ImageGenerator.generate` 扩展 `referenceFiles`；有参考走 provider 改图接口，无参考走纯文本；超时 120s，AbortSignal 透传。
+5. 成功 appendVersion 填 file_id；失败写 error 到 payload。
+6. prompt 合成：用户 prompt + 连线便签文本（前缀「参考要求：」）；参考 file 读失败则跳过并在 prompt 末附「（有参考图缺失）」。
+
+**队列**：generate **不进** desk enqueue（避免堵移动/删除/连线）；按 sourceArtifactId 互斥 in-flight Map；完成后用 enqueue 做一次 refreshDesk。
 
 ### connections 持久化
 
@@ -92,7 +100,8 @@
 - `src/desk/PromptPanel.tsx`：面板组件。
 - `src/app/useDeskGenerate.ts`：generate 编排（loading 占位 optimistic、abort、错误/重试），复用 enqueue 串行队列 + history。
 - `src/app/App.tsx`：接线。
-- 会话历史新增 op：`place_connection`/`remove_connection`/`generate`（generate 的 undo = 删图+删线，redo = 同 UUID 重插）。
+- 会话历史新增 op：`place_connection`/`remove_connection`/`generate`（generate 的 undo = 删图+删线，redo = 同 UUID 重插；`DeskHistoryEntry.artifactType` 扩到 `effect_image`）。
+- 右键菜单：物件 → 删除；连线 → 删除连线。
 
 ## 错误处理
 
@@ -111,3 +120,39 @@
 
 - 面板 textarea 内 Delete/Ctrl+Z 不触发画布操作（复用 isEditableTarget）。
 - 连线拖拽中 Ctrl+Z 忽略（历史栈 applying/drag 守卫已有模式）。
+
+---
+
+## Eng Review 定案（2026-08-06）
+
+| # | 决策 | 选择 |
+|---|------|------|
+| D1 | 生成中占位 | draft artifact 落库（刷新仍在） |
+| D2 | 长请求与队列 | generate 不进 desk enqueue，独立 in-flight |
+| D3 | 参考图范围 | 源物件自身图 + 连入参考 |
+| D4 | 生成图类型 | 重引 `effect_image`（与 canvas_image 分离） |
+| D5 | 连线存储 | `desk_state.connections` JSONB 列，default `[]` |
+
+方向对齐 infinite-canvas：把手拖连、贝塞尔连线、源→生成自动连线、edit 模式自身作参考、loading 节点落盘。
+
+## Implementation Tasks
+
+- **T1 schema**：drizzle 0013 加 `desk_state.connections jsonb default []`；`artifactTypes` 加 `effect_image`；`assertPayload` 对 effect_image：pending 时允许无 file_id，非 pending 必须 file_id。
+- **T2 domain/types + snapshot**：`DeskSnapshot.deskState.connections`；desk-state-service 读写 connections。
+- **T3 connections API**：`POST/DELETE .../desk/connections`；normalize（自连/重复/物件存在）；deletePlaced 级联删线；clientOpId 幂等。
+- **T4 ImageGenerator**：扩展 `referenceFiles`；有参考走 edits 接口，无参考走现路径；归档仍走 FileStorage（ARCHIVE_GENERATED_IMAGES）。
+- **T5 generate 端点**：`POST .../generate-image`；draft 占位 + 连线同事务；续跑 appendVersion / 写 error；AbortSignal。
+- **T6 前端 map/types/nodes**：DeskConnection；effect_image 三态渲染（pending/error/image）；canvas_image 不变。
+- **T7 Connections.tsx + Desk 把手手势**：SVG 贝塞尔、拖预览、右键删线、stopPropagation。
+- **T8 PromptPanel + useDeskGenerate**：面板 UI；in-flight Map；abort；history `generate` op。
+- **T9 useDeskHistory**：`place_connection`/`remove_connection`/`generate`；entry 支持 effect_image。
+- **T10 测试**：vitest normalize/几何/history；pg connections+generate mock；renderToStaticMarkup 面板/连线层。
+- **T11 QA**：按测试计划 critical paths 手测。
+
+## GSTACK REVIEW REPORT
+
+- **Reviewed:** docs/canvas-connections-generate-design.md
+- **Decisions locked:** D1–D5
+- **Status:** CLEAR — ready for implementation
+- **Outside voice:** deferred (user chose infinite-canvas alignment)
+- **Date:** 2026-08-06
