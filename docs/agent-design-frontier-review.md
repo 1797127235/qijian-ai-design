@@ -25,9 +25,9 @@
 | `ChatGateway`                          | WebSocket 收 prompt/stop，广播 agent 事件                |
 | `AgentSessionRegistry`                 | 每项目/线程一个 session；30min idle 回收；run 队列              |
 | `SessionFactory`                       | 嵌入 `@earendil-works/pi-coding-agent`；compaction 开启 |
-| `session-restore`                      | 从 DB 重灌聊天；历史图/PDF 限流恢复                             |
+| pi `SessionManager.continueRecent`     | 按 thread JSONL 持久化模型上下文（含 tool 轨迹）               |
 | `agent-event-persister`                | tool 起止与 assistant 文本落库                            |
-| `createDeskTools` / `ToolDependencies` | 工具注册边界保留，当前返回 `[]`                                 |
+| `createDeskTools` / `generate_from_desk` | 写桌 ACI（ADR 0013）；tool 事件落产品 DB                     |
 
 
 技术选型要点：
@@ -152,7 +152,7 @@
 | ----------------- | ------------------------ | ---------------------- |
 | LLM（大脑）           | pi + 可配置模型               | 先 harness，不先换模型        |
 | 上下文（眼睛）           | 聊天 + 附件；无 desk/选中        | Phase 0：选中 + 桌面摘要（状态栏） |
-| 工具（手脚）            | `createDeskTools() → []` | Phase 1：最小写桌 ACI       |
+| 工具（手脚）            | `generate_from_desk` 已接 | 可再扩读桌 / 便签等 ACI     |
 | Skills            | `noSkills: true`         | Phase 2：家装 skill 渐进加载  |
 | 状态栏               | 无                        | 末尾 meta：选中 / 桌面 / 进度   |
 | Proposer–reviewer | Artifact 契约在，agent 不写    | 写桌恢复后以工具结果+版本为完成条件     |
@@ -191,13 +191,13 @@
 | 缺口               | 现状                       | 前沿 / 书 / 产品期望                  |
 | ---------------- | ------------------------ | ------------------------------ |
 | Desk 不在 context  | Agent 看不到选中物件与桌面快照       | 状态栏注入「当前选中 + 邻近物件摘要」           |
-| 无写工具             | `createDeskTools() → []` | 最小 ACI：读桌 / 落图 / 出图 / 便签       |
+| 写工具仍窄           | 仅 `generate_from_desk`  | 可再扩读桌 / 便签 / 多源落图             |
 | Skills 关闭        | `noSkills: true`         | 家装 skill 渐进加载（对齐 ADR 0003）     |
 | Prompt 与 ADR 不一致 | 自称行动者但无工具                | 无工具只分析；有工具再切行动者语义              |
 | 无 Agent eval     | 仅有单元测试                   | 20 条黄金任务 + 幻觉写桌 / 假成功检测        |
 | 选中不进 prompt      | 前端选中未进入 agent            | 「选中 = 本轮输入」为一等上下文              |
 | 无状态栏通道           | 动态状态无处安放                 | 轨迹末尾 meta，避免污染 system 前缀       |
-| 长任务断点            | 进程内 session，挂了靠聊天重灌      | 出图等长 run 需 checkpoint / resume |
+| 长任务断点            | 模型上下文已 pi JSONL resume；长生图仍同步堵 loop | 出图需 pending 先推 / 可中断（见 harness H3） |
 
 
 ---

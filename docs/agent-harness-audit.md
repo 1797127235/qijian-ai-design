@@ -1,7 +1,7 @@
 # Agent Harness 审计
 
 **状态：** 调研结论（供决策，非 ADR）  
-**日期：** 2026-08-06  
+**日期：** 2026-08-06（H1 落地：2026-08-07）  
 **范围：** `apps/server/src/agent/*` 与对话 WS 相关前端；只谈 **Harness（基础设施）**，不谈新业务功能清单。  
 **相关：** [agent-design-frontier-review](agent-design-frontier-review.md)、[ADR 0012](adr/0012-agent-analysis-only.md)、[ADR 0013](adr/0013-agent-generate-from-desk.md)、Phase 0/1 specs under `docs/superpowers/specs/`
 
@@ -11,7 +11,9 @@
 
 能力面已有第一刀（选中进上下文 + `generate_from_desk` 写桌）；  
 **Harness = 让 Agent loop 可靠的外壳**，当前是「能跑」多于「跑稳」。  
-优先还债：session 恢复、run 诚实、长工具不堵、历史带回工具真相。
+**H1 已还：** 模型上下文走 pi JSONL 持久化，不再自搓 DB 重灌。  
+**H2 已还：** prompt 结束后按本 run 工具业务结果收口（`fail()` → run `failed`）。  
+剩余优先：长工具不堵（H3）。
 
 ---
 
@@ -34,30 +36,41 @@ ChatGateway (WS 协议 / run 起止)
         → SessionFactory (pi createAgentSession + 事件订阅)
             → tools/*          手脚（generate_from_desk）
             → desk-status      当轮桌面状态栏
-            → session-restore  DB 聊天重灌
-            → agent-event-persister  tool 起止落库
+            → SessionManager.continueRecent  pi JSONL（按 thread 目录）
+            → agent-event-persister  tool 起止落库（产品侧 UI/审计）
 ```
 
 | 层 | 路径 | Harness 职责 |
 |----|------|----------------|
 | 入口 | `chat-gateway.ts` | 校验、ack、finishRun |
 | 会话 | `session-registry.ts` / `session-factory.ts` | 池化、prompt 组装、工具注入 |
-| 上下文 | `desk-status.ts` / `session-restore.ts` | 看见什么、恢复什么 |
+| 模型上下文 | `session-paths.ts` + pi `SessionManager` | durable loop / tool 轨迹 |
+| 当轮桌面 | `desk-status.ts` | 本轮看见什么 |
 | 手脚 | `tools/*` | ACI + 写桌副作用 |
 | 可观测 | `agent-event-persister.ts` + chat runs | 事后能否复盘 |
 | 前端通道 | `src/lib/api/chat-socket.ts` / `useChatSession` | WS 连接与重连 |
+
+### 双账本（刻意分离）
+
+| 账本 | 存哪 | 给谁 |
+|------|------|------|
+| **模型上下文** | `data/agent-sessions/{projectId}/{threadId}/*.jsonl`（pi） | LLM：user / assistant(toolCall) / toolResult 全树 |
+| **产品聊天** | Postgres `chat_messages` / `chat_runs` / `chat_tool_calls` | 前端历史、审计、run 状态 |
+
+不要再用 DB 聊天文本「假恢复」模型 session。
 
 ---
 
 ## 4. 已有基础（保留）
 
-1. **Run + tool call 落库**（start/finish tool）  
+1. **Run + tool call 落库**（start/finish tool，产品侧）  
 2. **EventWriteTracker**：prompt 结束前可 await 写库  
 3. **Idle 回收 + stop/abort**  
 4. **用户原文与状态栏分离**（状态栏不进 `chat_messages` 正文）  
 5. **单写桌工具 + `object_changed`**（ADR 0013）  
 6. **WS 断线重连**（开发热重启后可恢复连接，不清消息）  
-7. **Compaction 开启** + 历史视觉限流  
+7. **Compaction 开启**  
+8. **pi session 持久化（H1）**：`SessionManager.continueRecent(cwd, agentSessionDir(project, thread))`；进程/idle 后再开同一 thread 带回完整 tool 轨迹  
 
 这些是 harness 骨架，后续债应 **补强而非推倒**。
 
@@ -69,10 +82,31 @@ ChatGateway (WS 协议 / run 起止)
 
 | ID | 问题 | 现状 | 后果 |
 |----|------|------|------|
-| **H1** | Session 只在内存 | `SessionManager.inMemory()` | 进程热更/崩溃：进行中轨迹丢；重连后只靠聊天文本重灌，**工具结果不回灌模型** |
-| **H2** | Run 完成语义过粗 | 工具 `fail()` / 生图失败仍可能 `finishRun("completed")` | 假成功：run 绿、桌面失败卡 |
+| **H1** | ~~Session 只在内存~~ | **已解决（2026-08-07）** | 见 §5.1.1 |
+| **H2** | ~~Run 完成语义过粗~~ | **已解决（2026-08-07）**：`summarizeRunTools` + tool 落库认 `details.ok===false` | 见 §5.1.2 |
 | **H3** | 长工具堵死整轮 | `generate` 同步等到约 120s | 体感挂死、WS「已离线」、pending 难中途展示 |
-| **H4** | 历史上下文残缺 | restore 主要是 user/assistant 文本 + 有限图 | 模型不知上一轮工具与落桌结果 → 重复生成、说错状态 |
+| **H4** | ~~历史上下文残缺（模型侧）~~ | **随 H1 关闭**：模型权威上下文 = pi JSONL，不再 DB 残缺重灌 | 产品侧聊天仍可不含 tool 块（UI 另议） |
+
+#### 5.1.1 H1 落地说明
+
+| 项 | 内容 |
+|----|------|
+| **改前** | `SessionManager.inMemory()` + 自搓 `session-restore`（只灌 user/assistant 文本） |
+| **改后** | pi `continueRecent`；路径 `data/agent-sessions/{projectId}/{threadId}/` |
+| **删除** | `session-restore.ts`（`loadHistoricalVisuals` / `restoreChatMessages`） |
+| **保留** | `agentPrompt`（仅当轮附件格式化）→ `agent-prompt.ts` |
+| **测试** | `session-persist.test.ts`：写 tool 轨迹 → 新 manager reopen → 读回 `toolResult` |
+| **注意** | pi 在出现 **assistant** 之前不落盘；仅 user、无回复时崩溃仍会丢当轮（正常对话有 assistant 即落盘） |
+
+#### 5.1.2 H2 落地说明
+
+| 项 | 内容 |
+|----|------|
+| **改前** | `sessions.prompt` 不抛错 → 一律 `finishRun("completed")`；tool 只看 pi `isError` |
+| **改后** | `persistToolEvent` 用 `isToolBusinessFailure`（对齐前端）；`summarizeRunTools` 后 `finishRun(failed\|completed)` |
+| **新增** | `tool-result.ts`、`ChatService.summarizeRunTools` |
+| **用户可见** | 工具业务失败时会 emit `任务执行失败：…` 状态消息（`runStatusMessage`） |
+| **说明** | 模型本身往往已诚实；修的是 **run/tool 账本与收口**，不是逼模型改口 |
 
 ### 5.2 P1 — 放大成本与难 debug
 
@@ -92,6 +126,7 @@ ChatGateway (WS 协议 / run 起止)
 | **H11** | Compaction 黑盒：无「保留选中 artifact / 最近工具结果」策略 |
 | **H12** | 状态栏拼进 user 字符串，不是独立 meta 通道（可用，难演进） |
 | **H13** | 无 proposer–reviewer（工具成功 ≠ 设计可接受） |
+| **H14** | 删除项目时未清 `data/agent-sessions/{projectId}`（磁盘残留，可后续补） |
 
 ---
 
@@ -103,9 +138,9 @@ ChatGateway (WS 协议 / run 起止)
 | 抗幻觉 | system 写「以工具为准」 | **执行层未强制**（无结果校验） |
 | 越权 / 护栏 | 项目归属校验 | 无配额、无危险操作分级 |
 | 指令遵循 | system + tool guidelines | 无 eval 度量 |
-| Loop 工程 | 单轮 prompt 循环 | **缺 durable loop / resume** |
+| Loop 工程 | 单轮 prompt + **pi JSONL resume** | durable 上下文已有；缺 run 诚实 / 长工具不堵 |
 
-能力债（眼睛/手）与 harness 债已部分解耦：Phase 0/1 接了选中与写桌；**H1–H4 仍是基础设施主线**。
+能力债（眼睛/手）与 harness 债已部分解耦：Phase 0/1 接了选中与写桌；**剩余 P0 主线是 H3**。
 
 ---
 
@@ -114,9 +149,9 @@ ChatGateway (WS 协议 / run 起止)
 | 现象 | 更可能属于 |
 |------|------------|
 | 右侧「已离线」 | WS harness（后端重启、主动 close、重连策略） |
-| 生图失败仍像「任务完成」 | H2 run 语义 |
+| 生图失败仍像「任务完成」 | ~~H2~~ 已收口；若仍出现查 tool 是否落库 / 前端是否展示 run-status |
 | 重试又长一张新图 | 业务路径 bug（已修 target 重试）+ H8 双通道 |
-| 对话失忆上一轮落了哪张图 | H1 / H4 恢复 |
+| 对话失忆上一轮落了哪张图 | ~~H1/H4~~ 若仍出现：查 JSONL 是否写入、或 compaction/H11 |
 
 业务 bug 与 harness 债会叠在一起；修 harness 时应用 **现象 → ID** 对照，避免只改 UI 文案。
 
@@ -124,27 +159,28 @@ ChatGateway (WS 协议 / run 起止)
 
 ## 8. 治理路线（只 harness，默认不加新业务工具）
 
-### 切片 A — Run 诚实（小、立刻有感）
+### 切片 A — Run 诚实 ← **已完成（H2）**
 
-- 约定：工具 `details.ok === false` 或业务 `status=failed` → run 记 `failed` 或 `completed_with_errors`  
-- `chat-gateway` 在 `sessions.prompt` 结束后根据 tool 结果收口  
-- 前端区分「对话结束」与「生图/工具失败」  
+- 工具 `details.ok === false` / `status=failed` / `isError` → tool 记 `failed`  
+- `chat-gateway`：`summarizeRunTools` → `finishRun(failed|completed)`  
+- 失败时广播 `任务执行失败：…`（`runStatusMessage`）  
 
 **对应：** H2  
 
-### 切片 B — 长工具不堵 loop（中）
+### 切片 B — 长工具不堵 loop（中）← **当前优先**
 
 - `generate_from_desk` / 生图：**先** pending 落桌 + `object_changed`，再等图像 API；或 tool 立即返回 `artifact_id + pending`  
 - 用户看到骨架，而不是假离线  
 
-**对应：** H3（并减轻 H1 体感）  
+**对应：** H3  
 
-### 切片 C — 恢复时带回工具真相（中大）
+### 切片 C — 模型上下文持久化 ← **已完成（H1）**
 
-- session 重建：recent tool calls 摘要，或可恢复 session 存储  
-- 最低配：状态栏/恢复块带「最近 N 条已落桌 effect_image id + prompt」  
+- 用 pi `SessionManager.continueRecent`，按 `projectId/threadId` 独占目录  
+- **不**再自搓 `restoreChatMessages` / DB 文本假恢复  
+- 回归：`apps/server/src/agent/session-persist.test.ts`  
 
-**对应：** H1、H4  
+**对应：** H1、H4（模型侧）  
 
 ### 切片 D — 可观测 + 迷你 eval（可并行）
 
@@ -157,16 +193,16 @@ ChatGateway (WS 协议 / run 起止)
 
 - multi-agent 编排  
 - 为大而全 skill 平台先上框架  
-- 推倒 pi / 重写 session 池（除非 C 证明 in-memory 不可接受）  
+- 推倒 pi / 重写 session 池  
 
 ---
 
 ## 9. 成功标准（Harness 视角）
 
 1. 后端热重启后：桌面页 WS 能回到「已连接」，聊天记录不丢。  
-2. 生图失败：run / UI **不**标成无条件成功。  
+2. ~~生图失败：run / UI 不标成无条件成功~~ → **H2 已达成**：tool 业务失败 → run `failed` + 状态消息。  
 3. 长生图过程中：用户能看到 pending 卡，不必干等无反馈。  
-4. 新 session 恢复后：模型至少知道最近写桌结果摘要（非空白失忆）。  
+4. ~~新 session 恢复后：模型至少知道最近写桌结果摘要~~ → **H1 已达成**：JSONL 含完整 tool 轨迹（有 assistant 后落盘）。  
 5. 改 harness 有可重复的黄金任务，不全靠手点。  
 
 ---
@@ -175,24 +211,23 @@ ChatGateway (WS 协议 / run 起止)
 
 - 不在本文规定图像供应商  
 - 不展开 SFT/RL、多 agent 社会模拟  
-- 不替代 ADR；改 run 语义 / session 持久化时另开 ADR  
-- 不要求一次还清 H1–H13  
+- 不替代 ADR；session 持久化与 run 收口已用现有 schema（无新 status 枚举）  
+- 不要求一次还清 H3–H14  
 
 ---
 
 ## 11. 建议的「下一刀」
 
-文档落地后，实现优先：
+> **切片 B（pending 先推）** → **切片 D（eval）**
 
-> **切片 A（Run 诚实）** → **切片 B（pending 先推）** → **切片 C（恢复带工具摘要）**
-
-与产品功能迭代可穿插；但 **假成功与堵死 loop 应优先于再加新工具**。
+切片 A（H2）、C（H1）已落地。与产品功能迭代可穿插；**堵死 loop 应优先于再加新工具**。
 
 ---
 
 ## 12. 参考
 
-- 本仓库：`apps/server/src/agent/*`、`src/app/useChatSession.ts`、`src/lib/api/chat-socket.ts`  
+- 本仓库：`apps/server/src/agent/*`（尤其 `session-factory.ts`、`session-paths.ts`、`session-persist.test.ts`）、`src/app/useChatSession.ts`、`src/lib/api/chat-socket.ts`  
 - [agent-design-frontier-review.md](agent-design-frontier-review.md)  
+- pi：`SessionManager.continueRecent` / session JSONL 格式（`@earendil-works/pi-coding-agent` docs）  
 - 李博杰，《深入理解 AI Agent》v1.2：Harness / Loop 工程、上下文恢复  
 - Anthropic, *Building effective agents*；Cognition, *Don’t Build Multi-Agents*  

@@ -38,6 +38,7 @@ describe("ChatGateway run lifecycle", () => {
         message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "继续设计", attachments: [], createdAt: "now" },
         run: { id: "run-1" },
       }),
+      summarizeRunTools: vi.fn().mockResolvedValue({ status: "completed" }),
       finishRun: vi.fn().mockResolvedValue(undefined),
     };
     const gateway = new ChatGateway(sessions as never, chats as never);
@@ -46,7 +47,37 @@ describe("ChatGateway run lifecycle", () => {
 
     expect(chats.appendPrompt).toHaveBeenCalledWith("project-1", "thread-1", "继续设计", undefined, []);
     expect(sessions.prompt).toHaveBeenCalledWith("project-1", "thread-1", "继续设计", [], "run-1", []);
-    expect(chats.finishRun).toHaveBeenCalledWith("run-1", "completed");
+    expect(chats.summarizeRunTools).toHaveBeenCalledWith("run-1");
+    expect(chats.finishRun).toHaveBeenCalledWith("run-1", "completed", undefined);
+  });
+
+  it("marks the run failed when tools report business failure", async () => {
+    const sessions = { ensure: vi.fn(), prompt: vi.fn().mockResolvedValue(undefined) };
+    const statusMessage = {
+      id: "run-status:run-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      role: "assistant",
+      text: "任务执行失败：图服务返回错误",
+      createdAt: "now",
+    };
+    const chats = {
+      resolveThread: vi.fn().mockResolvedValue({ id: "thread-1" }),
+      appendPrompt: vi.fn().mockResolvedValue({
+        created: true,
+        message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "改日式", attachments: [], createdAt: "now" },
+        run: { id: "run-1" },
+      }),
+      summarizeRunTools: vi.fn().mockResolvedValue({ status: "failed", error: "图服务返回错误" }),
+      finishRun: vi.fn().mockResolvedValue(statusMessage),
+    };
+    const gateway = new ChatGateway(sessions as never, chats as never);
+    const emit = vi.spyOn(gateway, "emit");
+
+    await receive(gateway, socket(), { type: "prompt", text: "改日式", threadId: "thread-1" });
+
+    expect(chats.finishRun).toHaveBeenCalledWith("run-1", "failed", "图服务返回错误");
+    expect(emit).toHaveBeenCalledWith({ type: "chat_message", projectId: "project-1", message: statusMessage });
   });
 
   it("forwards selected artifact ids to the session prompt", async () => {
@@ -58,6 +89,7 @@ describe("ChatGateway run lifecycle", () => {
         message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "描述这张图", attachments: [], createdAt: "now" },
         run: { id: "run-1" },
       }),
+      summarizeRunTools: vi.fn().mockResolvedValue({ status: "completed" }),
       finishRun: vi.fn().mockResolvedValue(undefined),
     };
     const gateway = new ChatGateway(sessions as never, chats as never);
@@ -117,6 +149,7 @@ describe("ChatGateway run lifecycle", () => {
         message: { id: "message-1", threadId: "thread-1", projectId: "project-1", role: "user", text: "", attachments, createdAt: "now" },
         run: { id: "run-1" },
       }),
+      summarizeRunTools: vi.fn().mockResolvedValue({ status: "completed" }),
       finishRun: vi.fn().mockResolvedValue(undefined),
     };
     const gateway = new ChatGateway(sessions as never, chats as never);

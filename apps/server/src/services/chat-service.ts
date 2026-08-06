@@ -302,6 +302,24 @@ export class ChatService {
     return toToolCallDto(row);
   }
 
+  /** prompt 正常返回后：若本 run 有失败工具 → failed，否则 completed。 */
+  async summarizeRunTools(runId: string): Promise<{ status: "completed" | "failed"; error?: string }> {
+    const rows = await this.db
+      .select({
+        status: chatToolCalls.status,
+        error: chatToolCalls.error,
+        toolName: chatToolCalls.toolName,
+      })
+      .from(chatToolCalls)
+      .where(eq(chatToolCalls.runId, runId));
+    const failed = rows.find((row) => row.status === "failed");
+    if (!failed) return { status: "completed" };
+    return {
+      status: "failed",
+      error: failed.error?.trim() || `${failed.toolName} 失败`,
+    };
+  }
+
   async finishRun(runId: string, status: Exclude<ChatRunStatus, "running" | "interrupted">, error?: string) {
     const run = await this.db.transaction(async (tx) => {
       const [finished] = await tx

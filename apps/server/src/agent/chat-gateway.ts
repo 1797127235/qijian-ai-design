@@ -106,7 +106,10 @@ export class ChatGateway {
           else if (status === "failed") this.sendError(socket, error);
           return;
         }
-        await this.chats.finishRun(saved.run.id, "completed");
+        // H2：loop 跑完 ≠ 业务成功；按本 run 工具结果收口
+        const outcome = await this.chats.summarizeRunTools(saved.run.id);
+        const statusMessage = await this.chats.finishRun(saved.run.id, outcome.status, outcome.error);
+        if (statusMessage) this.emit({ type: "chat_message", projectId, message: statusMessage });
       }
     } catch (error) {
       this.sendError(socket, error, clientMessageId);

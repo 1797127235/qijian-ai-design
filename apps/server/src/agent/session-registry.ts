@@ -1,14 +1,15 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ChatAttachmentDto } from "../services/chat-service.js";
 import type { AgentImageContent } from "../services/file-storage.js";
+import { agentPrompt } from "./agent-prompt.js";
 import { EventWriteTracker, jsonSnapshot, persistToolEvent } from "./agent-event-persister.js";
 import { buildDeskStatusBlock, selectedVisualFileIds } from "./desk-status.js";
 import { SessionFactory, type SessionFactoryDependencies } from "./session-factory.js";
-import { agentPrompt, loadHistoricalVisuals, restoreChatMessages } from "./session-restore.js";
 
 export type { SessionFactoryDependencies as RegistryDependencies } from "./session-factory.js";
+export { agentPrompt } from "./agent-prompt.js";
 export { jsonSnapshot, persistToolEvent, assistantTextFromEvent } from "./agent-event-persister.js";
-export { agentPrompt, loadHistoricalVisuals, restoreChatMessages } from "./session-restore.js";
+export { agentSessionDir } from "./session-paths.js";
 
 const DEFAULT_SESSION_IDLE_MS = 30 * 60 * 1000;
 

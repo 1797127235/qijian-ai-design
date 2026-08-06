@@ -21,7 +21,7 @@ import {
   persistToolEvent,
 } from "./agent-event-persister.js";
 import type { EventSink } from "./events.js";
-import { loadHistoricalVisuals, restoreChatMessages } from "./session-restore.js";
+import { agentSessionDir } from "./session-paths.js";
 import { deskSystemPrompt } from "./system-prompt.js";
 import { createDeskTools } from "./tools/index.js";
 
@@ -53,11 +53,10 @@ export class SessionFactory {
 
   async create(projectId: string, threadId: string): Promise<AgentSession> {
     const key = `${projectId}:${threadId}`;
-    const recentMessages = await this.deps.chats.recentMessages(projectId, threadId);
-    const restoredVisuals = await loadHistoricalVisuals(projectId, recentMessages, this.deps.files);
+    const cwd = process.cwd();
     const settingsManager = SettingsManager.inMemory({ compaction: { enabled: true } });
     const loader = new DefaultResourceLoader({
-      cwd: process.cwd(),
+      cwd,
       agentDir: getAgentDir(),
       settingsManager,
       noExtensions: true,
@@ -71,10 +70,11 @@ export class SessionFactory {
     const modelRuntime = await this.modelRuntime;
     const model = modelRuntime.getModel(this.deps.config.agentProvider, this.deps.config.agentModel);
     if (!model) throw new Error(`未找到 Agent 模型：${this.deps.config.agentProvider}/${this.deps.config.agentModel}`);
-    const sessionManager = SessionManager.inMemory();
-    restoreChatMessages(sessionManager, recentMessages, model, restoredVisuals);
+    // pi 原生 JSONL：按 thread 独占目录，进程重启后 continueRecent 带回完整 tool 轨迹
+    const sessionManager = SessionManager.continueRecent(cwd, agentSessionDir(projectId, threadId));
     const deskTools = createDeskTools(projectId, this.deps, () => this.selectionBySession.get(key) ?? []);
     const { session } = await createAgentSession({
+      cwd,
       modelRuntime,
       model,
       resourceLoader: loader,

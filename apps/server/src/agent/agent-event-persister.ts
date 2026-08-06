@@ -1,6 +1,7 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ChatService } from "../services/chat-service.js";
 import type { EventSink } from "./events.js";
+import { isToolBusinessFailure, toolFailureMessage } from "./tool-result.js";
 
 type ToolExecutionEvent = Extract<AgentSessionEvent, {
   type: "tool_execution_start" | "tool_execution_end";
@@ -52,13 +53,15 @@ export async function persistToolEvent(
     await chats.startToolCall(runId, event.toolCallId, event.toolName, jsonSnapshot(event.args));
     return;
   }
+  // fail() 时 pi isError 常为 false，需按 details.ok / status 判业务失败
+  const failed = isToolBusinessFailure(event.result, event.isError);
   await chats.finishToolCall(
     runId,
     event.toolCallId,
     event.toolName,
     jsonSnapshot(event.result),
-    event.isError,
-    event.isError ? resultError(event.result) : undefined,
+    failed,
+    failed ? (toolFailureMessage(event.result) ?? resultError(event.result)) : undefined,
     resultCost(event.result),
   );
 }
