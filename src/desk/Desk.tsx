@@ -33,7 +33,8 @@ export function Desk({
   focusRequest?: { id: string; token: number };
   selectedId?: string;
   selectedConnectionId?: string;
-  onSelect?: (id?: string) => void;
+  /** panel:false 时只选中不打开提示词面板（右键删除用） */
+  onSelect?: (id?: string, opts?: { panel?: boolean }) => void;
   onSelectConnection?: (id?: string) => void;
   onDropFiles?: (files: File[]) => void;
   onDeleteObject?: (id: string) => void;
@@ -50,6 +51,7 @@ export function Desk({
   const dragStart = useRef<{ id: string; x: number; y: number }>();
   const lastDragPos = useRef<{ id: string; x: number; y: number }>();
   const connect = useRef<{ fromId: string; x: number; y: number }>();
+  const pendingClick = useRef<{ id: string; x: number; y: number }>();
   const [preview, setPreview] = useState<{ x1: number; y1: number; x2: number; y2: number }>();
   const vpRef = useRef<HTMLDivElement>(null);
   const handledFocusToken = useRef<number>();
@@ -85,7 +87,7 @@ export function Desk({
 
   const startPan = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle")) return;
+    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle, .desk-prompt-panel")) return;
     setMenu(undefined);
     onSelect?.(undefined);
     onSelectConnection?.(undefined);
@@ -99,6 +101,22 @@ export function Desk({
       const p = worldFromEvent(e);
       setPreview({ x1: connect.current.x, y1: connect.current.y, x2: p.x, y2: p.y });
       return;
+    }
+    // 点击阈值：移动超过 4px 才进入拖动物件
+    if (pendingClick.current && !drag.current) {
+      const dx = e.clientX - pendingClick.current.x;
+      const dy = e.clientY - pendingClick.current.y;
+      if (dx * dx + dy * dy > 16) {
+        const obj = objects.find((item) => item.id === pendingClick.current!.id);
+        if (obj) {
+          onSelect?.(obj.id, { panel: false });
+          onSelectConnection?.(undefined);
+          const pointer = worldFromEvent(e);
+          drag.current = { id: obj.id, ox: pointer.x - obj.x, oy: pointer.y - obj.y };
+          dragStart.current = { id: obj.id, x: obj.x, y: obj.y };
+        }
+        pendingClick.current = undefined;
+      }
     }
     if (drag.current) {
       const { id, ox, oy } = drag.current;
@@ -124,6 +142,12 @@ export function Desk({
       connect.current = undefined;
       setPreview(undefined);
     }
+    // 纯点击：选中并打开提示词面板
+    if (pendingClick.current && !drag.current) {
+      onSelect?.(pendingClick.current.id, { panel: true });
+      onSelectConnection?.(undefined);
+    }
+    pendingClick.current = undefined;
     pan.current = undefined;
     if (drag.current && lastDragPos.current && dragStart.current) {
       onMoveEnd?.(lastDragPos.current.id, { x: dragStart.current.x, y: dragStart.current.y }, { x: lastDragPos.current.x, y: lastDragPos.current.y });
@@ -151,11 +175,8 @@ export function Desk({
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
     setMenu(undefined);
     e.stopPropagation();
-    onSelect?.(obj.id);
-    onSelectConnection?.(undefined);
-    const pointer = worldFromEvent(e);
-    drag.current = { id: obj.id, ox: pointer.x - obj.x, oy: pointer.y - obj.y };
-    dragStart.current = { id: obj.id, x: obj.x, y: obj.y };
+    // 先记下点击；真正拖动在 move 超过阈值后开始，避免「点一下」被当成拖
+    pendingClick.current = { id: obj.id, x: e.clientX, y: e.clientY };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -173,7 +194,9 @@ export function Desk({
     if (!onDeleteObject) return;
     e.preventDefault();
     e.stopPropagation();
-    onSelect?.(obj.id);
+    // 右键：只选中 + 删除菜单，不打开提示词面板
+    onSelect?.(obj.id, { panel: false });
+    onSelectConnection?.(undefined);
     const rect = vpRef.current?.getBoundingClientRect();
     if (!rect) return;
     setMenu({ kind: "object", id: obj.id, x: e.clientX - rect.left, y: e.clientY - rect.top });

@@ -379,11 +379,14 @@ export function App() {
           focusRequest={desk.focusRequest}
           selectedId={selectedId}
           selectedConnectionId={selectedConnectionId}
-          onSelect={(id) => {
+          onSelect={(id, opts) => {
             setSelectedId(id);
             setSelectedConnectionId(undefined);
-            if (id) gen.openPanel(id);
-            else gen.closePanel();
+            const openPanel = opts?.panel !== false;
+            if (id && openPanel) gen.openPanel(id);
+            else if (!id) gen.closePanel();
+            // 右键 panel:false：保持当前面板状态（若点的是别的物件则关掉旧面板）
+            else if (id && !openPanel && gen.panelSourceId && gen.panelSourceId !== id) gen.closePanel();
           }}
           onSelectConnection={(id) => {
             setSelectedConnectionId(id);
