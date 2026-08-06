@@ -142,60 +142,63 @@ button { font-family: inherit; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* 选中物件下方的生图面板：深色浮层，对齐参考产品气质 */
+/* 选中物件下方生图面板：纸面工作室气质（暖纸卡 + hairline + 陶土主按钮） */
 .desk-prompt-panel {
-  position: absolute; z-index: 30; width: 300px;
+  position: absolute; z-index: 30; width: 280px;
   padding: 12px 12px 10px;
-  border-radius: 14px;
-  background: rgba(28, 26, 22, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 16px 40px rgba(28, 26, 22, 0.28), 0 0 0 1px rgba(28, 26, 22, 0.2);
-  backdrop-filter: blur(12px);
+  border-radius: 10px;
+  background: var(--color-card);
+  border: 1px solid var(--color-hairline-strong);
+  box-shadow: 0 10px 28px rgba(28, 26, 22, 0.12), 0 1px 0 rgba(255, 255, 255, 0.6) inset;
   display: flex; flex-direction: column; gap: 10px;
-  color: #f5f2ea;
+  color: var(--color-ink);
 }
 .desk-prompt-panel textarea {
-  display: block; width: 100%; min-height: 72px; max-height: 160px;
-  resize: vertical; border: 0; outline: none; padding: 2px 2px 0;
-  font: inherit; font-size: 13px; line-height: 1.55;
-  color: #f5f2ea; background: transparent;
+  display: block; width: 100%; min-height: 68px; max-height: 140px;
+  resize: vertical; border: 0; outline: none; padding: 0;
+  font-family: var(--font-body); font-size: 13px; line-height: 1.55;
+  color: var(--color-ink); background: transparent;
 }
-.desk-prompt-panel textarea::placeholder { color: rgba(245, 242, 234, 0.38); }
-.desk-prompt-panel textarea:disabled { opacity: 0.55; }
+.desk-prompt-panel textarea::placeholder { color: var(--color-mute-soft); }
+.desk-prompt-panel textarea:disabled { opacity: 0.5; }
 .desk-prompt-refs { display: flex; flex-wrap: wrap; gap: 6px; }
 .desk-prompt-chip {
   max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 11px; padding: 3px 8px; border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08); color: rgba(245, 242, 234, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: var(--color-accent-soft); color: var(--color-accent);
+  border: 1px solid transparent;
 }
 .desk-prompt-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding-top: 2px;
+  padding-top: 8px; border-top: 1px solid var(--color-hairline);
 }
 .desk-prompt-meta {
   min-width: 0; flex: 1;
   font-family: var(--font-outlier); font-size: 10px; letter-spacing: 0.02em;
-  color: rgba(245, 242, 234, 0.42); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--color-mute-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .desk-prompt-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .desk-prompt-actions button {
-  border: 0; border-radius: 999px; padding: 6px 12px;
-  font-size: 12px; font-weight: 500; cursor: pointer; line-height: 1.2;
+  border: 0; border-radius: 7px; padding: 6px 12px;
+  font-family: var(--font-body); font-size: 12px; font-weight: 500;
+  cursor: pointer; line-height: 1.2;
 }
 .desk-prompt-actions button.ghost {
-  background: transparent; color: rgba(245, 242, 234, 0.55);
+  background: transparent; color: var(--color-mute);
+  border: 1px solid var(--color-hairline-strong);
 }
-.desk-prompt-actions button.ghost:hover { color: #f5f2ea; background: rgba(255, 255, 255, 0.06); }
+.desk-prompt-actions button.ghost:hover:not(:disabled) {
+  color: var(--color-ink-soft); background: var(--color-surface);
+}
 .desk-prompt-actions button.primary {
-  background: var(--color-accent); color: #fff;
-  box-shadow: 0 2px 8px rgba(181, 83, 42, 0.35);
+  background: var(--color-accent); color: var(--color-accent-ink);
 }
 .desk-prompt-actions button.primary:hover:not(:disabled) { background: var(--color-accent-hover); }
 .desk-prompt-actions button.busy {
-  background: rgba(255, 255, 255, 0.12); color: rgba(245, 242, 234, 0.7); cursor: default;
+  background: var(--color-surface); color: var(--color-mute); cursor: default;
+  border: 1px solid var(--color-hairline);
 }
-.desk-prompt-actions button:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.desk-prompt-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .obj-selected::after {
   content: ""; position: absolute; inset: -6px; pointer-events: none;

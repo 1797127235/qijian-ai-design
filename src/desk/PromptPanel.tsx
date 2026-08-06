@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { nodeSize } from "./connection-geometry";
 import type { DeskObject } from "./types";
 
+const PANEL_W = 280;
+
 export function PromptPanel({
   source,
   references,
@@ -22,13 +24,14 @@ export function PromptPanel({
 
   const canSubmit = prompt.trim().length > 0 || source.kind === "canvas_image" || source.kind === "effect_image";
   const size = nodeSize(source);
-  const top = source.y + size.h + 12;
-  const left = source.x + Math.max(0, (size.w - 300) / 2);
+  const top = source.y + size.h + 14;
+  // 相对物件水平居中（允许负偏移，面板可略宽于图）
+  const left = source.x + (size.w - PANEL_W) / 2;
 
   return (
     <div
       className="desk-prompt-panel"
-      style={{ left, top, width: 300 }}
+      style={{ left, top, width: PANEL_W }}
       onPointerDown={(e) => e.stopPropagation()}
       role="dialog"
       aria-label="生图提示词"
@@ -37,7 +40,7 @@ export function PromptPanel({
         <div className="desk-prompt-refs">
           {references.map((ref) => (
             <span key={ref.id} className="desk-prompt-chip" title={ref.kind === "sticky_note" ? ref.text : undefined}>
-              {ref.kind === "sticky_note" ? (ref.text?.slice(0, 12) || "便签") : "参考图"}
+              {ref.kind === "sticky_note" ? (ref.text?.slice(0, 14) || "便签") : "参考图"}
             </span>
           ))}
         </div>
@@ -58,22 +61,20 @@ export function PromptPanel({
         }}
       />
       <div className="desk-prompt-bar">
-        <span className="desk-prompt-meta" title="当前生图模型">
+        <span className="desk-prompt-meta" title="生图模型">
           grok-imagine-image-quality
         </span>
         <div className="desk-prompt-actions">
-          {!busy && (
-            <button type="button" className="ghost" onClick={onClose}>
-              关闭
-            </button>
-          )}
+          <button type="button" className="ghost" onClick={onClose} disabled={busy} aria-label="关闭">
+            取消
+          </button>
           <button
             type="button"
             className={busy ? "busy" : "primary"}
             disabled={!canSubmit || busy}
             onClick={() => onGenerate(prompt)}
           >
-            {busy ? "生成中" : "生成"}
+            {busy ? "生成中…" : "生成"}
           </button>
         </div>
       </div>
