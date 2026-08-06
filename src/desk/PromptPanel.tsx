@@ -61,9 +61,6 @@ export function PromptPanel({
         }}
       />
       <div className="desk-prompt-bar">
-        <span className="desk-prompt-meta" title="生图模型">
-          grok-imagine-image-quality
-        </span>
         <div className="desk-prompt-actions">
           <button type="button" className="ghost" onClick={onClose} disabled={busy} aria-label="关闭">
             取消
