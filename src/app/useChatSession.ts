@@ -29,6 +29,9 @@ export function useChatSession(options: {
   const activeToolsRef = useRef(new Map<string, string>());
   const threadLoadSequence = useRef(0);
   const pendingPromptIdRef = useRef<string>();
+  const chatThreadsRef = useRef<ChatThread[]>([]);
+  // 每次 chatThreads 变化同步到 ref，让回调可以从 ref 读取最新值，无需把它放进 deps
+  chatThreadsRef.current = chatThreads;
 
   const resetChatUi = useCallback(() => {
     setChatItems([]);
@@ -182,11 +185,23 @@ export function useChatSession(options: {
     chatRef.current = chat;
   }, [activeProjectRef, closeChat, refreshDesk, resetChatUi]);
 
+  /** 发 prompt；selectedArtifactIds 可选，由 ChatPanel 在有画布选中时填入。 */
   const sendChat = useCallback(
-    (input: { text: string; attachmentIds: string[]; clientMessageId: string }) => {
+    (input: {
+      text: string;
+      attachmentIds: string[];
+      clientMessageId: string;
+      selectedArtifactIds?: string[];
+    }) => {
       const threadId = activeChatThreadRef.current;
       if (connection !== "connected" || busy || !threadId) return false;
-      if (!chatRef.current?.prompt(input.text, threadId, input.clientMessageId, input.attachmentIds)) {
+      if (!chatRef.current?.prompt(
+        input.text,
+        threadId,
+        input.clientMessageId,
+        input.attachmentIds,
+        input.selectedArtifactIds ?? [],
+      )) {
         setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: "消息未发送，请等待连接恢复后重试。" }]);
         return false;
       }
@@ -269,15 +284,14 @@ export function useChatSession(options: {
     try {
       await api.deleteChatThread(currentProjectId, threadId);
       if (activeProjectRef.current !== currentProjectId || threadLoadSequence.current !== sequence) return;
-      let remaining = chatThreads.filter((thread) => thread.id !== threadId);
+      const remaining = chatThreadsRef.current.filter((thread) => thread.id !== threadId);
       setChatThreads(remaining);
       if (threadId !== activeChatThreadRef.current) return;
 
       let nextThread = remaining[0];
       if (!nextThread) {
         nextThread = await api.createChatThread(currentProjectId);
-        remaining = [nextThread];
-        setChatThreads(remaining);
+        setChatThreads([nextThread]);
       }
       const history = await api.chatHistory(currentProjectId, nextThread.id);
       if (activeProjectRef.current !== currentProjectId || threadLoadSequence.current !== sequence) return;
@@ -290,6 +304,7 @@ export function useChatSession(options: {
         id: message.id,
         role: message.role === "assistant" ? "agent" : "user",
         text: message.text,
+        attachments: message.attachments,
       })));
     } catch (error) {
       setChatItems((current) => [...current, {
@@ -300,7 +315,7 @@ export function useChatSession(options: {
     } finally {
       if (threadLoadSequence.current === sequence) setThreadChanging(false);
     }
-  }, [activeProjectRef, busy, chatThreads, threadChanging]);
+  }, [activeProjectRef, busy, threadChanging]);
 
   return {
     chatItems,

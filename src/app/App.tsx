@@ -96,14 +96,6 @@ export function App() {
     gen.closePanel();
   }, [projectId]);
 
-  useEffect(() => {
-    if (selectedId && !objects.some((item) => item.id === selectedId)) setSelectedId(undefined);
-  }, [objects, selectedId]);
-
-  useEffect(() => {
-    if (selectedConnectionId && !connections.some((c) => c.id === selectedConnectionId)) setSelectedConnectionId(undefined);
-  }, [connections, selectedConnectionId]);
-
   const createConnection = useCallback(
     (from: string, to: string) => {
       if (!projectId) return;
@@ -166,6 +158,22 @@ export function App() {
     [desk.onViewportChange],
   );
 
+  // 全局键盘/粘贴监听：handler 用 ref 持有最新值，effect 只订阅一次（避免 selectedConnectionId 等频繁变 dep）
+  const keydownHandlersRef = useRef({
+    deleteSelected: placement.deleteSelected,
+    deleteConnection: (id: string) => deleteConnection(id),
+    undo: history.undo,
+    redo: history.redo,
+    selectedConnectionId: undefined as string | undefined,
+    addImageFiles: placement.addImageFiles,
+  });
+  keydownHandlersRef.current.deleteSelected = placement.deleteSelected;
+  keydownHandlersRef.current.deleteConnection = deleteConnection;
+  keydownHandlersRef.current.undo = history.undo;
+  keydownHandlersRef.current.redo = history.redo;
+  keydownHandlersRef.current.selectedConnectionId = selectedConnectionId;
+  keydownHandlersRef.current.addImageFiles = placement.addImageFiles;
+
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
       const element = target as HTMLElement | null;
@@ -173,21 +181,22 @@ export function App() {
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
+      const handlers = keydownHandlersRef.current;
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        if (selectedConnectionId) deleteConnection(selectedConnectionId);
-        else placement.deleteSelected();
+        if (handlers.selectedConnectionId) handlers.deleteConnection(handlers.selectedConnectionId);
+        else handlers.deleteSelected();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        if (e.shiftKey) history.redo();
-        else history.undo();
+        if (e.shiftKey) handlers.redo();
+        else handlers.undo();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
-        history.redo();
+        handlers.redo();
       }
     };
     const onPaste = (e: ClipboardEvent) => {
@@ -195,7 +204,7 @@ export function App() {
       const files = Array.from(e.clipboardData?.files ?? []);
       if (files.length === 0) return;
       e.preventDefault();
-      placement.addImageFiles(files);
+      keydownHandlersRef.current.addImageFiles(files);
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("paste", onPaste);
@@ -203,7 +212,7 @@ export function App() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("paste", onPaste);
     };
-  }, [placement.deleteSelected, placement.addImageFiles, history.undo, history.redo, selectedConnectionId, deleteConnection]);
+  }, []);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -229,6 +238,18 @@ export function App() {
   const setChatConnection = chat.setConnection;
   const setChatBusy = chat.setBusy;
   const setChatItems = chat.setChatItems;
+
+  // 用 Set 查表避免每次物件变化都做 O(n) some 扫描（rerender-dependencies + js-set-map-lookups）
+  const objectIds = useMemo(() => new Set(objects.map((o) => o.id)), [objects]);
+  const connectionIds = useMemo(() => new Set(connections.map((c) => c.id)), [connections]);
+
+  useEffect(() => {
+    if (selectedId && !objectIds.has(selectedId)) setSelectedId(undefined);
+  }, [objectIds, selectedId]);
+
+  useEffect(() => {
+    if (selectedConnectionId && !connectionIds.has(selectedConnectionId)) setSelectedConnectionId(undefined);
+  }, [connectionIds, selectedConnectionId]);
 
   const resetToHome = useCallback(() => {
     activeProjectRef.current = undefined;
@@ -462,6 +483,12 @@ export function App() {
           initialText={composerHandoff?.text}
           initialFiles={composerHandoff?.files}
           submissionOutcome={chat.submissionOutcome}
+          // 画布 selectedId → 对话 chip；× 清除选中并关掉生图面板
+          selectedObject={selectedId ? objects.find((item) => item.id === selectedId) : undefined}
+          onClearSelection={() => {
+            setSelectedId(undefined);
+            gen.closePanel();
+          }}
           onSend={chat.sendChat}
           onStop={chat.stopChat}
           onNewThread={() => void chat.createChatThread()}

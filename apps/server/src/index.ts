@@ -24,8 +24,17 @@ const generate = new CanvasGenerateService(db, artifacts, desks, files, effects)
 files.setReferenceCheckers([chats, artifacts]);
 
 let publish: EventSink = () => undefined;
-// 预留桌面写路径依赖：业务 tools 暂时为空，但 Agent 仍是桌面行动者边界。
-const sessions = new AgentSessionRegistry({ artifacts, desks, effects, chats, files, config, emit: (event) => publish(event) });
+// Agent 写桌：generate_from_desk → CanvasGenerateService；emit 走 ChatGateway 广播
+const sessions = new AgentSessionRegistry({
+  artifacts,
+  desks,
+  effects,
+  generate,
+  chats,
+  files,
+  config,
+  emit: (event) => publish(event),
+});
 const chat = new ChatGateway(sessions, chats);
 publish = chat.emit;
 

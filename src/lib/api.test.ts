@@ -102,6 +102,22 @@ describe("connectChat", () => {
     chat.close();
   });
 
+  it("sends selected artifact ids with the prompt", () => {
+    const chat = connectChat("project-1", vi.fn());
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+
+    expect(chat.prompt("描述这张图", "thread-1", "client-message-3", [], ["img-1"])).toBe(true);
+    expect(socket.sent).toEqual([JSON.stringify({
+      type: "prompt",
+      text: "描述这张图",
+      threadId: "thread-1",
+      clientMessageId: "client-message-3",
+      selectedArtifactIds: ["img-1"],
+    })]);
+    chat.close();
+  });
+
   it("sends a stop command for the active thread", () => {
     const chat = connectChat("project-1", vi.fn());
     const socket = FakeWebSocket.instances[0];

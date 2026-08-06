@@ -12,11 +12,17 @@ const EFFECT_WIDTH = 220;
 const PLACE_GAP = 60;
 const GENERATE_TIMEOUT_MS = 120_000;
 
+export type GenerateSource = "canvas_panel" | "agent_chat";
+export type GenerateCreatedBy = "designer" | "agent";
+
 export interface GenerateFromCanvasInput {
   projectId: string;
   sourceArtifactId: string;
   prompt: string;
   clientOpId: string;
+  /** 默认 canvas_panel；Agent 工具传 agent_chat */
+  source?: GenerateSource;
+  createdBy?: GenerateCreatedBy;
 }
 
 export interface GenerateFromCanvasResult {
@@ -44,6 +50,9 @@ export class CanvasGenerateService {
     const hit = this.recent.get(input.clientOpId);
     if (hit && hit.expiresAt > Date.now()) return hit.result;
 
+    const origin = input.source ?? "canvas_panel";
+    const createdBy = input.createdBy ?? "designer";
+
     const snapshot = await this.desks.snapshot(input.projectId);
     const source = snapshot.artifacts.find((a) => a.id === input.sourceArtifactId);
     const sourceLayout = snapshot.deskState.objects.find((o) => o.artifact_id === input.sourceArtifactId);
@@ -65,10 +74,10 @@ export class CanvasGenerateService {
       input.projectId,
       "effect_image",
       {
-        payload: { pending: true, prompt: composedPrompt, source: "canvas_panel" },
+        payload: { pending: true, prompt: composedPrompt, source: origin },
         inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
         status: "draft",
-        createdBy: "designer",
+        createdBy,
       },
       layout,
       input.clientOpId,
@@ -112,13 +121,13 @@ export class CanvasGenerateService {
         payload: {
           file_id: generated.fileId,
           prompt: composedPrompt,
-          source: "canvas_panel",
+          source: origin,
           pending: false,
           source_url: generated.sourceUrl,
         },
         inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
         status: "confirmed",
-        createdBy: "designer",
+        createdBy,
       });
       const done: GenerateFromCanvasResult = {
         ...pending,
@@ -133,10 +142,10 @@ export class CanvasGenerateService {
         : "生成失败";
       try {
         await this.artifacts.append(placed.artifact.id, {
-          payload: { pending: false, prompt: composedPrompt, source: "canvas_panel", error: message },
+          payload: { pending: false, prompt: composedPrompt, source: origin, error: message },
           inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
           status: "draft",
-          createdBy: "designer",
+          createdBy,
         });
       } catch {
         // best-effort

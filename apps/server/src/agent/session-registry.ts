@@ -1,6 +1,8 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ChatAttachmentDto } from "../services/chat-service.js";
+import type { AgentImageContent } from "../services/file-storage.js";
 import { EventWriteTracker, jsonSnapshot, persistToolEvent } from "./agent-event-persister.js";
+import { buildDeskStatusBlock, selectedVisualFileIds } from "./desk-status.js";
 import { SessionFactory, type SessionFactoryDependencies } from "./session-factory.js";
 import { agentPrompt, loadHistoricalVisuals, restoreChatMessages } from "./session-restore.js";
 
@@ -16,6 +18,9 @@ export class AgentSessionRegistry {
   private readonly activeRunIds = new Map<string, string[]>();
   private readonly writes: EventWriteTracker;
   private readonly factory: SessionFactory;
+  private readonly desks: SessionFactoryDependencies["desks"];
+  /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源 */
+  private readonly selectionBySession = new Map<string, string[]>();
   private shuttingDown = false;
 
   constructor(
@@ -23,25 +28,65 @@ export class AgentSessionRegistry {
     private readonly idleTimeoutMs = DEFAULT_SESSION_IDLE_MS,
   ) {
     this.writes = new EventWriteTracker(deps.emit);
-    this.factory = new SessionFactory(deps, this.writes, this.activeRunIds);
+    this.factory = new SessionFactory(deps, this.writes, this.activeRunIds, this.selectionBySession);
+    this.desks = deps.desks;
   }
 
-  async prompt(projectId: string, threadId: string, text: string, attachments: ChatAttachmentDto[], runId: string) {
+  /**
+   * 跑一轮对话：用户原文 + 桌面状态栏（及可选选中图）进模型。
+   * selectedArtifactIds 来自本条 WS，服务端不缓存选中（方案 1）。
+   */
+  async prompt(
+    projectId: string,
+    threadId: string,
+    text: string,
+    attachments: ChatAttachmentDto[],
+    runId: string,
+    selectedArtifactIds: string[] = [],
+  ) {
     const key = `${projectId}:${threadId}`;
     const pending = this.get(projectId, threadId);
     const session = await pending;
     const activeRuns = this.activeRunIds.get(key) ?? [];
     activeRuns.push(runId);
     this.activeRunIds.set(key, activeRuns);
+    // 工具闭包读此 map；仅本轮有效
+    this.selectionBySession.set(key, selectedArtifactIds);
     try {
-      const images = await this.factory.loadAgentImages(projectId, attachments);
-      await session.prompt(agentPrompt(text, attachments), {
-        images,
+      // snapshot 失败不阻断对话，状态栏降级为「暂不可用」
+      const snapshot = await this.desks.snapshot(projectId).catch(() => null);
+      const statusBlock = buildDeskStatusBlock(snapshot, selectedArtifactIds);
+      const attachmentImages = await this.factory.loadAgentImages(projectId, attachments);
+      // 与附件同一 file 时去重，避免双份 base64
+      const selectedFileIds = selectedVisualFileIds(snapshot, selectedArtifactIds)
+        .filter((fileId) => !attachments.some((attachment) => attachment.id === fileId));
+      let selectedImages: AgentImageContent[] = [];
+      let selectedVisualNote = "";
+      if (selectedFileIds.length > 0) {
+        try {
+          // mediaType 占位即可：loader 以 DB stored.mediaType 为准
+          selectedImages = await this.factory.loadAgentImages(
+            projectId,
+            selectedFileIds.map((id) => ({
+              id,
+              originalFilename: `selected-${id}`,
+              mediaType: "image/png",
+            })),
+          );
+        } catch {
+          selectedVisualNote = "\n选中视觉：不可用";
+        }
+      }
+      // 状态栏只拼进当轮 prompt，不写入 chat_messages
+      const promptText = `${agentPrompt(text, attachments)}\n\n${statusBlock}${selectedVisualNote}`;
+      await session.prompt(promptText, {
+        images: [...attachmentImages, ...selectedImages],
         source: "interactive",
         streamingBehavior: session.isStreaming ? "followUp" : undefined,
       });
       await this.writes.awaitRun(runId);
     } finally {
+      this.selectionBySession.delete(key);
       const index = activeRuns.indexOf(runId);
       if (index >= 0) activeRuns.splice(index, 1);
       if (activeRuns.length === 0) this.activeRunIds.delete(key);

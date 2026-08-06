@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { History, LoaderCircle, MessageSquarePlus, PanelRightOpen, X } from "lucide-react";
 import type { ChatConnectionStatus, ChatThread } from "../lib/api";
-import type { ChatItem } from "./types";
+import type { ChatItem, DeskObject } from "./types";
 import { useAttachmentDraft } from "./useAttachmentDraft";
 import { ChatComposer, connectionLabels } from "./chat/ChatComposer";
 import { ChatMessageList, MarkdownMessage } from "./chat/ChatMessageList";
@@ -48,6 +48,8 @@ export function ChatPanel({
   onDeleteThread,
   onInitialFilesConsumed,
   onDraftStateChange,
+  selectedObject,
+  onClearSelection,
 }: {
   projectId: string;
   items: ChatItem[];
@@ -60,13 +62,21 @@ export function ChatPanel({
   initialText?: string;
   initialFiles?: File[];
   submissionOutcome?: { clientMessageId: string; status: "acknowledged" | "rejected" };
-  onSend: (input: { text: string; attachmentIds: string[]; clientMessageId: string }) => boolean;
+  onSend: (input: {
+    text: string;
+    attachmentIds: string[];
+    clientMessageId: string;
+    selectedArtifactIds?: string[];
+  }) => boolean;
   onStop: () => void;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void;
   onInitialFilesConsumed?: () => void;
   onDraftStateChange?: (hasDraft: boolean) => void;
+  /** 画布当前选中；有则 composer 立刻显示 chip，发送时写入 selectedArtifactIds */
+  selectedObject?: DeskObject;
+  onClearSelection?: () => void;
 }) {
   const [input, setInput] = useState("");
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("qijian.chat.collapsed") === "true");
@@ -148,7 +158,13 @@ export function ChatPanel({
       && retry.localIds.every((id, index) => id === localIds[index])
       ? retry.clientMessageId
       : globalThis.crypto?.randomUUID?.() ?? `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    if (!onSend({ text, attachmentIds: ready.map((item) => item.stored!.id), clientMessageId })) return;
+    // 选中只在发送时带给后端；chip 本身是纯前端即时反馈
+    if (!onSend({
+      text,
+      attachmentIds: ready.map((item) => item.stored!.id),
+      clientMessageId,
+      ...(selectedObject ? { selectedArtifactIds: [selectedObject.id] } : {}),
+    })) return;
     submittedRef.current = { clientMessageId, text, localIds };
     setPendingClientMessageId(clientMessageId);
     stickToBottom.current = true;
@@ -318,6 +334,8 @@ export function ChatPanel({
             hasContent={hasContent}
             attachmentsReady={attachmentsReady}
             items={attachments.items}
+            selectedObject={selectedObject}
+            onClearSelection={onClearSelection}
             fileInputRef={fileInputRef}
             inputRef={inputRef}
             onSubmit={submit}

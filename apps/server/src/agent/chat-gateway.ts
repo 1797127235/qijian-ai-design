@@ -13,7 +13,10 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     threadId: z.string().min(1).optional(),
     clientMessageId: z.string().min(1).max(200).optional(),
     attachmentIds: z.array(z.string().min(1)).max(MAX_ATTACHMENTS_PER_MESSAGE).default([]),
+    // 方案 1：选中随本条 prompt 携带，不单独推 selection 事件；max 1 对齐画布单选
+    selectedArtifactIds: z.array(z.string().min(1)).max(1).default([]),
   }).refine((message) => message.text.trim().length > 0 || message.attachmentIds.length > 0, {
+    // 仅选中不算可发送内容，避免空聊；有字或附件才进模型
     message: "消息或附件至少需要一项",
   }),
   z.object({ type: z.literal("stop"), threadId: z.string().min(1) }),
@@ -86,7 +89,15 @@ export class ChatGateway {
       this.emit({ type: "chat_message", projectId, message: saved.message });
       if (saved.created && saved.run) {
         try {
-          await this.sessions.prompt(projectId, thread.id, saved.message.text, saved.message.attachments, saved.run.id);
+          // appendPrompt 只落用户原文；selected 与状态栏仅进当轮 session.prompt
+          await this.sessions.prompt(
+            projectId,
+            thread.id,
+            saved.message.text,
+            saved.message.attachments,
+            saved.run.id,
+            message.selectedArtifactIds,
+          );
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "聊天处理失败";
           const status = this.stopping.has(`${projectId}:${thread.id}`) ? "stopped" : "failed";

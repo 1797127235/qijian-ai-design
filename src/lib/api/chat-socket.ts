@@ -72,12 +72,20 @@ export function connectChat(
   connect();
 
   return {
-    prompt: (text: string, threadId: string, clientMessageId?: string, attachmentIds: string[] = []) => send({
+    // selectedArtifactIds：发送瞬间的画布选中，空数组时省略字段以保持旧客户端兼容
+    prompt: (
+      text: string,
+      threadId: string,
+      clientMessageId?: string,
+      attachmentIds: string[] = [],
+      selectedArtifactIds: string[] = [],
+    ) => send({
       type: "prompt",
       text,
       threadId,
       ...(clientMessageId ? { clientMessageId } : {}),
       ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+      ...(selectedArtifactIds.length > 0 ? { selectedArtifactIds } : {}),
     }),
     stop: (threadId: string) => send({ type: "stop", threadId }),
     close: () => {

@@ -1,6 +1,7 @@
-import { ArrowUp, FileText, LoaderCircle, Plus, RotateCcw, Square, X } from "lucide-react";
+import { ArrowUp, FileText, LoaderCircle, Plus, RotateCcw, Square, StickyNote, X } from "lucide-react";
 import type { ChatConnectionStatus } from "../../lib/api";
 import { ATTACHMENT_ACCEPT } from "../attachments";
+import type { DeskObject } from "../types";
 import type { AttachmentDraftItem } from "../useAttachmentDraft";
 
 const connectionLabels: Record<ChatConnectionStatus, string> = {
@@ -15,6 +16,27 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** 选中 chip 标题：便签截断正文，图用类型名（非附件上传态）。 */
+function selectionLabel(object: DeskObject) {
+  if (object.kind === "sticky_note") {
+    const text = object.text.trim().replace(/\s+/g, " ");
+    if (!text) return "空便签";
+    return text.length > 14 ? `${text.slice(0, 14)}…` : text;
+  }
+  if (object.kind === "effect_image") {
+    if (object.pending) return "效果图 · 生成中";
+    if (object.error) return "效果图 · 失败";
+    return "效果图";
+  }
+  return "画布图";
+}
+
+function selectionPreview(object: DeskObject) {
+  if (object.kind === "canvas_image") return object.url;
+  if (object.kind === "effect_image") return object.url;
+  return undefined;
+}
+
 export function ChatComposer({
   input,
   setInput,
@@ -24,6 +46,8 @@ export function ChatComposer({
   hasContent,
   attachmentsReady,
   items,
+  selectedObject,
+  onClearSelection,
   fileInputRef,
   inputRef,
   onSubmit,
@@ -40,6 +64,9 @@ export function ChatComposer({
   hasContent: boolean;
   attachmentsReady: boolean;
   items: AttachmentDraftItem[];
+  /** 画布选中引用（非上传附件）；一点选即显示 */
+  selectedObject?: DeskObject;
+  onClearSelection?: () => void;
   fileInputRef: React.RefObject<HTMLInputElement>;
   inputRef: React.RefObject<HTMLTextAreaElement>;
   onSubmit: () => void;
@@ -48,6 +75,13 @@ export function ChatComposer({
   onRetry: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
+  const placeholder = connection !== "connected"
+    ? `${connectionLabels[connection]}，可先输入消息`
+    : selectedObject
+      ? "基于选中物件继续…"
+      : "描述你想推进的设计工作…";
+  const previewUrl = selectedObject ? selectionPreview(selectedObject) : undefined;
+
   return (
     <div
       className="chat-input"
@@ -60,6 +94,32 @@ export function ChatComposer({
         onAddFiles(Array.from(event.dataTransfer.files));
       }}
     >
+      {/* 画布选中即时 chip：一点选就显示，发送时才经 selectedArtifactIds 给 Agent */}
+      {selectedObject && (
+        <div className="composer-selection" aria-label="当前选中的桌面物件">
+          <div className="composer-selection-chip">
+            <div className="composer-selection-preview" aria-hidden="true">
+              {previewUrl
+                ? <img src={previewUrl} alt="" />
+                : <StickyNote size={16} strokeWidth={1.6} />}
+            </div>
+            <div className="composer-selection-copy">
+              <span title={selectionLabel(selectedObject)}>{selectionLabel(selectedObject)}</span>
+              <small>已选中 · 发送时告诉助手</small>
+            </div>
+            <button
+              type="button"
+              className="composer-attachment-action"
+              aria-label="取消选中"
+              title="取消选中"
+              disabled={draftLocked}
+              onClick={() => onClearSelection?.()}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
       {items.length > 0 && (
         <div className="composer-attachments" aria-label="待发送附件">
           {items.map((item) => (
@@ -116,7 +176,7 @@ export function ChatComposer({
         value={input}
         disabled={draftLocked}
         rows={3}
-        placeholder={connection === "connected" ? "描述你想推进的设计工作…" : `${connectionLabels[connection]}，可先输入消息`}
+        placeholder={placeholder}
         onChange={(e) => setInput(e.target.value)}
         onPaste={(event) => {
           if (draftLocked) return;

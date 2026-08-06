@@ -1,5 +1,6 @@
-/** Agent 工具共享上下文：集中提供依赖、项目归属校验和桌面变更通知。 */
+/** Agent 工具共享上下文：依赖、项目校验、桌面变更通知、本轮选中。 */
 import type { ArtifactService } from "../../services/artifact-service.js";
+import type { CanvasGenerateService } from "../../services/canvas-generate-service.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
 import type { ImageGenerator } from "../../services/image-generator.js";
 import type { EventSink } from "../events.js";
@@ -8,12 +9,16 @@ export interface ToolDependencies {
   artifacts: ArtifactService;
   desks: DeskStateService;
   effects: ImageGenerator;
+  /** 面板/Agent 共用生图管线 */
+  generate: CanvasGenerateService;
   emit: EventSink;
 }
 
 export interface ToolContext {
   projectId: string;
   deps: ToolDependencies;
+  /** 本轮 prompt 的选中（方案 1，不缓存跨轮） */
+  selectedArtifactIds: () => string[];
   changed: (artifactId?: string, undoable?: boolean) => void;
   ownedCurrent: (artifactId: string) => ReturnType<ArtifactService["currentArtifact"]>;
   place: (artifactId: string, kind: string, x: number, y: number, rot?: number, width?: number) => Promise<void>;
@@ -23,11 +28,19 @@ export function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: "text" as const, text }], details };
 }
 
+export function fail(text: string, details: Record<string, unknown> = {}) {
+  return { content: [{ type: "text" as const, text }], details: { ok: false, ...details } };
+}
+
 export function storedFileInputRefs(fileIds: string[] | undefined) {
   return [...new Set(fileIds ?? [])].map((fileId) => ({ file_id: fileId }));
 }
 
-export function createToolContext(projectId: string, deps: ToolDependencies): ToolContext {
+export function createToolContext(
+  projectId: string,
+  deps: ToolDependencies,
+  selectedArtifactIds: () => string[] = () => [],
+): ToolContext {
   const changed = (artifactId?: string, undoable = false) => {
     deps.emit({ type: "object_changed", projectId, artifactId, undoable });
   };
@@ -47,5 +60,5 @@ export function createToolContext(projectId: string, deps: ToolDependencies): To
     });
     changed(artifactId);
   };
-  return { projectId, deps, changed, ownedCurrent, place };
+  return { projectId, deps, selectedArtifactIds, changed, ownedCurrent, place };
 }
