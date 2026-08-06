@@ -154,8 +154,8 @@ button { font-family: inherit; }
   color: var(--color-ink);
 }
 .desk-prompt-panel textarea {
-  display: block; width: 100%; min-height: 68px; max-height: 140px;
-  resize: vertical; border: 0; outline: none; padding: 0;
+  display: block; width: 100%; min-height: 68px;
+  resize: none; border: 0; outline: none; padding: 0;
   font-family: var(--font-body); font-size: 13px; line-height: 1.55;
   color: var(--color-ink); background: transparent;
 }
