@@ -320,6 +320,7 @@ export function App() {
           selectedId={selectedId}
           onSelect={setSelectedId}
           onDropFiles={placement.addImageFiles}
+          onDeleteObject={placement.deleteObject}
           overlay={
             <DeskToolbar
               canUndo={history.canUndo}

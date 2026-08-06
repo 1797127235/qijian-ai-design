@@ -12,6 +12,7 @@ export function Desk({
   selectedId,
   onSelect,
   onDropFiles,
+  onDeleteObject,
   renderObject,
   overlay,
   children,
@@ -25,6 +26,7 @@ export function Desk({
   selectedId?: string;
   onSelect?: (id?: string) => void;
   onDropFiles?: (files: File[]) => void;
+  onDeleteObject?: (id: string) => void;
   renderObject: (obj: DeskObject) => ReactNode;
   overlay?: ReactNode;
   children?: ReactNode;
@@ -37,6 +39,7 @@ export function Desk({
   const lastDragPos = useRef<{ id: string; x: number; y: number }>();
   const vpRef = useRef<HTMLDivElement>(null);
   const handledFocusToken = useRef<number>();
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number }>();
 
   useEffect(() => {
     if (initialViewport) setView(initialViewport);
@@ -63,6 +66,8 @@ export function Desk({
   }, [focusRequest, objects]);
 
   const startPan = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    setMenu(undefined);
     if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a")) return;
     onSelect?.(undefined);
     pan.current = { sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
@@ -105,7 +110,9 @@ export function Desk({
   };
 
   const startNodeDrag = (e: React.PointerEvent, obj: DeskObject) => {
+    if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, input, textarea, a")) return;
+    setMenu(undefined);
     e.stopPropagation();
     onSelect?.(obj.id);
     const rect = vpRef.current!.getBoundingClientRect();
@@ -113,6 +120,16 @@ export function Desk({
     drag.current = { id: obj.id, ox: pointer.x - obj.x, oy: pointer.y - obj.y };
     dragStart.current = { id: obj.id, x: obj.x, y: obj.y };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const openContextMenu = (e: React.MouseEvent, obj: DeskObject) => {
+    if (!onDeleteObject) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onSelect?.(obj.id);
+    const rect = vpRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setMenu({ id: obj.id, x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -142,6 +159,7 @@ export function Desk({
             className={`obj obj-${obj.kind} ${focusRequest?.id === obj.id ? "obj-focused" : ""} ${selectedId === obj.id ? "obj-selected" : ""}`}
             style={{ left: obj.x, top: obj.y, transform: `rotate(${obj.rot}deg)` }}
             onPointerDown={(e) => startNodeDrag(e, obj)}
+            onContextMenu={(e) => openContextMenu(e, obj)}
           >
             {renderObject(obj)}
           </div>
@@ -154,8 +172,21 @@ export function Desk({
         <button type="button" aria-label="缩小" onClick={() => setView((v) => ({ ...v, zoom: Math.max(0.3, v.zoom - 0.1) }))}>−</button>
         <button type="button" onClick={() => setView({ x: 40, y: 20, zoom: 0.62 })}>复位</button>
       </div>
-      <p className="desk-hint">拖动空白平移 · 滚轮缩放 · 拖动物件摆放 · Delete 删除选中 · Ctrl+Z 撤销</p>
+      <p className="desk-hint">拖动空白平移 · 滚轮缩放 · 拖动物件摆放 · 右键删除 · Ctrl+Z 撤销</p>
       {overlay}
+      {menu && (
+        <div className="desk-context-menu" style={{ left: menu.x, top: menu.y }}>
+          <button
+            type="button"
+            onClick={() => {
+              onDeleteObject?.(menu.id);
+              setMenu(undefined);
+            }}
+          >
+            删除
+          </button>
+        </div>
+      )}
     </div>
   );
 }
