@@ -63,7 +63,7 @@ export function Desk({
   }, [focusRequest, objects]);
 
   const startPan = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest(".obj")) return;
+    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a")) return;
     onSelect?.(undefined);
     pan.current = { sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
     setPanning(true);
