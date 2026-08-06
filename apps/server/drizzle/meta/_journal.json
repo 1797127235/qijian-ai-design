@@ -92,6 +92,13 @@
       "when": 1786000000000,
       "tag": "0012_drop_legacy_pipeline",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786100000000,
+      "tag": "0013_desk_connections",
+      "breakpoints": true
     }
   ]
 }

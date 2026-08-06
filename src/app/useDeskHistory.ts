@@ -4,7 +4,7 @@ import { api, type ArtifactSnapshot } from "../lib/api";
 /** 撤销删除/重做放置所需的完整重建数据（同 id 重建，见设计文档 T1 决策）。 */
 export interface DeskHistoryEntry {
   artifactId: string;
-  artifactType: "sticky_note" | "canvas_image";
+  artifactType: "sticky_note" | "canvas_image" | "effect_image";
   payload: Record<string, unknown>;
   inputRefs?: unknown[];
   layout: { kind: string; x: number; y: number; rot: number; w?: number };
@@ -14,7 +14,10 @@ export type DeskHistoryOp =
   | { type: "place"; entry: DeskHistoryEntry }
   | { type: "remove"; entry: DeskHistoryEntry }
   | { type: "move"; artifactId: string; from: { x: number; y: number }; to: { x: number; y: number } }
-  | { type: "update_text"; artifactId: string; from: string; to: string };
+  | { type: "update_text"; artifactId: string; from: string; to: string }
+  | { type: "place_connection"; connection: { id: string; from: string; to: string } }
+  | { type: "remove_connection"; connection: { id: string; from: string; to: string } }
+  | { type: "generate"; entry: DeskHistoryEntry; connection: { id: string; from: string; to: string } };
 
 export interface DeskHistoryStacks {
   past: DeskHistoryOp[];
@@ -44,7 +47,6 @@ export function takeRedo(stacks: DeskHistoryStacks): { stacks: DeskHistoryStacks
   return { stacks: { past: [...stacks.past, op], future: stacks.future.slice(0, -1) }, op };
 }
 
-/** 撤销一个 op 对应的服务端调用。 */
 async function applyInverse(projectId: string, op: DeskHistoryOp): Promise<void> {
   switch (op.type) {
     case "place":
@@ -65,10 +67,22 @@ async function applyInverse(projectId: string, op: DeskHistoryOp): Promise<void>
     case "update_text":
       await api.appendVersion(op.artifactId, { text: op.from });
       return;
+    case "place_connection":
+      await api.deleteConnection(projectId, op.connection.id);
+      return;
+    case "remove_connection":
+      await api.createConnection(projectId, {
+        from: op.connection.from,
+        to: op.connection.to,
+        connectionId: op.connection.id,
+      });
+      return;
+    case "generate":
+      await api.deleteObject(projectId, op.entry.artifactId);
+      return;
   }
 }
 
-/** 重做一个 op 对应的服务端调用。 */
 async function applyForward(projectId: string, op: DeskHistoryOp): Promise<void> {
   switch (op.type) {
     case "place":
@@ -88,6 +102,30 @@ async function applyForward(projectId: string, op: DeskHistoryOp): Promise<void>
       return;
     case "update_text":
       await api.appendVersion(op.artifactId, { text: op.to });
+      return;
+    case "place_connection":
+      await api.createConnection(projectId, {
+        from: op.connection.from,
+        to: op.connection.to,
+        connectionId: op.connection.id,
+      });
+      return;
+    case "remove_connection":
+      await api.deleteConnection(projectId, op.connection.id);
+      return;
+    case "generate":
+      await api.createArtifact(projectId, {
+        artifactType: op.entry.artifactType,
+        payload: op.entry.payload,
+        inputRefs: op.entry.inputRefs,
+        artifactId: op.entry.artifactId,
+        layout: op.entry.layout,
+      });
+      await api.createConnection(projectId, {
+        from: op.connection.from,
+        to: op.connection.to,
+        connectionId: op.connection.id,
+      });
       return;
   }
 }

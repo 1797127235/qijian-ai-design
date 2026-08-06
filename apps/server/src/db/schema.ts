@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { index, integer, jsonb, pgTable, serial, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import type { CreatedBy, DeskLayoutObject, DeskViewport } from "../domain/types.js";
+import type { CreatedBy, DeskConnection, DeskLayoutObject, DeskViewport } from "../domain/types.js";
 
 export const projects = pgTable("projects", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -117,6 +117,7 @@ export const artifactVersions = pgTable(
 export const deskStates = pgTable("desk_state", {
   projectId: uuid("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
   objects: jsonb("objects").$type<DeskLayoutObject[]>().notNull().default(sql`'[]'::jsonb`),
+  connections: jsonb("connections").$type<DeskConnection[]>().notNull().default(sql`'[]'::jsonb`),
   viewport: jsonb("viewport").$type<DeskViewport>().notNull().default(sql`'{"x":40,"y":20,"zoom":0.62}'::jsonb`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

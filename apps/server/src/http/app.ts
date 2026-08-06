@@ -5,6 +5,7 @@ import { secureHeaders } from "hono/secure-headers";
 import type { ServerConfig } from "../config.js";
 import { AppError } from "../lib/errors.js";
 import type { ArtifactService } from "../services/artifact-service.js";
+import type { CanvasGenerateService } from "../services/canvas-generate-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
 import type { FileStorage } from "../services/file-storage.js";
 import type { ChatService } from "../services/chat-service.js";
@@ -22,6 +23,7 @@ interface HttpDependencies {
   files: FileStorage;
   chats: ChatService;
   sessions: AgentSessionRegistry;
+  generate?: CanvasGenerateService;
 }
 
 export function createHttpApp(deps: HttpDependencies) {
@@ -33,7 +35,7 @@ export function createHttpApp(deps: HttpDependencies) {
   app.get("/health", (c) => c.json({ ok: true }));
 
   registerProjectRoutes(app, deps);
-  registerDeskRoutes(app, deps);
+  registerDeskRoutes(app, { desks: deps.desks, artifacts: deps.artifacts, generate: deps.generate });
   registerChatRoutes(app, deps);
   registerArtifactRoutes(app, deps);
   registerFileRoutes(app, deps);

@@ -94,7 +94,7 @@ export class ArtifactService {
     });
   }
 
-  /** 删除桌面物件：单事务移除布局 + 硬删 artifact（级联 versions）。 */
+  /** 删除桌面物件：单事务移除布局 + 级联连线 + 硬删 artifact（级联 versions）。 */
   async deletePlaced(projectId: string, artifactId: string) {
     return this.db.transaction(async (tx) => {
       const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
@@ -108,7 +108,8 @@ export class ArtifactService {
       if (!artifact) throw new HttpError(404, "未找到该 Artifact");
       await tx.delete(artifacts).where(eq(artifacts.id, artifactId));
       const objects = state.objects.filter((item) => item.artifact_id !== artifactId);
-      await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
+      const connections = (state.connections ?? []).filter((c) => c.from !== artifactId && c.to !== artifactId);
+      await tx.update(deskStates).set({ objects, connections, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
       return { object };
     });
   }
@@ -168,7 +169,7 @@ export class ArtifactService {
   }
 
   async referencesFile(fileId: string): Promise<boolean> {
-    // 结构化引用优先：input_refs 中的 file_id；payload 内嵌 id 作兼容（如 effect_image.file_id）。
+    // 结构化引用优先：input_refs 中的 file_id；payload 内嵌 file_id 作兼容（如 canvas_image.payload.file_id）。
     const [hit] = await this.db
       .select({ id: artifactVersions.id })
       .from(artifactVersions)
@@ -197,14 +198,14 @@ export class ArtifactService {
     this.recentPlacements.set(clientOpId, { result, expiresAt: now + IDEMPOTENCY_TTL_MS });
   }
 
-  /** canvas_image 的 file_id 必须归属当前项目且为 JPEG/PNG（创建校验，非仅删除保护）。 */
+  /** canvas_image / effect_image 的 file_id 必须归属当前项目且为 JPEG/PNG。 */
   private async validateCanvasImageFile(
     tx: DatabaseTransaction,
     projectId: string,
     artifactType: ArtifactType,
     payload: Record<string, unknown>,
   ) {
-    if (artifactType !== "canvas_image") return;
+    if (artifactType !== "canvas_image" && artifactType !== "effect_image") return;
     const fileId = payload.file_id;
     if (typeof fileId !== "string" || fileId.trim().length === 0) return;
     const [file] = await tx

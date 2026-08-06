@@ -7,6 +7,7 @@ import { loadConfig } from "./config.js";
 import { createDatabase } from "./db/client.js";
 import { createHttpApp } from "./http/app.js";
 import { ArtifactService } from "./services/artifact-service.js";
+import { CanvasGenerateService } from "./services/canvas-generate-service.js";
 import { DeskStateService } from "./services/desk-state-service.js";
 import { FileStorage } from "./services/file-storage.js";
 import { HttpImageGenerator } from "./services/image-generator.js";
@@ -19,6 +20,7 @@ const desks = new DeskStateService(db);
 const files = new FileStorage(db, config);
 const effects = new HttpImageGenerator(config, files);
 const chats = new ChatService(db);
+const generate = new CanvasGenerateService(db, artifacts, desks, files, effects);
 files.setReferenceCheckers([chats, artifacts]);
 
 let publish: EventSink = () => undefined;
@@ -27,7 +29,7 @@ const sessions = new AgentSessionRegistry({ artifacts, desks, effects, chats, fi
 const chat = new ChatGateway(sessions, chats);
 publish = chat.emit;
 
-const app = createHttpApp({ config, artifacts, desks, files, chats, sessions });
+const app = createHttpApp({ config, artifacts, desks, files, chats, sessions, generate });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`Qijian agent server listening on http://localhost:${info.port}`);
 });

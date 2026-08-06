@@ -1,9 +1,7 @@
 export const artifactTypes = [
-  "understanding_note",
-  "design_directions",
-  "effect_image",
   "sticky_note",
   "canvas_image",
+  "effect_image",
 ] as const;
 
 export type ArtifactType = (typeof artifactTypes)[number];
@@ -18,6 +16,12 @@ export interface DeskLayoutObject {
   y: number;
   rot: number;
   w?: number;
+}
+
+export interface DeskConnection {
+  id: string;
+  from: string;
+  to: string;
 }
 
 export interface DeskViewport {
@@ -41,5 +45,5 @@ export interface ArtifactSnapshot {
 export interface DeskSnapshot {
   project: { id: string; name: string };
   artifacts: ArtifactSnapshot[];
-  deskState: { objects: DeskLayoutObject[]; viewport: DeskViewport; updatedAt: Date };
+  deskState: { objects: DeskLayoutObject[]; connections: DeskConnection[]; viewport: DeskViewport; updatedAt: Date };
 }

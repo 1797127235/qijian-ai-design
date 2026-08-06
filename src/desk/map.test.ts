@@ -21,20 +21,12 @@ const snapshotWith = (
   ],
   deskState: {
     objects: [{ artifact_id: "a1", kind: artifactType, x: 10, y: 20, rot: 0 }],
+    connections: [],
     viewport: { x: 40, y: 20, zoom: 0.62 },
   },
 });
 
 describe("mapSnapshot", () => {
-  it("keeps existing mappings stable (regression)", () => {
-    const note = mapSnapshot(snapshotWith("understanding_note", { text: "hi", who: "AI 理解" }));
-    expect(note[0]).toMatchObject({ kind: "note", text: "hi", x: 10, y: 20 });
-    const directions = mapSnapshot(snapshotWith("design_directions", { directions: [{ id: "d1", title: "T" }] }));
-    expect(directions[0]).toMatchObject({ kind: "direction_set" });
-    const effect = mapSnapshot(snapshotWith("effect_image", { url: "https://example.com/x.png" }));
-    expect(effect[0]).toMatchObject({ kind: "effect_image", url: "https://example.com/x.png" });
-  });
-
   it("maps sticky_note with its text", () => {
     const objects = mapSnapshot(snapshotWith("sticky_note", { text: "记得选砖" }));
     expect(objects[0]).toMatchObject({ kind: "sticky_note", text: "记得选砖", x: 10, y: 20 });
@@ -48,6 +40,16 @@ describe("mapSnapshot", () => {
   it("maps canvas_image file_id to the file-serving URL", () => {
     const objects = mapSnapshot(snapshotWith("canvas_image", { file_id: "f-123" }));
     expect(objects[0]).toMatchObject({ kind: "canvas_image", url: "/api/files/f-123" });
+  });
+
+  it("maps pending effect_image without url", () => {
+    const objects = mapSnapshot(snapshotWith("effect_image", { pending: true, prompt: "现代客厅" }));
+    expect(objects[0]).toMatchObject({ kind: "effect_image", pending: true, prompt: "现代客厅" });
+  });
+
+  it("maps effect_image file_id to the file-serving URL", () => {
+    const objects = mapSnapshot(snapshotWith("effect_image", { file_id: "f-fx", pending: false }));
+    expect(objects[0]).toMatchObject({ kind: "effect_image", url: "/api/files/f-fx", pending: false });
   });
 
   it("drops objects whose artifact is missing from the snapshot", () => {

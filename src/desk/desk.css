@@ -114,6 +114,59 @@ button { font-family: inherit; }
   .desk-context-menu button:hover { background: var(--color-accent-soft); color: var(--color-accent); }
 }
 
+.conn-handle {
+  position: absolute; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--color-card); border: 1.5px solid var(--color-accent);
+  z-index: 5; cursor: crosshair; box-shadow: 0 1px 4px rgba(28, 26, 22, .15);
+}
+.conn-handle-source { cursor: crosshair; }
+.conn-handle-target { pointer-events: none; opacity: .7; }
+
+.desk-connections { z-index: 0; pointer-events: none; }
+.desk-connections path { pointer-events: stroke; }
+
+.effect-pending, .effect-error {
+  display: grid; place-items: center; gap: 8px;
+  background: #2a2a2a; color: #f2f2f2; border-radius: 6px; font-size: 13px;
+}
+.effect-error { background: #3a2424; }
+.effect-error button {
+  border: 0; border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  background: var(--color-accent); color: #fff; font-size: 12px;
+}
+.effect-spinner {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.25); border-top-color: #fff;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.desk-prompt-panel {
+  position: absolute; z-index: 30; width: 260px;
+  background: var(--color-card); border: 1px solid var(--color-hairline-strong);
+  border-radius: 10px; padding: 10px; box-shadow: 0 10px 28px rgba(28, 26, 22, .16);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.desk-prompt-panel textarea {
+  width: 100%; resize: vertical; min-height: 64px; border: 1px solid var(--color-hairline);
+  border-radius: 6px; padding: 8px; font: inherit; color: var(--color-ink); background: var(--desk-bg);
+}
+.desk-prompt-refs { display: flex; flex-wrap: wrap; gap: 4px; min-height: 18px; }
+.desk-prompt-refs .mute { font-size: 11px; color: var(--color-mute-soft); }
+.desk-prompt-chip {
+  font-size: 11px; padding: 2px 6px; border-radius: 999px;
+  background: var(--color-accent-soft); color: var(--color-accent);
+}
+.desk-prompt-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.desk-prompt-actions button {
+  border: 1px solid var(--color-hairline); border-radius: 6px; padding: 5px 10px;
+  background: var(--desk-bg); cursor: pointer; font-size: 12px;
+}
+.desk-prompt-actions button.primary {
+  background: var(--color-accent); color: #fff; border-color: transparent;
+}
+.desk-prompt-actions button:disabled { opacity: .45; cursor: not-allowed; }
+
 .obj-selected::after {
   content: ""; position: absolute; inset: -6px; pointer-events: none;
   border: 1.5px solid var(--color-accent); border-radius: 8px;

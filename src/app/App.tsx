@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type DeskSnapshot, type ProjectSummary } from "../lib/api";
 import { Desk } from "../desk/Desk";
 import { DeskObjectView } from "../desk/nodes";
 import { DeskToolbar } from "../desk/Toolbar";
+import { PromptPanel } from "../desk/PromptPanel";
 import { CANVAS_IMAGE_ACCEPT } from "../desk/attachments";
 import { ChatPanel } from "../desk/ChatPanel";
 import { Home } from "../desk/Home";
-import { mapSnapshot } from "../desk/map";
-import type { DeskObject } from "../desk/types";
+import { mapConnections, mapSnapshot } from "../desk/map";
+import type { DeskConnection, DeskObject } from "../desk/types";
 import type { Viewport } from "../desk/geometry";
 import { nextId } from "./ids";
 import { useChatSession } from "./useChatSession";
 import { useDeskActions } from "./useDeskActions";
+import { useDeskGenerate } from "./useDeskGenerate";
 import { useDeskHistory } from "./useDeskHistory";
 import { useDeskPlacement } from "./useDeskPlacement";
 
@@ -41,12 +43,14 @@ export function App() {
   const skipHistoryRef = useRef(false);
   const bootstrappedRef = useRef(false);
 
+  const [connections, setConnections] = useState<DeskConnection[]>([]);
   const refreshDesk = useCallback(async (projectId: string) => {
     const sequence = ++refreshSequence.current;
     const snap = await api.desk(projectId);
     if (activeProjectRef.current === projectId && refreshSequence.current === sequence) {
       setSnapshot(snap);
       setObjects(mapSnapshot(snap));
+      setConnections(mapConnections(snap));
     }
     return snap;
   }, []);
@@ -54,6 +58,7 @@ export function App() {
   const chat = useChatSession({ activeProjectRef, refreshDesk });
   const projectId = view.mode === "desk" ? view.projectId : undefined;
   const [selectedId, setSelectedId] = useState<string>();
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string>();
   const viewportRef = useRef<Viewport>({ x: 40, y: 20, zoom: 0.62 });
   const imagePickerRef = useRef<HTMLInputElement>(null);
   const desk = useDeskActions({
@@ -83,14 +88,65 @@ export function App() {
     onError: pushCanvasError,
     viewportRef,
   });
+  const gen = useDeskGenerate({ projectId, history, refreshDesk, onError: pushCanvasError });
 
   useEffect(() => {
     setSelectedId(undefined);
+    setSelectedConnectionId(undefined);
+    gen.closePanel();
   }, [projectId]);
 
   useEffect(() => {
     if (selectedId && !objects.some((item) => item.id === selectedId)) setSelectedId(undefined);
   }, [objects, selectedId]);
+
+  useEffect(() => {
+    if (selectedConnectionId && !connections.some((c) => c.id === selectedConnectionId)) setSelectedConnectionId(undefined);
+  }, [connections, selectedConnectionId]);
+
+  const createConnection = useCallback(
+    (from: string, to: string) => {
+      if (!projectId) return;
+      void desk.enqueue(async () => {
+        try {
+          const { connection } = await api.createConnection(projectId, { from, to, clientOpId: crypto.randomUUID() });
+          history.record({ type: "place_connection", connection });
+        } catch (error) {
+          pushCanvasError(`连线失败：${error instanceof Error ? error.message : "未知错误"}`);
+        }
+        await refreshDesk(projectId).catch(() => undefined);
+      });
+    },
+    [projectId, desk, history, pushCanvasError, refreshDesk],
+  );
+
+  const deleteConnection = useCallback(
+    (connectionId: string) => {
+      if (!projectId) return;
+      const connection = connections.find((c) => c.id === connectionId);
+      void desk.enqueue(async () => {
+        try {
+          await api.deleteConnection(projectId, connectionId);
+          if (connection) history.record({ type: "remove_connection", connection });
+          setSelectedConnectionId((cur) => (cur === connectionId ? undefined : cur));
+        } catch (error) {
+          pushCanvasError(`删除连线失败：${error instanceof Error ? error.message : "未知错误"}`);
+        }
+        await refreshDesk(projectId).catch(() => undefined);
+      });
+    },
+    [projectId, connections, desk, history, pushCanvasError, refreshDesk],
+  );
+
+  const panelSource = useMemo(
+    () => (gen.panelSourceId ? objects.find((o) => o.id === gen.panelSourceId) : undefined),
+    [gen.panelSourceId, objects],
+  );
+  const panelRefs = useMemo(() => {
+    if (!panelSource) return [];
+    const inbound = connections.filter((c) => c.to === panelSource.id).map((c) => c.from);
+    return objects.filter((o) => inbound.includes(o.id));
+  }, [panelSource, connections, objects]);
 
   const onMoveEnd = useCallback(
     (id: string, from: { x: number; y: number }, to: { x: number; y: number }) => {
@@ -119,7 +175,8 @@ export function App() {
       if (isEditableTarget(e.target)) return;
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        placement.deleteSelected();
+        if (selectedConnectionId) deleteConnection(selectedConnectionId);
+        else placement.deleteSelected();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
@@ -146,7 +203,7 @@ export function App() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("paste", onPaste);
     };
-  }, [placement.deleteSelected, placement.addImageFiles, history.undo, history.redo]);
+  }, [placement.deleteSelected, placement.addImageFiles, history.undo, history.redo, selectedConnectionId, deleteConnection]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -183,6 +240,7 @@ export function App() {
     clearViewportTimer();
     setSnapshot(undefined);
     setObjects([]);
+    setConnections([]);
     setView({ mode: "home" });
   }, [clearViewportTimer, closeChat, resetChatUi]);
 
@@ -196,6 +254,7 @@ export function App() {
       clearViewportTimer();
       setSnapshot(undefined);
       setObjects([]);
+      setConnections([]);
       setView({ mode: "desk", projectId: nextProjectId });
       const nextPath = pathForView({ mode: "desk", projectId: nextProjectId });
       if (historyMode !== "none" && window.location.pathname !== nextPath) {
@@ -312,20 +371,38 @@ export function App() {
         <Desk
           key={deskProjectId}
           objects={objects}
+          connections={connections}
           initialViewport={deskSnapshot?.deskState.viewport}
           onMove={desk.onMove}
           onMoveEnd={onMoveEnd}
           onViewportChange={onViewportChange}
           focusRequest={desk.focusRequest}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          selectedConnectionId={selectedConnectionId}
+          onSelect={(id) => {
+            setSelectedId(id);
+            setSelectedConnectionId(undefined);
+            if (id) gen.openPanel(id);
+            else gen.closePanel();
+          }}
+          onSelectConnection={(id) => {
+            setSelectedConnectionId(id);
+            setSelectedId(undefined);
+            gen.closePanel();
+          }}
           onDropFiles={placement.addImageFiles}
           onDeleteObject={placement.deleteObject}
+          onCreateConnection={createConnection}
+          onDeleteConnection={deleteConnection}
           overlay={
             <DeskToolbar
               canUndo={history.canUndo}
               canRedo={history.canRedo}
-              onHand={() => setSelectedId(undefined)}
+              onHand={() => {
+                setSelectedId(undefined);
+                setSelectedConnectionId(undefined);
+                gen.closePanel();
+              }}
               onUndo={history.undo}
               onRedo={history.redo}
               onText={placement.addStickyNote}
@@ -338,9 +415,24 @@ export function App() {
               editing={placement.editingId === obj.id}
               onStartEdit={placement.startEdit}
               onCommitText={placement.commitText}
+              onRetryGenerate={(id) => {
+                const target = objects.find((item) => item.id === id);
+                const prompt = target?.kind === "effect_image" ? (target.prompt ?? "") : "";
+                void gen.generate(id, prompt);
+              }}
             />
           )}
-        />
+        >
+          {panelSource && (
+            <PromptPanel
+              source={panelSource}
+              references={panelRefs}
+              busy={gen.busySourceId === panelSource.id}
+              onGenerate={(prompt) => void gen.generate(panelSource.id, prompt)}
+              onClose={gen.closePanel}
+            />
+          )}
+        </Desk>
         <input
           ref={imagePickerRef}
           type="file"

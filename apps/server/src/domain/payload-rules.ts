@@ -11,22 +11,17 @@ const nonEmpty = (value: unknown) => typeof value === "string" && value.trim().l
 
 /** 最低内容校验，无流程关卡。 */
 export function assertPayload(artifactType: ArtifactType, payload: Record<string, unknown>) {
-  if (artifactType === "understanding_note" && !nonEmpty(payload.text)) {
-    throw new DomainValidationError("理解便签内容不能为空");
-  }
-  if (artifactType === "design_directions") {
-    const directions = Array.isArray(payload.directions) ? payload.directions : [];
-    if (directions.length === 0) {
-      throw new DomainValidationError("design_directions 至少包含一个方向");
-    }
-  }
-  if (artifactType === "effect_image" && !nonEmpty(payload.url)) {
-    throw new DomainValidationError("effect_image 必须包含图片 URL");
-  }
   if (artifactType === "sticky_note" && payload.text !== undefined && typeof payload.text !== "string") {
     throw new DomainValidationError("便签内容必须是文本");
   }
   if (artifactType === "canvas_image" && !nonEmpty(payload.file_id)) {
     throw new DomainValidationError("canvas_image 必须包含 file_id");
+  }
+  if (artifactType === "effect_image") {
+    const pending = payload.pending === true;
+    const hasError = typeof payload.error === "string" && payload.error.length > 0;
+    if (!pending && !hasError && !nonEmpty(payload.file_id)) {
+      throw new DomainValidationError("effect_image 完成态必须包含 file_id");
+    }
   }
 }

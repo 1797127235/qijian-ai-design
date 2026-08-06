@@ -103,7 +103,11 @@ export function useDeskPlacement(options: {
       const artifact = snapshot?.artifacts.find((item) => item.id === artifactId);
       const object = objects.find((item) => item.id === artifactId);
       if (!artifact || !object) return undefined;
-      if (artifact.artifactType !== "sticky_note" && artifact.artifactType !== "canvas_image") return undefined;
+      if (
+        artifact.artifactType !== "sticky_note"
+        && artifact.artifactType !== "canvas_image"
+        && artifact.artifactType !== "effect_image"
+      ) return undefined;
       return {
         artifactId,
         artifactType: artifact.artifactType,

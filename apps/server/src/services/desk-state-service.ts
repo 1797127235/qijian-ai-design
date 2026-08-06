@@ -1,40 +1,37 @@
 import { and, desc, eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import type { Database } from "../db/client.js";
 import { artifacts, artifactVersions, deskStates, projects, storedFiles } from "../db/schema.js";
-import { artifactTypes, type DeskLayoutObject, type DeskSnapshot, type DeskViewport } from "../domain/types.js";
+import { artifactTypes, type DeskConnection, type DeskLayoutObject, type DeskSnapshot, type DeskViewport } from "../domain/types.js";
 import { HttpError } from "../lib/errors.js";
 
 const defaultViewport: DeskViewport = { x: 40, y: 20, zoom: 0.62 };
 const supportedArtifactTypes = new Set<string>(artifactTypes);
 
+export function normalizeConnection(
+  from: string,
+  to: string,
+  existing: DeskConnection[],
+  objectIds: Set<string>,
+): { ok: true; connection?: DeskConnection; existing?: DeskConnection } | { ok: false; reason: string } {
+  if (from === to) return { ok: false, reason: "不能连接到自身" };
+  if (!objectIds.has(from) || !objectIds.has(to)) return { ok: false, reason: "连线端点不在桌面上" };
+  const dup = existing.find((c) => c.from === from && c.to === to);
+  if (dup) return { ok: true, existing: dup };
+  return { ok: true, connection: { id: randomUUID(), from, to } };
+}
+
 export class DeskStateService {
   constructor(private readonly db: Database) {}
 
   async listProjects() {
-    const rows = await this.db.select().from(projects).orderBy(desc(projects.updatedAt));
-    const summaries = await Promise.all(
-      rows.map(async (project) => {
-        const versions = await this.db
-          .select({ artifactType: artifacts.artifactType, status: artifactVersions.status, payload: artifactVersions.payload })
-          .from(artifacts)
-          .innerJoin(artifactVersions, eq(artifacts.currentVersionId, artifactVersions.id))
-          .where(eq(artifacts.projectId, project.id));
-        const effects = versions.filter((v) => v.artifactType === "effect_image" && typeof v.payload.url === "string");
-        const cover = effects[0];
-        return {
-          ...project,
-          effectCount: effects.length,
-          coverUrl: typeof cover?.payload.url === "string" ? cover.payload.url : undefined,
-        };
-      }),
-    );
-    return summaries;
+    return this.db.select().from(projects).orderBy(desc(projects.updatedAt));
   }
 
   async createProject(name: string) {
     return this.db.transaction(async (tx) => {
       const [project] = await tx.insert(projects).values({ name }).returning();
-      await tx.insert(deskStates).values({ projectId: project.id, objects: [], viewport: defaultViewport });
+      await tx.insert(deskStates).values({ projectId: project.id, objects: [], connections: [], viewport: defaultViewport });
       return project;
     });
   }
@@ -76,6 +73,7 @@ export class DeskStateService {
         : []),
       deskState: {
         objects: state?.objects ?? [],
+        connections: state?.connections ?? [],
         viewport: state?.viewport ?? defaultViewport,
         updatedAt: state?.updatedAt ?? project.updatedAt,
       },
@@ -123,4 +121,35 @@ export class DeskStateService {
     });
   }
 
+  async createConnection(projectId: string, from: string, to: string, clientOpId?: string, connectionId?: string) {
+    return this.db.transaction(async (tx) => {
+      const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
+      if (!state) throw new HttpError(404, "未找到该设计项目");
+      const objectIds = new Set(state.objects.map((o) => o.artifact_id));
+      const result = normalizeConnection(from, to, state.connections ?? [], objectIds);
+      if (!result.ok) throw new HttpError(422, result.reason);
+      if (result.existing) return result.existing;
+      const connection: DeskConnection = connectionId
+        ? { id: connectionId, from, to }
+        : result.connection!;
+      // 若指定 id 已存在则幂等返回
+      const byId = (state.connections ?? []).find((c) => c.id === connection.id);
+      if (byId) return byId;
+      const connections = [...(state.connections ?? []), connection];
+      await tx.update(deskStates).set({ connections, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
+      return connection;
+    });
+  }
+
+  async deleteConnection(projectId: string, connectionId: string) {
+    return this.db.transaction(async (tx) => {
+      const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
+      if (!state) throw new HttpError(404, "未找到该设计项目");
+      const connection = (state.connections ?? []).find((c) => c.id === connectionId);
+      if (!connection) throw new HttpError(404, "未找到该连线");
+      const connections = (state.connections ?? []).filter((c) => c.id !== connectionId);
+      await tx.update(deskStates).set({ connections, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
+      return { connection };
+    });
+  }
 }

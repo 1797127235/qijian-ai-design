@@ -51,6 +51,17 @@ export const api = {
     request<{ object: DeskLayoutObject }>(`/api/projects/${projectId}/desk/objects/${artifactId}`, { method: "DELETE" }),
   setViewport: (projectId: string, viewport: { x: number; y: number; zoom: number }) =>
     request<{ viewport: DeskSnapshot["deskState"]["viewport"] }>(`/api/projects/${projectId}/desk`, json("PATCH", { viewport })),
+  createConnection: (projectId: string, input: { from: string; to: string; clientOpId?: string; connectionId?: string }) =>
+    request<{ connection: { id: string; from: string; to: string } }>(`/api/projects/${projectId}/desk/connections`, json("POST", input)),
+  deleteConnection: (projectId: string, connectionId: string) =>
+    request<{ connection: { id: string; from: string; to: string } }>(`/api/projects/${projectId}/desk/connections/${connectionId}`, { method: "DELETE" }),
+  generateImage: (projectId: string, input: { prompt: string; sourceArtifactId: string; clientOpId: string }) =>
+    request<{
+      artifact: { id: string };
+      connection: { id: string; from: string; to: string };
+      status: "pending" | "succeeded" | "failed";
+      error?: string;
+    }>(`/api/projects/${projectId}/generate-image`, json("POST", input)),
   createArtifact: (projectId: string, input: { artifactType: ArtifactSnapshot["artifactType"]; payload: Record<string, unknown>; inputRefs?: unknown[]; status?: "draft" | "confirmed"; artifactId?: string; clientOpId?: string; layout?: { kind: string; x: number; y: number; rot?: number; w?: number } }) =>
     request<{ artifact: { id: string }; version: { id: string }; object?: DeskLayoutObject }>(`/api/projects/${projectId}/artifacts`, json("POST", input)),
   appendVersion: (artifactId: string, payload: Record<string, unknown>, inputRefs?: unknown[]) =>

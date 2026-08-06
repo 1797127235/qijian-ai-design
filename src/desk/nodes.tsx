@@ -6,46 +6,15 @@ export function DeskObjectView({
   editing,
   onStartEdit,
   onCommitText,
+  onRetryGenerate,
 }: {
   obj: DeskObject;
   editing?: boolean;
   onStartEdit?: (id: string) => void;
   onCommitText?: (id: string, text: string) => void;
+  onRetryGenerate?: (id: string) => void;
 }) {
   switch (obj.kind) {
-    case "note":
-      return (
-        <div className="note-card ai-note">
-          <span className="who">{obj.who}</span>
-          <p>{obj.text}</p>
-        </div>
-      );
-
-    case "direction_set":
-      return (
-        <div className="dir-set">
-          {obj.directions.map((d, i) => (
-            <div className="dir-card" key={d.id}>
-              <div className="dir-head">
-                <span className="who">方向 {String.fromCharCode(65 + i)}</span>
-              </div>
-              <div className={`ph ph-${d.tone ?? "wood"}`} style={{ height: 84 }} />
-              <h3>{d.title}</h3>
-              <p>{d.concept}</p>
-              {d.chips.length > 0 && <div className="chips">{d.chips.map((c) => <span className="chip" key={c}>{c}</span>)}</div>}
-            </div>
-          ))}
-        </div>
-      );
-
-    case "effect_image":
-      return (
-        <div className="photo fx-single" style={{ width: 170 }}>
-          <img src={obj.url} alt="效果图" draggable={false} style={{ width: "100%", borderRadius: 2, display: "block" }} />
-          <span className="cap">效果图</span>
-        </div>
-      );
-
     case "sticky_note":
       return (
         <div className="sticky-card" onDoubleClick={() => onStartEdit?.(obj.id)}>
@@ -72,6 +41,33 @@ export function DeskObjectView({
       return (
         <div className="photo fx-single" style={{ width: 220 }}>
           <img src={obj.url} alt="画布图片" draggable={false} style={{ width: "100%", borderRadius: 2, display: "block" }} />
+        </div>
+      );
+
+    case "effect_image":
+      if (obj.pending) {
+        return (
+          <div className="photo fx-single effect-pending" style={{ width: 220, height: 160 }}>
+            <div className="effect-spinner" />
+            <span>生成中</span>
+          </div>
+        );
+      }
+      if (obj.error || !obj.url) {
+        return (
+          <div className="photo fx-single effect-error" style={{ width: 220, height: 160 }}>
+            <span>{obj.error ?? "生成失败"}</span>
+            {onRetryGenerate && (
+              <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => onRetryGenerate(obj.id)}>
+                重试
+              </button>
+            )}
+          </div>
+        );
+      }
+      return (
+        <div className="photo fx-single" style={{ width: 220 }}>
+          <img src={obj.url} alt="效果图" draggable={false} style={{ width: "100%", borderRadius: 2, display: "block" }} />
         </div>
       );
   }
