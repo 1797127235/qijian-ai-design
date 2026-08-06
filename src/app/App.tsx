@@ -390,8 +390,11 @@ export function App() {
           }}
           onSelectConnection={(id) => {
             setSelectedConnectionId(id);
-            setSelectedId(undefined);
-            gen.closePanel();
+            // 仅在选中某条连线时清掉物件选中；id 为空表示“取消连线选中”，勿动物件选中
+            if (id) {
+              setSelectedId(undefined);
+              gen.closePanel();
+            }
           }}
           onDropFiles={placement.addImageFiles}
           onDeleteObject={placement.deleteObject}

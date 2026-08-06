@@ -109,11 +109,17 @@ export function Desk({
       if (dx * dx + dy * dy > 16) {
         const obj = objects.find((item) => item.id === pendingClick.current!.id);
         if (obj) {
+          // 进入拖动后收起面板，只保留选中
           onSelect?.(obj.id, { panel: false });
           onSelectConnection?.(undefined);
           const pointer = worldFromEvent(e);
           drag.current = { id: obj.id, ox: pointer.x - obj.x, oy: pointer.y - obj.y };
           dragStart.current = { id: obj.id, x: obj.x, y: obj.y };
+          try {
+            vpRef.current?.setPointerCapture(e.pointerId);
+          } catch {
+            // ignore
+          }
         }
         pendingClick.current = undefined;
       }
@@ -142,15 +148,16 @@ export function Desk({
       connect.current = undefined;
       setPreview(undefined);
     }
-    // 纯点击：选中并打开提示词面板
-    if (pendingClick.current && !drag.current) {
-      onSelect?.(pendingClick.current.id, { panel: true });
-      onSelectConnection?.(undefined);
-    }
+    // 纯点击：panel 已在 pointerdown 打开；这里只清状态
     pendingClick.current = undefined;
     pan.current = undefined;
     if (drag.current && lastDragPos.current && dragStart.current) {
-      onMoveEnd?.(lastDragPos.current.id, { x: dragStart.current.x, y: dragStart.current.y }, { x: lastDragPos.current.x, y: lastDragPos.current.y });
+      const moved =
+        Math.round(lastDragPos.current.x) !== Math.round(dragStart.current.x)
+        || Math.round(lastDragPos.current.y) !== Math.round(dragStart.current.y);
+      if (moved) {
+        onMoveEnd?.(lastDragPos.current.id, { x: dragStart.current.x, y: dragStart.current.y }, { x: lastDragPos.current.x, y: lastDragPos.current.y });
+      }
     }
     drag.current = undefined;
     dragStart.current = undefined;
@@ -170,14 +177,28 @@ export function Desk({
     });
   };
 
+  const selectObject = (obj: DeskObject, panel: boolean) => {
+    setMenu(undefined);
+    onSelect?.(obj.id, { panel });
+    onSelectConnection?.(undefined);
+  };
+
   const startNodeDrag = (e: React.PointerEvent, obj: DeskObject) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
-    setMenu(undefined);
     e.stopPropagation();
-    // 先记下点击；真正拖动在 move 超过阈值后开始，避免「点一下」被当成拖
+    // 立刻选中 + 打开面板（不依赖 pointerup，避免 capture/原生拖图吞事件）
+    selectObject(obj, true);
     pendingClick.current = { id: obj.id, x: e.clientX, y: e.clientY };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    // 不在 pointerdown 时 setPointerCapture：部分浏览器会把后续 click 吃掉
+  };
+
+  const onObjectClick = (e: React.MouseEvent, obj: DeskObject) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
+    e.stopPropagation();
+    // 兜底：部分环境下 pointer 路径不可靠，click 再保证一次
+    selectObject(obj, true);
   };
 
   const startConnect = (e: React.PointerEvent, obj: DeskObject) => {
@@ -251,6 +272,8 @@ export function Desk({
               className={`obj obj-${obj.kind} ${focusRequest?.id === obj.id ? "obj-focused" : ""} ${selectedId === obj.id ? "obj-selected" : ""}`}
               style={{ left: obj.x, top: obj.y, transform: `rotate(${obj.rot}deg)` }}
               onPointerDown={(e) => startNodeDrag(e, obj)}
+              onClick={(e) => onObjectClick(e, obj)}
+              onDragStart={(e) => e.preventDefault()}
               onContextMenu={(e) => openObjectMenu(e, obj)}
             >
               {renderObject(obj)}

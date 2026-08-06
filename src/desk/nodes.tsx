@@ -40,7 +40,13 @@ export function DeskObjectView({
     case "canvas_image":
       return (
         <div className="photo fx-single" style={{ width: 220 }}>
-          <img src={obj.url} alt="画布图片" draggable={false} style={{ width: "100%", borderRadius: 2, display: "block" }} />
+          <img
+            src={obj.url}
+            alt="画布图片"
+            draggable={false}
+            onDragStart={(e) => e.preventDefault()}
+            style={{ width: "100%", borderRadius: 2, display: "block", pointerEvents: "none" }}
+          />
         </div>
       );
 
@@ -67,7 +73,13 @@ export function DeskObjectView({
       }
       return (
         <div className="photo fx-single" style={{ width: 220 }}>
-          <img src={obj.url} alt="效果图" draggable={false} style={{ width: "100%", borderRadius: 2, display: "block" }} />
+          <img
+            src={obj.url}
+            alt="效果图"
+            draggable={false}
+            onDragStart={(e) => e.preventDefault()}
+            style={{ width: "100%", borderRadius: 2, display: "block", pointerEvents: "none" }}
+          />
         </div>
       );
   }

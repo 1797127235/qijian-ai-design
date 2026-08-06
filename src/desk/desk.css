@@ -122,8 +122,9 @@ button { font-family: inherit; }
 .conn-handle-source { cursor: crosshair; }
 .conn-handle-target { pointer-events: none; opacity: .7; }
 
+/* 连线默认不抢点击；仅选中/可点时 path 自己开 pointer-events */
 .desk-connections { z-index: 0; pointer-events: none; }
-.desk-connections path { pointer-events: stroke; }
+.desk-connections path.conn-hit { pointer-events: stroke; }
 
 .effect-pending, .effect-error {
   display: grid; place-items: center; gap: 8px;

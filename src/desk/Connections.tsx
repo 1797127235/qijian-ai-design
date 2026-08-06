@@ -29,7 +29,7 @@ export function ConnectionsLayer({
         const active = selectedId === c.id;
         return (
           <g key={c.id}>
-            <path d={d} fill="none" stroke="transparent" strokeWidth={16} style={{ cursor: "pointer" }}
+            <path className="conn-hit" d={d} fill="none" stroke="transparent" strokeWidth={16} style={{ cursor: "pointer" }}
               onClick={(e) => { e.stopPropagation(); onSelect?.(c.id); }}
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(c.id, e); }}
             />
