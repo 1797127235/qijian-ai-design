@@ -4,8 +4,10 @@ import type { FileStorage } from "./file-storage.js";
 import { HttpImageGenerator } from "./image-generator.js";
 
 const config = {
-  imageEndpoint: "https://provider.example/generate",
+  imageEndpoint: "https://provider.example/images/generations",
   imageApiKey: "test-key",
+  imageModel: "grok-imagine-image-quality",
+  imageEditModel: "grok-imagine-image-quality",
 } as ServerConfig;
 
 describe("HttpImageGenerator", () => {
@@ -24,6 +26,13 @@ describe("HttpImageGenerator", () => {
 
     const result = await generator.generate({ projectId: "project-1", context: "context" });
 
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://provider.example/images/generations",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ prompt: "context\n补充意图：无", n: 1, model: "grok-imagine-image-quality" }),
+      }),
+    );
     expect(put).toHaveBeenCalledWith("project-1", "effect-provider-1.png", "image/png", new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));
     expect(result).toEqual({
       url: "http://localhost:8787/api/files/file-1",

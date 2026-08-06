@@ -10,6 +10,10 @@ export interface ServerConfig {
   agentModel: string;
   imageEndpoint?: string;
   imageApiKey?: string;
+  /** 文生图 model；codex2api 实测 grok-imagine-image-quality */
+  imageModel?: string;
+  /** 有参考图时的 model；edits 路径用（grok-imagine-edit 上游 404，改用 quality） */
+  imageEditModel?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -26,5 +30,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     agentModel: env.AGENT_MODEL ?? "grok-4.5-latest",
     imageEndpoint: env.IMAGE_API_URL,
     imageApiKey: env.IMAGE_API_KEY,
+    imageModel: env.IMAGE_MODEL ?? "grok-imagine-image-quality",
+    imageEditModel: env.IMAGE_EDIT_MODEL ?? env.IMAGE_MODEL ?? "grok-imagine-image-quality",
   };
 }

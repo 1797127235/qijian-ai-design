@@ -108,21 +108,23 @@ export class HttpImageGenerator implements ImageGenerator {
   }
 
   private async requestTextOnly(prompt: string, signal?: AbortSignal) {
+    const body: Record<string, unknown> = { prompt, n: 1 };
+    if (this.config.imageModel) body.model = this.config.imageModel;
     return this.fetcher(this.config.imageEndpoint!, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.imageApiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(body),
       signal,
     });
   }
 
-  /** 有参考图：优先 multipart /images/edits；若 endpoint 已是完整 edits URL 则直接用。 */
+  /** 有参考图：multipart /images/edits；model 用 imageEditModel。 */
   private async requestWithReferences(prompt: string, refs: ReferenceFile[], signal?: AbortSignal) {
     const endpoint = this.editsEndpoint();
     const form = new FormData();
     form.append("prompt", prompt);
     form.append("n", "1");
-    form.append("response_format", "b64_json");
+    if (this.config.imageEditModel) form.append("model", this.config.imageEditModel);
     for (const [index, ref] of refs.entries()) {
       const name = ref.filename ?? `ref-${index}${imageExtensions.get(ref.mediaType) ?? ".png"}`;
       form.append("image", new Blob([Buffer.from(ref.bytes)], { type: ref.mediaType }), name);
