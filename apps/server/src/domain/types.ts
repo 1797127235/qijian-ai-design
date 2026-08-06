@@ -1,12 +1,13 @@
 export const artifactTypes = [
-  "space_map",
   "understanding_note",
   "design_directions",
   "effect_image",
-  "proposal_package",
+  "sticky_note",
+  "canvas_image",
 ] as const;
 
 export type ArtifactType = (typeof artifactTypes)[number];
+/** 版本状态仅作元数据，不做产品流程关卡。 */
 export type ArtifactStatus = "draft" | "confirmed";
 export type CreatedBy = "designer" | "agent";
 

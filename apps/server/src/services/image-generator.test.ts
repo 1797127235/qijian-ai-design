@@ -22,7 +22,7 @@ describe("HttpImageGenerator", () => {
     const put = vi.fn().mockResolvedValue({ id: "file-1", url: "http://localhost:8787/api/files/file-1" });
     const generator = new HttpImageGenerator(config, { put } as unknown as FileStorage, fetcher);
 
-    const result = await generator.generate({ projectId: "project-1", spaceId: "living", context: "context" });
+    const result = await generator.generate({ projectId: "project-1", context: "context" });
 
     expect(put).toHaveBeenCalledWith("project-1", "effect-provider-1.png", "image/png", new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]));
     expect(result).toEqual({
@@ -43,7 +43,7 @@ describe("HttpImageGenerator", () => {
     const put = vi.fn();
     const generator = new HttpImageGenerator(config, { put } as unknown as FileStorage, fetcher);
 
-    await expect(generator.generate({ projectId: "project-1", spaceId: "living", context: "context" }))
+    await expect(generator.generate({ projectId: "project-1", context: "context" }))
       .rejects.toThrow("仅支持 JPG、PNG 和 WebP");
     expect(put).not.toHaveBeenCalled();
   });
@@ -58,7 +58,7 @@ describe("HttpImageGenerator", () => {
     const put = vi.fn();
     const generator = new HttpImageGenerator(config, { put } as unknown as FileStorage, fetcher);
 
-    await expect(generator.generate({ projectId: "project-1", spaceId: "living", context: "context" }))
+    await expect(generator.generate({ projectId: "project-1", context: "context" }))
       .rejects.toThrow("内容与声明的图片类型不匹配");
     expect(put).not.toHaveBeenCalled();
   });

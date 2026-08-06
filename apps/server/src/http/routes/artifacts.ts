@@ -18,12 +18,18 @@ export function registerArtifactRoutes(app: Hono, deps: { artifacts: ArtifactSer
     const input = await body(c.req.raw, z.object({
       artifactType: artifactTypeSchema,
       ...versionSchema.shape,
+      artifactId: z.string().uuid().optional(),
+      clientOpId: z.string().min(1).max(64).optional(),
       layout: z.object({ kind: z.string(), x: z.number(), y: z.number(), rot: z.number().default(0), w: z.number().optional() }).optional(),
     }));
     const projectId = c.req.param("id");
+    if (input.artifactId && input.layout) {
+      const { artifactId, clientOpId: _clientOpId, layout, artifactType, ...version } = input;
+      return c.json(await deps.artifacts.restorePlaced(projectId, { artifactId, artifactType, ...version, layout }), 201);
+    }
     if (input.layout) {
-      const { layout, artifactType, ...version } = input;
-      return c.json(await deps.artifacts.createPlaced(projectId, artifactType, version, layout), 201);
+      const { layout, artifactType, clientOpId, artifactId: _artifactId, ...version } = input;
+      return c.json(await deps.artifacts.createPlaced(projectId, artifactType, version, layout, clientOpId), 201);
     }
     return c.json(await deps.artifacts.create(projectId, input.artifactType, input), 201);
   });
@@ -32,8 +38,6 @@ export function registerArtifactRoutes(app: Hono, deps: { artifacts: ArtifactSer
     const input = await body(c.req.raw, versionSchema);
     return c.json(await deps.artifacts.append(c.req.param("id"), input), 201);
   });
-
-  app.post("/api/artifacts/:id/confirm", async (c) => c.json(await deps.artifacts.confirm(c.req.param("id"), "designer")));
 
   app.post("/api/artifacts/:id/rollback", async (c) => {
     const input = await body(c.req.raw, z.object({ versionId: z.string().uuid().optional() }));

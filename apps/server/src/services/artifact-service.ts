@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { artifacts, artifactVersions, deskStates, projects, storedFiles } from "../db/schema.js";
-import { DomainValidationError, assertConfirmable } from "../domain/payload-rules.js";
+import { DomainValidationError, assertPayload } from "../domain/payload-rules.js";
 import { artifactTypes, type ArtifactStatus, type ArtifactType, type CreatedBy, type DeskLayoutObject } from "../domain/types.js";
 import { HttpError } from "../lib/errors.js";
 import { contentHash } from "../lib/json.js";
@@ -14,10 +14,31 @@ export interface AppendVersionInput {
   changeReason?: string;
 }
 
+export interface RestorePlacedInput {
+  artifactId: string;
+  artifactType: ArtifactType;
+  payload: Record<string, unknown>;
+  inputRefs?: unknown[];
+  createdBy: CreatedBy;
+  layout: NewDeskObject;
+}
+
 type DatabaseTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type NewDeskObject = Omit<DeskLayoutObject, "artifact_id">;
 
+const CANVAS_IMAGE_MEDIA_TYPES = new Set(["image/jpeg", "image/png"]);
+const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const IDEMPOTENCY_MAX_ENTRIES = 500;
+
+type CreatePlacedResult = {
+  artifact: typeof artifacts.$inferSelect;
+  version: typeof artifactVersions.$inferSelect;
+  object: DeskLayoutObject;
+};
+
 export class ArtifactService {
+  private readonly recentPlacements = new Map<string, { result: CreatePlacedResult; expiresAt: number }>();
+
   constructor(private readonly db: Database) {}
 
   async create(projectId: string, artifactType: ArtifactType, input: AppendVersionInput) {
@@ -26,17 +47,69 @@ export class ArtifactService {
     return this.db.transaction((tx) => this.createInTransaction(tx, projectId, artifactType, input));
   }
 
-  async createPlaced(projectId: string, artifactType: ArtifactType, input: AppendVersionInput, layout: NewDeskObject) {
+  async createPlaced(projectId: string, artifactType: ArtifactType, input: AppendVersionInput, layout: NewDeskObject, clientOpId?: string) {
     if (!artifactTypes.includes(artifactType)) throw new HttpError(422, "不支持的 Artifact 类型");
     this.validateConfirmedPayload(artifactType, input);
-    return this.db.transaction(async (tx) => {
-      const result = await this.createInTransaction(tx, projectId, artifactType, input);
+    if (clientOpId) {
+      const hit = this.recentPlacements.get(clientOpId);
+      if (hit && hit.expiresAt > Date.now()) return hit.result;
+      this.recentPlacements.delete(clientOpId);
+    }
+    const result = await this.db.transaction(async (tx) => {
+      const created = await this.createInTransaction(tx, projectId, artifactType, input);
       const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
       if (!state) throw new HttpError(404, "未找到该设计项目");
-      const object: DeskLayoutObject = { artifact_id: result.artifact.id, ...layout };
-      const objects = [...state.objects.filter((item) => item.artifact_id !== result.artifact.id), object];
+      const object: DeskLayoutObject = { artifact_id: created.artifact.id, ...layout };
+      const objects = [...state.objects.filter((item) => item.artifact_id !== created.artifact.id), object];
       await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
-      return { ...result, object };
+      return { ...created, object };
+    });
+    if (clientOpId) this.rememberPlacement(clientOpId, result);
+    return result;
+  }
+
+  /** 撤销删除：以原 UUID 重建 artifact（版本链从 v1 重启）并恢复桌面布局。 */
+  async restorePlaced(projectId: string, input: RestorePlacedInput) {
+    if (!artifactTypes.includes(input.artifactType)) throw new HttpError(422, "不支持的 Artifact 类型");
+    this.validateConfirmedPayload(input.artifactType, input);
+    return this.db.transaction(async (tx) => {
+      const [project] = await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId));
+      if (!project) throw new HttpError(404, "未找到该设计项目");
+      const [existing] = await tx.select({ id: artifacts.id }).from(artifacts).where(eq(artifacts.id, input.artifactId));
+      if (existing) throw new HttpError(409, "该 Artifact 已存在，无法重建");
+      await this.validateInputRefs(tx, projectId, input.inputRefs ?? []);
+      await this.validateCanvasImageFile(tx, projectId, input.artifactType, input.payload);
+      const [artifact] = await tx
+        .insert(artifacts)
+        .values({ id: input.artifactId, projectId, artifactType: input.artifactType })
+        .returning();
+      const version = await this.insertVersion(tx, artifact.id, 1, input);
+      await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifact.id));
+      const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
+      if (!state) throw new HttpError(404, "未找到该设计项目");
+      const object: DeskLayoutObject = { artifact_id: artifact.id, ...input.layout };
+      const objects = [...state.objects.filter((item) => item.artifact_id !== artifact.id), object];
+      await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
+      return { artifact, version, object };
+    });
+  }
+
+  /** 删除桌面物件：单事务移除布局 + 硬删 artifact（级联 versions）。 */
+  async deletePlaced(projectId: string, artifactId: string) {
+    return this.db.transaction(async (tx) => {
+      const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
+      if (!state) throw new HttpError(404, "未找到该设计项目");
+      const object = state.objects.find((item) => item.artifact_id === artifactId);
+      if (!object) throw new HttpError(404, "该物件不在桌面上");
+      const [artifact] = await tx
+        .select({ id: artifacts.id })
+        .from(artifacts)
+        .where(and(eq(artifacts.id, artifactId), eq(artifacts.projectId, projectId)));
+      if (!artifact) throw new HttpError(404, "未找到该 Artifact");
+      await tx.delete(artifacts).where(eq(artifacts.id, artifactId));
+      const objects = state.objects.filter((item) => item.artifact_id !== artifactId);
+      await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
+      return { object };
     });
   }
 
@@ -50,6 +123,7 @@ export class ArtifactService {
       const nextInput = { ...input, inputRefs: input.inputRefs ?? current?.inputRefs ?? [] };
       this.validateConfirmedPayload(artifact.artifactType as ArtifactType, nextInput);
       await this.validateInputRefs(tx, artifact.projectId, nextInput.inputRefs);
+      await this.validateCanvasImageFile(tx, artifact.projectId, artifact.artifactType as ArtifactType, nextInput.payload);
       const [{ next }] = await tx
         .select({ next: max(artifactVersions.versionNo) })
         .from(artifactVersions)
@@ -57,18 +131,6 @@ export class ArtifactService {
       const version = await this.insertVersion(tx, artifactId, (next ?? 0) + 1, nextInput);
       await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifactId));
       return version;
-    });
-  }
-
-  async confirm(artifactId: string, createdBy: CreatedBy = "designer") {
-    const current = await this.current(artifactId);
-    if (current.status === "confirmed") return current;
-    return this.append(artifactId, {
-      payload: current.payload,
-      inputRefs: current.inputRefs,
-      status: "confirmed",
-      createdBy,
-      changeReason: "确认当前内容",
     });
   }
 
@@ -123,8 +185,39 @@ export class ArtifactService {
     return Boolean(hit);
   }
 
-  private async validateInputRefs(
+  private rememberPlacement(clientOpId: string, result: CreatePlacedResult) {
+    const now = Date.now();
+    for (const [key, entry] of this.recentPlacements) {
+      if (entry.expiresAt <= now) this.recentPlacements.delete(key);
+    }
+    if (this.recentPlacements.size >= IDEMPOTENCY_MAX_ENTRIES) {
+      const oldest = this.recentPlacements.keys().next().value;
+      if (oldest !== undefined) this.recentPlacements.delete(oldest);
+    }
+    this.recentPlacements.set(clientOpId, { result, expiresAt: now + IDEMPOTENCY_TTL_MS });
+  }
+
+  /** canvas_image 的 file_id 必须归属当前项目且为 JPEG/PNG（创建校验，非仅删除保护）。 */
+  private async validateCanvasImageFile(
     tx: DatabaseTransaction,
+    projectId: string,
+    artifactType: ArtifactType,
+    payload: Record<string, unknown>,
+  ) {
+    if (artifactType !== "canvas_image") return;
+    const fileId = payload.file_id;
+    if (typeof fileId !== "string" || fileId.trim().length === 0) return;
+    const [file] = await tx
+      .select({ id: storedFiles.id, mediaType: storedFiles.mediaType })
+      .from(storedFiles)
+      .where(and(eq(storedFiles.id, fileId), eq(storedFiles.projectId, projectId)));
+    if (!file) throw new HttpError(422, "图片文件不属于当前项目");
+    if (!CANVAS_IMAGE_MEDIA_TYPES.has(file.mediaType)) {
+      throw new HttpError(422, "画布图片仅支持 JPEG/PNG");
+    }
+  }
+
+  private async validateInputRefs(    tx: DatabaseTransaction,
     projectId: string,
     inputRefs: unknown[],
   ) {
@@ -156,9 +249,8 @@ export class ArtifactService {
   }
 
   private validateConfirmedPayload(artifactType: ArtifactType, input: AppendVersionInput) {
-    if (input.status !== "confirmed") return;
     try {
-      assertConfirmable(artifactType, input.payload);
+      assertPayload(artifactType, input.payload);
     } catch (error) {
       if (error instanceof DomainValidationError) throw new HttpError(422, error.message);
       throw error;
@@ -174,6 +266,7 @@ export class ArtifactService {
     const [project] = await tx.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId));
     if (!project) throw new HttpError(404, "未找到该设计项目");
     await this.validateInputRefs(tx, projectId, input.inputRefs ?? []);
+    await this.validateCanvasImageFile(tx, projectId, artifactType, input.payload);
     const [artifact] = await tx.insert(artifacts).values({ projectId, artifactType }).returning();
     const version = await this.insertVersion(tx, artifact.id, 1, input);
     await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifact.id));

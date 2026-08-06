@@ -52,9 +52,9 @@ function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) 
 }
 
 const suggestions = [
-  { title: "整理项目理解", description: "读取当前画布与户型图，提炼空间问题和设计机会" },
-  { title: "出三个设计方向", description: "基于当前约束，形成三个真正可比较的方案方向" },
-  { title: "给客厅出效果图", description: "结合已确认方向，为重点空间生成视觉方案" },
+  { title: "看看桌上有什么", description: "根据当前画布与附件，帮我理清已有材料和缺口" },
+  { title: "按我说的改一版", description: "以我选中或提到的图为准，出一版可比较的改法" },
+  { title: "给这个空间出效果图", description: "用现有参考或描述，生成一张可落桌的效果图" },
 ];
 
 export function ChatMessageList({
@@ -90,8 +90,8 @@ export function ChatMessageList({
         <div className="chat-empty">
           <div className="chat-empty-intro">
             <span>砌间设计助手</span>
-            <h2>想从哪一步开始？</h2>
-            <p>我会读取当前画布，再和你一起推进方案。</p>
+            <h2>想做什么？</h2>
+            <p>把图或想法丢进来；我会尽量结合当前画布一起改。</p>
           </div>
           <div className="chat-suggestions">
             {suggestions.map((suggestion) => (

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import { api, type ArtifactSnapshot, type DeskSnapshot } from "../lib/api";
+import { api, type DeskSnapshot } from "../lib/api";
 import type { ChatItem, DeskObject } from "../desk/types";
 import { nextId } from "./ids";
 
@@ -15,26 +15,34 @@ export function useDeskActions(options: {
   const [focusRequest, setFocusRequest] = useState<{ id: string; token: number }>();
   const persistViewport = useRef<number>();
   const viewportSaveFailed = useRef(false);
+  const queueRef = useRef<Promise<unknown>>(Promise.resolve());
 
-  const artifactOf = useCallback(
-    (id: string): ArtifactSnapshot | undefined => snapshot?.artifacts.find((a) => a.id === id),
-    [snapshot],
-  );
+  /** desk 变更串行化：防止 undo/移动/删除等异步操作乱序（codex async ordering 结论）。 */
+  const enqueue = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const run = queueRef.current.then(task, task);
+    queueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }, []);
 
   const onMove = useCallback((id: string, x: number, y: number) => {
     setObjects((cur) => cur.map((o) => (o.id === id ? { ...o, x, y } : o)));
   }, [setObjects]);
 
   const onMoveEnd = useCallback(
-    (id: string, x: number, y: number) => {
+    (id: string, _from: { x: number; y: number }, to: { x: number; y: number }) => {
       if (!projectId) return;
-      void api.moveObject(projectId, id, { x: Math.round(x), y: Math.round(y) }).catch((e) => {
-        if (activeProjectRef.current !== projectId) return;
-        setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `位置保存失败：${e instanceof Error ? e.message : "未知错误"}` }]);
-        void refreshDesk(projectId).catch(() => undefined);
-      });
+      void enqueue(() =>
+        api.moveObject(projectId, id, { x: Math.round(to.x), y: Math.round(to.y) }).catch((e) => {
+          if (activeProjectRef.current !== projectId) return;
+          setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `位置保存失败：${e instanceof Error ? e.message : "未知错误"}` }]);
+          void refreshDesk(projectId).catch(() => undefined);
+        }),
+      );
     },
-    [projectId, activeProjectRef, refreshDesk, setChatItems],
+    [projectId, activeProjectRef, enqueue, refreshDesk, setChatItems],
   );
 
   const onViewportChange = useCallback(
@@ -60,54 +68,6 @@ export function useDeskActions(options: {
     [projectId, refreshDesk, snapshot?.project.id, activeProjectRef, setChatItems],
   );
 
-  const withRefresh = useCallback(
-    async (fn: () => Promise<unknown>) => {
-      if (!projectId) return false;
-      try {
-        await fn();
-        await refreshDesk(projectId);
-        return activeProjectRef.current === projectId;
-      } catch (e) {
-        setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `操作失败：${e instanceof Error ? e.message : "未知错误"}` }]);
-        return false;
-      }
-    },
-    [projectId, refreshDesk, activeProjectRef, setChatItems],
-  );
-
-  const onConfirm = useCallback(
-    async (artifactId: string) => {
-      if (await withRefresh(() => api.confirmArtifact(artifactId))) {
-        setFocusRequest({ id: artifactId, token: Date.now() });
-      }
-    },
-    [withRefresh],
-  );
-
-  const onSelectDirection = useCallback(
-    async (artifactId: string, directionId: string) => {
-      const saved = await withRefresh(async () => {
-        const artifact = artifactOf(artifactId);
-        if (!artifact) return;
-        await api.appendVersion(artifactId, { ...artifact.payload, selected_direction_id: directionId });
-      });
-      if (saved) setFocusRequest({ id: artifactId, token: Date.now() });
-    },
-    [artifactOf, withRefresh],
-  );
-
-  const onAdopt = useCallback(
-    async (artifactId: string, adopted: boolean) => {
-      const saved = await withRefresh(async () => {
-        const artifact = artifactOf(artifactId);
-        if (!artifact) return;
-        await api.appendVersion(artifactId, { ...artifact.payload, adopted });
-      });
-      if (saved) setFocusRequest({ id: artifactId, token: Date.now() });
-    },
-    [artifactOf, withRefresh],
-  );
-
   const clearViewportTimer = useCallback(() => {
     window.clearTimeout(persistViewport.current);
     viewportSaveFailed.current = false;
@@ -116,14 +76,10 @@ export function useDeskActions(options: {
   return {
     focusRequest,
     setFocusRequest,
-    artifactOf,
+    enqueue,
     onMove,
     onMoveEnd,
     onViewportChange,
-    withRefresh,
-    onConfirm,
-    onSelectDirection,
-    onAdopt,
     clearViewportTimer,
   };
 }

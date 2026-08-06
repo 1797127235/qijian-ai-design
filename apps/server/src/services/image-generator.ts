@@ -24,7 +24,6 @@ function hasImageSignature(mediaType: string, bytes: Uint8Array) {
 
 export interface GenerateImageInput {
   projectId: string;
-  spaceId: string;
   intent?: string;
   context: string;
 }
@@ -54,7 +53,7 @@ export class HttpImageGenerator implements ImageGenerator {
     const response = await this.fetcher(this.config.imageEndpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.imageApiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ prompt: `${input.context}\n空间：${input.spaceId}\n补充意图：${input.intent ?? "无"}` }),
+      body: JSON.stringify({ prompt: `${input.context}\n补充意图：${input.intent ?? "无"}` }),
       signal,
     });
     if (!response.ok) throw new HttpError(503, `图像服务调用失败：${response.status}`);

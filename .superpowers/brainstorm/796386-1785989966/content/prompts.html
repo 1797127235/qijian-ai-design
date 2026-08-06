@@ -1,0 +1,61 @@
+<h2>砌间 Qijian AI Design · 生图 Prompt 集</h2>
+<p class="subtitle">每个 prompt 是一个独立方向。先快速过一下 brief(确认我没理解偏),再复制 prompt 去跑。</p>
+
+<div class="section">
+  <div class="label">Brand Brief · 提示词基线</div>
+  <div class="mockup">
+    <div class="mockup-body" style="padding:20px 24px;background:#f3f0e9;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.7;color:#1c1a16">
+      产品:家装前期 AI 设计工作台(给设计师用) · 母语中文<br/>
+      气质:编辑感 · 安静 · 克制 · 有纸质温度 · 偏离 Figma/酷家乐的深色工具风<br/>
+      色板:画布 <span style="background:#faf9f5;padding:1px 6px;border:1px solid #e3ded4">#faf9f5</span> · 墨 <span style="background:#1c1a16;color:#faf9f5;padding:1px 6px">#1c1a16</span> · 陶土 <span style="background:#b5532a;color:#fff;padding:1px 6px">#b5532a</span><br/>
+      字体气质:衬线(Fraunces / 思源宋体)+ 几何无衬线 · 拒绝任何渐变 / 阴影 / 玻璃拟态<br/>
+      参考气质:Aesop · Pentagram wordmarks · NYT Opinion · Heath Ceramics · The Yale Architectural Journal<br/>
+      要避开的:卡通插画 · 渐变色 · 3D · 极简单线条几何 · "科技感"未来主义<br/>
+      现状:陶土描边方框 + 「砌」字单字印章,被你自己评「太平庸」
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Prompt A · 编辑感衬线字标(纯字母路线)</div>
+  <div class="mockup">
+    <div class="mockup-body" style="padding:20px 24px;background:#faf9f5;border:1px solid #e3ded4;font-family:'Instrument Sans',sans-serif;font-size:14px;line-height:1.7;color:#1c1a16">
+Minimalist editorial logo mark for a home-design brand. A single uppercase letter <b>Q</b> rendered in a contemporary high-contrast serif typeface (Fraunces or Tiempos style). The Q has a confident, subtle tilt and a small terracotta-orange (#b5532a) accent stroke inside the counter. Cream paper background (#faf9f5). Flat vector quality, no shadows, no gradients. Inspired by Bloomberg Businessweek, Aesop, Pentagram wordmarks. Single mark, square composition.
+    </div>
+  </div>
+  <p class="subtitle" style="margin-top:8px">注释:MJ 加 <code>--ar 1:1 --style raw --s 50</code> · GPT/Gemini 直接粘贴</p>
+</div>
+
+<div class="section">
+  <div class="label">Prompt B · 墨痕建筑符号(空间隐喻)</div>
+  <div class="mockup">
+    <div class="mockup-body" style="padding:20px 24px;background:#faf9f5;border:1px solid #e3ded4;font-family:'Instrument Sans',sans-serif;font-size:14px;line-height:1.7;color:#1c1a16">
+Minimalist logo mark for a sophisticated home-design AI tool. A single confident ink stroke that reads as an open doorway or window arch, combined with one small solid square. Drawn with the warmth of a brush on warm cream paper (#faf9f5). Two colors only: deep ink-black (#1c1a16) for the stroke, terracotta-orange (#b5532a) for the square. Editorial, tactile, distinctive — like a museum imprint or architecture monograph mark. Flat, no gradients, no shadows, no 3D. Single mark, square format.
+    </div>
+  </div>
+  <p class="subtitle" style="margin-top:8px">注释:这个方向最接近"纸质工作室"气质,墨痕是首选语言</p>
+</div>
+
+<div class="section">
+  <div class="label">Prompt C · 不对称几何(动态编辑)</div>
+  <div class="mockup">
+    <div class="mockup-body" style="padding:20px 24px;background:#faf9f5;border:1px solid #e3ded4;font-family:'Instrument Sans',sans-serif;font-size:14px;line-height:1.7;color:#1c1a16">
+Logo mark for an AI-powered home design workspace. An asymmetric geometric symbol — three rectangular blocks of varying widths arranged in a confident, dynamic composition (deliberately not a simple stack, not a grid). Think NYT Opinion section mark or a contemporary art museum identity. Color: deep charcoal-black (#1c1a16) for two blocks, terracotta-orange (#b5532a) for one. Cream paper background (#faf9f5). Flat vector quality, no gradients, no shadows. Editorial, sophisticated, immediately recognizable at favicon scale. Square format.
+    </div>
+  </div>
+  <p class="subtitle" style="margin-top:8px">注释:和第一屏的"三叠"不同 — 这次要"打破堆叠的秩序感"</p>
+</div>
+
+<div class="section">
+  <div class="label">Prompt D · 砌字重制(中文锚点 + 解构)</div>
+  <div class="mockup">
+    <div class="mockup-body" style="padding:20px 24px;background:#faf9f5;border:1px solid #e3ded4;font-family:'Instrument Sans',sans-serif;font-size:14px;line-height:1.7;color:#1c1a16">
+Logo mark that reimagines the Chinese character <b>砌</b> (literally "to stack bricks" — composed of three 土 radicals stacked vertically). Show the character redrawn as a custom, hand-drawn logogram with confident brush energy and intentional imperfection, in deep ink-black on warm cream paper (#faf9f5). One stroke should feel slightly off-grid or disrupted, suggesting iteration / work-in-progress / the AI making drafts. A single small terracotta-orange (#b5532a) mark (dot or short stroke) as accent. Editorial, tactile, distinctive — like an architect's monogram. Square format.
+    </div>
+  </div>
+  <p class="subtitle" style="margin-top:8px">注释:这条最容易中文出图失败 — 如果生图模型不识"砌"字,改成 "Chinese character meaning stack bricks, three 土 radicals stacked"</p>
+</div>
+
+<div class="section">
+  <p class="subtitle" style="margin-top:8px"><b>建议跑法</b>:4 个 prompt 各跑 4-8 张,挑你心动的 2-3 张回来;或者你自己微调 prompt 加约束(比如"加入 wordmark"、"出 favicon 版本"——这些都可以二轮做)。</p>
+</div>

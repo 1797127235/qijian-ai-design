@@ -4,23 +4,22 @@ import { ArtifactService } from "./artifact-service.js";
 
 const service = new ArtifactService({} as Database);
 
-describe("Artifact confirmation contract", () => {
-  it("requires a selected direction among exactly three cards", async () => {
-    await expect(service.create("project", "design_directions", {
-      payload: {
-        directions: [{ id: "a" }, { id: "b" }, { id: "c" }],
-        selected_direction_id: null,
-      },
-      status: "confirmed",
+describe("Artifact payload validation", () => {
+  it("rejects empty understanding notes", async () => {
+    await expect(service.create("project", "understanding_note", {
+      payload: { text: "" },
       createdBy: "agent",
-    })).rejects.toThrow("必须从三个方向中选择一个");
+    })).rejects.toThrow("理解便签内容不能为空");
   });
 
-  it("requires mapped spaces before confirming a space map", async () => {
-    await expect(service.create("project", "space_map", {
-      payload: { spaces: [] },
-      status: "confirmed",
+  it("rejects removed types", async () => {
+    await expect(service.create("project", "space_map" as never, {
+      payload: {},
       createdBy: "designer",
-    })).rejects.toThrow("必须标注空间区域");
+    })).rejects.toThrow("不支持的 Artifact 类型");
+    await expect(service.create("project", "proposal_package" as never, {
+      payload: {},
+      createdBy: "designer",
+    })).rejects.toThrow("不支持的 Artifact 类型");
   });
 });

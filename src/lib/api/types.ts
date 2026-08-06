@@ -2,9 +2,7 @@ export interface ProjectSummary {
   id: string;
   name: string;
   updatedAt: string;
-  directionTitle?: string;
   effectCount: number;
-  adoptedCount: number;
   coverUrl?: string;
 }
 
@@ -28,11 +26,12 @@ export interface ChatAttachment {
 
 export interface ArtifactSnapshot {
   id: string;
-  artifactType: "space_map" | "understanding_note" | "design_directions" | "effect_image" | "proposal_package";
+  artifactType: "understanding_note" | "design_directions" | "effect_image" | "sticky_note" | "canvas_image";
   versionId: string;
   versionNo: number;
   status: "draft" | "confirmed";
   payload: Record<string, unknown>;
+  inputRefs: unknown[];
   createdBy: "designer" | "agent";
 }
 

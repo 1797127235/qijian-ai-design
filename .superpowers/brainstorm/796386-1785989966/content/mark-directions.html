@@ -1,0 +1,69 @@
+<h2>从「砌」抽象出几何符号 — 四个方向草案</h2>
+<p class="subtitle">基于「砌 = 三块土字堆叠」的结构,先看 4 种抽象方向,选一个最对味的再细化字标和印章。</p>
+
+<div class="cards">
+  <!-- Current -->
+  <div class="card" data-choice="ref" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f3f0e9;padding:32px;display:flex;align-items:center;justify-content:center">
+      <div style="width:96px;height:96px;border:1.5px solid #b5532a;display:flex;align-items:center;justify-content:center;color:#b5532a;font-family:serif;font-size:64px;font-weight:500;line-height:1;transform:rotate(-2deg)">砌</div>
+    </div>
+    <div class="card-body">
+      <div class="label">现状</div>
+      <h3>单字印章</h3>
+      <p>1.5px 描边方框 + 「砌」字,陶土色,微倾斜 -2°。优点:中文文化认同;缺点:小尺寸下文字不可读,无法承载国际化。</p>
+    </div>
+  </div>
+
+  <!-- A: Three stacked slabs -->
+  <div class="card" data-choice="A" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f3f0e9;padding:32px;display:flex;align-items:center;justify-content:center">
+      <svg viewBox="0 0 120 120" width="120" height="120">
+        <rect x="14" y="20" width="92" height="22" fill="#b5532a" rx="2"/>
+        <rect x="14" y="49" width="92" height="22" fill="#b5532a" rx="2"/>
+        <rect x="14" y="78" width="92" height="22" fill="#b5532a" rx="2"/>
+      </svg>
+    </div>
+    <div class="card-body">
+      <div class="label">A · 推荐</div>
+      <h3>三叠横片</h3>
+      <p>最直白的抽象:三块等宽横片上下叠放,留 7px 缝隙。直接对应「砌」中三个「土」字。气质冷静、克制、有建筑剖面感。</p>
+    </div>
+  </div>
+
+  <!-- B: One block divided -->
+  <div class="card" data-choice="B" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f3f0e9;padding:32px;display:flex;align-items:center;justify-content:center">
+      <svg viewBox="0 0 120 120" width="120" height="120">
+        <rect x="14" y="14" width="92" height="92" fill="#b5532a" rx="4"/>
+        <line x1="14" y1="42" x2="106" y2="42" stroke="#faf9f5" stroke-width="4"/>
+        <line x1="14" y1="78" x2="106" y2="78" stroke="#faf9f5" stroke-width="4"/>
+      </svg>
+    </div>
+    <div class="card-body">
+      <div class="label">B</div>
+      <h3>整体切块</h3>
+      <p>一块实心方,内部两道横向切口均分三段。视觉上更像「一体成型」的工具标识,更现代、更图形化,但文化语义距离稍远。</p>
+    </div>
+  </div>
+
+  <!-- C: Isometric stack -->
+  <div class="card" data-choice="C" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f3f0e9;padding:32px;display:flex;align-items:center;justify-content:center">
+      <svg viewBox="0 0 120 120" width="120" height="120">
+        <!-- bottom block -->
+        <polygon points="10,80 50,100 110,80 110,98 50,118 10,98" fill="#9a4623"/>
+        <polygon points="10,80 50,60 110,80 50,100" fill="#d0693f"/>
+        <!-- top block -->
+        <polygon points="10,60 50,80 110,60 110,78 50,98 10,78" fill="#b5532a"/>
+        <polygon points="10,60 50,40 110,60 50,80" fill="#d0693f"/>
+      </svg>
+    </div>
+    <div class="card-body">
+      <div class="label">C</div>
+      <h3>轴测堆叠</h3>
+      <p>2.5D 透视感的两块砖体,呼应「砌筑」三维过程。最具空间叙事,但实现成本高,小尺寸 / 单色场景下容易糊。</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:24px">点选任一卡片,告诉我哪个方向最对味;可以同时点几个,告诉我各取哪些优点。</p>

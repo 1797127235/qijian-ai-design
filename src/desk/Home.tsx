@@ -21,8 +21,7 @@ function DeskPreview({ project }: { project: ProjectSummary }) {
 }
 
 function statusLabel(p: ProjectSummary): string {
-  if (p.directionTitle) return p.directionTitle;
-  if (p.effectCount > 0) return `效果图 ${p.adoptedCount}/${p.effectCount}`;
+  if (p.effectCount > 0) return `效果图 ${p.effectCount}`;
   return "空桌面";
 }
 

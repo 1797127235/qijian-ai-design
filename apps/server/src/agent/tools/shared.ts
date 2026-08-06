@@ -1,7 +1,6 @@
 /** Agent 工具共享上下文：集中提供依赖、项目归属校验和桌面变更通知。 */
 import type { ArtifactService } from "../../services/artifact-service.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
-import type { ExportService } from "../../services/export-service.js";
 import type { ImageGenerator } from "../../services/image-generator.js";
 import type { EventSink } from "../events.js";
 
@@ -9,7 +8,6 @@ export interface ToolDependencies {
   artifacts: ArtifactService;
   desks: DeskStateService;
   effects: ImageGenerator;
-  exports: ExportService;
   emit: EventSink;
 }
 

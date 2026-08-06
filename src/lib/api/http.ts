@@ -45,19 +45,18 @@ export const api = {
     request<{ threadId: string; messages: StoredChatMessage[]; toolCalls: StoredToolCall[] }>(
       `/api/projects/${projectId}/chat/messages?threadId=${encodeURIComponent(threadId)}`,
     ),
-  moveObject: (projectId: string, artifactId: string, patch: { x?: number; y?: number; rot?: number }) =>
+  moveObject: (projectId: string, artifactId: string, patch: { x?: number; y?: number; rot?: number; w?: number }) =>
     request<DeskLayoutObject>(`/api/projects/${projectId}/desk/objects/${artifactId}`, json("PATCH", patch)),
+  deleteObject: (projectId: string, artifactId: string) =>
+    request<{ object: DeskLayoutObject }>(`/api/projects/${projectId}/desk/objects/${artifactId}`, { method: "DELETE" }),
   setViewport: (projectId: string, viewport: { x: number; y: number; zoom: number }) =>
     request<{ viewport: DeskSnapshot["deskState"]["viewport"] }>(`/api/projects/${projectId}/desk`, json("PATCH", { viewport })),
-  createArtifact: (projectId: string, input: { artifactType: ArtifactSnapshot["artifactType"]; payload: Record<string, unknown>; inputRefs?: unknown[]; status?: "draft" | "confirmed"; layout?: { kind: string; x: number; y: number; rot?: number; w?: number } }) =>
-    request<{ artifact: { id: string } }>(`/api/projects/${projectId}/artifacts`, json("POST", input)),
+  createArtifact: (projectId: string, input: { artifactType: ArtifactSnapshot["artifactType"]; payload: Record<string, unknown>; inputRefs?: unknown[]; status?: "draft" | "confirmed"; artifactId?: string; clientOpId?: string; layout?: { kind: string; x: number; y: number; rot?: number; w?: number } }) =>
+    request<{ artifact: { id: string }; version: { id: string }; object?: DeskLayoutObject }>(`/api/projects/${projectId}/artifacts`, json("POST", input)),
   appendVersion: (artifactId: string, payload: Record<string, unknown>, inputRefs?: unknown[]) =>
     request<{ versionNo: number }>(`/api/artifacts/${artifactId}/versions`, json("POST", { payload, ...(inputRefs ? { inputRefs } : {}) })),
-  confirmArtifact: (artifactId: string) => request(`/api/artifacts/${artifactId}/confirm`, json("POST", {})),
   rollbackArtifact: (artifactId: string, versionId?: string) =>
     request<{ versionNo: number }>(`/api/artifacts/${artifactId}/rollback`, json("POST", versionId ? { versionId } : {})),
-  exportPackage: (projectId: string) =>
-    request<{ artifactId: string; pdfUrl?: string; imageUrls?: string[] }>(`/api/projects/${projectId}/export`, json("POST", {})),
   uploadFile: async (projectId: string, file: File, signal?: AbortSignal) => {
     const form = new FormData();
     form.append("file", file);

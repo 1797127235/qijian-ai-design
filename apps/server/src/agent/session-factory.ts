@@ -10,7 +10,6 @@ import {
 import type { ServerConfig } from "../config.js";
 import type { ArtifactService } from "../services/artifact-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
-import type { ExportService } from "../services/export-service.js";
 import type { ImageGenerator } from "../services/image-generator.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { FileStorage } from "../services/file-storage.js";
@@ -29,7 +28,6 @@ export interface SessionFactoryDependencies {
   artifacts: ArtifactService;
   desks: DeskStateService;
   effects: ImageGenerator;
-  exports: ExportService;
   chats: ChatService;
   files: FileStorage;
   emit: EventSink;

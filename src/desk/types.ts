@@ -1,15 +1,5 @@
 export type Tone = "site" | "wood" | "cloth" | "green";
 
-export interface Space {
-  id: string;
-  name: string;
-  key: boolean;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
 export interface Direction {
   id: string;
   title: string;
@@ -19,11 +9,11 @@ export interface Direction {
 }
 
 export type DeskObject =
-  | { id: string; kind: "plan"; x: number; y: number; rot: number; w: number; status: "draft" | "confirmed"; sourceFileId?: string; spaces: Space[] }
-  | { id: string; kind: "note"; x: number; y: number; rot: number; status: "draft" | "confirmed"; spaceId: string; who: string; text: string }
-  | { id: string; kind: "direction_set"; x: number; y: number; rot: number; status: "draft" | "confirmed"; directions: Direction[]; selectedId?: string }
-  | { id: string; kind: "effect_image"; x: number; y: number; rot: number; status: "draft" | "confirmed"; spaceId: string; url: string; adopted: boolean }
-  | { id: string; kind: "setup"; x: number; y: number; rot: number };
+  | { id: string; kind: "note"; x: number; y: number; rot: number; status: "draft" | "confirmed"; who: string; text: string }
+  | { id: string; kind: "direction_set"; x: number; y: number; rot: number; status: "draft" | "confirmed"; directions: Direction[] }
+  | { id: string; kind: "effect_image"; x: number; y: number; rot: number; status: "draft" | "confirmed"; url: string }
+  | { id: string; kind: "sticky_note"; x: number; y: number; rot: number; status: "draft" | "confirmed"; text: string }
+  | { id: string; kind: "canvas_image"; x: number; y: number; rot: number; status: "draft" | "confirmed"; url: string };
 
 export type ChatItem =
   | { id: string; role: "user" | "agent"; text: string; attachments?: import("../lib/api").ChatAttachment[] }

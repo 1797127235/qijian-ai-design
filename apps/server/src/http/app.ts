@@ -6,7 +6,6 @@ import type { ServerConfig } from "../config.js";
 import { AppError } from "../lib/errors.js";
 import type { ArtifactService } from "../services/artifact-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
-import type { ExportService } from "../services/export-service.js";
 import type { FileStorage } from "../services/file-storage.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { AgentSessionRegistry } from "../agent/session-registry.js";
@@ -21,7 +20,6 @@ interface HttpDependencies {
   artifacts: ArtifactService;
   desks: DeskStateService;
   files: FileStorage;
-  exports: ExportService;
   chats: ChatService;
   sessions: AgentSessionRegistry;
 }
@@ -39,8 +37,6 @@ export function createHttpApp(deps: HttpDependencies) {
   registerChatRoutes(app, deps);
   registerArtifactRoutes(app, deps);
   registerFileRoutes(app, deps);
-
-  app.post("/api/projects/:id/export", async (c) => c.json(await deps.exports.export(c.req.param("id")), 201));
 
   app.notFound((c) => c.json({ error: { code: "NOT_FOUND", message: "接口不存在", retryable: false } }, 404));
   app.onError((error, c) => {

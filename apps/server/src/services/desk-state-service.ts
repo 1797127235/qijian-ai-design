@@ -19,25 +19,12 @@ export class DeskStateService {
           .from(artifacts)
           .innerJoin(artifactVersions, eq(artifacts.currentVersionId, artifactVersions.id))
           .where(eq(artifacts.projectId, project.id));
-        const directions = versions.find((v) => v.artifactType === "design_directions" && v.status === "confirmed");
-        const directionList = Array.isArray(directions?.payload.directions) ? directions.payload.directions : [];
-        const selected = directionList.find((d) => d && typeof d === "object" && (d as Record<string, unknown>).id === directions?.payload.selected_direction_id);
         const effects = versions.filter((v) => v.artifactType === "effect_image" && typeof v.payload.url === "string");
-        const adopted = effects.find((v) => v.payload.adopted === true) ?? effects[0];
-        const spaceMap = versions.find((v) => v.artifactType === "space_map");
-        const coverUrl = typeof adopted?.payload.url === "string"
-          ? adopted.payload.url
-          : typeof spaceMap?.payload.source_file_id === "string"
-            ? `/api/files/${spaceMap.payload.source_file_id}`
-            : undefined;
+        const cover = effects[0];
         return {
           ...project,
-          directionTitle: selected && typeof selected === "object" && typeof (selected as Record<string, unknown>).title === "string"
-            ? ((selected as Record<string, unknown>).title as string)
-            : undefined,
-          effectCount: versions.filter((v) => v.artifactType === "effect_image").length,
-          adoptedCount: versions.filter((v) => v.artifactType === "effect_image" && v.payload.adopted === true).length,
-          coverUrl,
+          effectCount: effects.length,
+          coverUrl: typeof cover?.payload.url === "string" ? cover.payload.url : undefined,
         };
       }),
     );

@@ -1,23 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { assertConfirmable, DomainValidationError } from "./payload-rules.js";
-import { findKeySpace, parseSpaces } from "./space-map.js";
+import { assertPayload, DomainValidationError } from "./payload-rules.js";
 
-describe("domain payload rules", () => {
-  it("accepts regions alias for spaces", () => {
-    expect(parseSpaces({ regions: [{ id: "living", key: true }] })).toEqual([
-      { id: "living", key: true, raw: { id: "living", key: true } },
-    ]);
-    expect(findKeySpace({ spaces: [{ space_id: "kitchen", is_key_space: true }] }, "kitchen")?.id).toBe("kitchen");
+describe("assertPayload", () => {
+  it("rejects empty understanding notes", () => {
+    expect(() => assertPayload("understanding_note", { text: "  " })).toThrow(DomainValidationError);
   });
 
-  it("requires selected direction among three cards", () => {
-    expect(() => assertConfirmable("design_directions", {
-      directions: [{ id: "a" }, { id: "b" }, { id: "c" }],
-      selected_direction_id: null,
-    })).toThrow(DomainValidationError);
+  it("rejects empty design direction sets", () => {
+    expect(() => assertPayload("design_directions", { directions: [] })).toThrow("至少包含一个方向");
   });
 
-  it("requires mapped spaces before confirming a space map", () => {
-    expect(() => assertConfirmable("space_map", { spaces: [] })).toThrow("必须标注空间区域");
+  it("accepts design directions without selection", () => {
+    expect(() => assertPayload("design_directions", {
+      directions: [{ id: "a" }],
+    })).not.toThrow();
+  });
+
+  it("rejects effect images without url", () => {
+    expect(() => assertPayload("effect_image", {})).toThrow("必须包含图片 URL");
+  });
+
+  it("accepts empty sticky notes (create-then-edit flow)", () => {
+    expect(() => assertPayload("sticky_note", {})).not.toThrow();
+    expect(() => assertPayload("sticky_note", { text: "" })).not.toThrow();
+    expect(() => assertPayload("sticky_note", { text: "hello" })).not.toThrow();
+  });
+
+  it("rejects non-string sticky note text", () => {
+    expect(() => assertPayload("sticky_note", { text: 42 })).toThrow("便签内容必须是文本");
+  });
+
+  it("rejects canvas images without file_id", () => {
+    expect(() => assertPayload("canvas_image", {})).toThrow("必须包含 file_id");
+    expect(() => assertPayload("canvas_image", { file_id: "  " })).toThrow("必须包含 file_id");
+  });
+
+  it("accepts canvas images with file_id", () => {
+    expect(() => assertPayload("canvas_image", { file_id: "3f6b9c2e-1234-4abc-9def-1234567890ab" })).not.toThrow();
   });
 });

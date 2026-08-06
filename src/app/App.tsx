@@ -2,14 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type DeskSnapshot, type ProjectSummary } from "../lib/api";
 import { Desk } from "../desk/Desk";
 import { DeskObjectView } from "../desk/nodes";
+import { DeskToolbar } from "../desk/Toolbar";
+import { CANVAS_IMAGE_ACCEPT } from "../desk/attachments";
 import { ChatPanel } from "../desk/ChatPanel";
 import { Home } from "../desk/Home";
-import { SpaceMapSetup } from "../desk/SpaceMapSetup";
 import { mapSnapshot } from "../desk/map";
 import type { DeskObject } from "../desk/types";
+import type { Viewport } from "../desk/geometry";
 import { nextId } from "./ids";
 import { useChatSession } from "./useChatSession";
 import { useDeskActions } from "./useDeskActions";
+import { useDeskHistory } from "./useDeskHistory";
+import { useDeskPlacement } from "./useDeskPlacement";
 
 type AppView = { mode: "home" } | { mode: "desk"; projectId: string };
 
@@ -30,8 +34,6 @@ export function App() {
   const [homeError, setHomeError] = useState<string>();
   const [snapshot, setSnapshot] = useState<DeskSnapshot>();
   const [objects, setObjects] = useState<DeskObject[]>([]);
-  const [setupOpen, setSetupOpen] = useState(false);
-  const [floorPlanFileId, setFloorPlanFileId] = useState<string>();
   const [composerHandoff, setComposerHandoff] = useState<{ text?: string; files?: File[] }>();
   const activeProjectRef = useRef<string>();
   const refreshSequence = useRef(0);
@@ -51,6 +53,9 @@ export function App() {
 
   const chat = useChatSession({ activeProjectRef, refreshDesk });
   const projectId = view.mode === "desk" ? view.projectId : undefined;
+  const [selectedId, setSelectedId] = useState<string>();
+  const viewportRef = useRef<Viewport>({ x: 40, y: 20, zoom: 0.62 });
+  const imagePickerRef = useRef<HTMLInputElement>(null);
   const desk = useDeskActions({
     projectId,
     snapshot,
@@ -59,6 +64,89 @@ export function App() {
     setChatItems: chat.setChatItems,
     setObjects,
   });
+  const pushCanvasError = useCallback(
+    (message: string) => {
+      chat.setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: message }]);
+    },
+    [chat.setChatItems],
+  );
+  const history = useDeskHistory({ projectId, enqueue: desk.enqueue, refreshDesk, onError: pushCanvasError });
+  const placement = useDeskPlacement({
+    projectId,
+    snapshot,
+    objects,
+    selectedId,
+    setSelectedId,
+    enqueue: desk.enqueue,
+    history,
+    refreshDesk,
+    onError: pushCanvasError,
+    viewportRef,
+  });
+
+  useEffect(() => {
+    setSelectedId(undefined);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (selectedId && !objects.some((item) => item.id === selectedId)) setSelectedId(undefined);
+  }, [objects, selectedId]);
+
+  const onMoveEnd = useCallback(
+    (id: string, from: { x: number; y: number }, to: { x: number; y: number }) => {
+      desk.onMoveEnd(id, from, to);
+      if (Math.round(from.x) !== Math.round(to.x) || Math.round(from.y) !== Math.round(to.y)) {
+        history.record({ type: "move", artifactId: id, from, to });
+      }
+    },
+    [desk.onMoveEnd, history.record],
+  );
+
+  const onViewportChange = useCallback(
+    (viewport: Viewport) => {
+      viewportRef.current = viewport;
+      desk.onViewportChange(viewport);
+    },
+    [desk.onViewportChange],
+  );
+
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      return Boolean(element && (element.isContentEditable || element.closest("input, textarea, select, [contenteditable=true]")));
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        placement.deleteSelected();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) history.redo();
+        else history.undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        history.redo();
+      }
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      e.preventDefault();
+      placement.addImageFiles(files);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("paste", onPaste);
+    };
+  }, [placement.deleteSelected, placement.addImageFiles, history.undo, history.redo]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -95,7 +183,6 @@ export function App() {
     clearViewportTimer();
     setSnapshot(undefined);
     setObjects([]);
-    setSetupOpen(false);
     setView({ mode: "home" });
   }, [clearViewportTimer, closeChat, resetChatUi]);
 
@@ -109,8 +196,6 @@ export function App() {
       clearViewportTimer();
       setSnapshot(undefined);
       setObjects([]);
-      setSetupOpen(false);
-      setFloorPlanFileId(undefined);
       setView({ mode: "desk", projectId: nextProjectId });
       const nextPath = pathForView({ mode: "desk", projectId: nextProjectId });
       if (historyMode !== "none" && window.location.pathname !== nextPath) {
@@ -119,10 +204,8 @@ export function App() {
         else window.history.pushState(state, "", nextPath);
       }
       try {
-        const snap = await refreshDesk(nextProjectId);
+        await refreshDesk(nextProjectId);
         if (activeProjectRef.current !== nextProjectId) return;
-        const plan = snap.artifacts.find((a) => a.artifactType === "space_map");
-        setFloorPlanFileId(typeof plan?.payload.source_file_id === "string" ? plan.payload.source_file_id : undefined);
         await bindProjectChat(nextProjectId);
       } catch (e) {
         if (activeProjectRef.current !== nextProjectId) return;
@@ -186,7 +269,6 @@ export function App() {
   const createProject = useCallback(
     async (input: { name: string; files?: File[]; prompt?: string }) => {
       const project = await api.createProject(input.name);
-      setFloorPlanFileId(undefined);
       await openProject(project.id, { initialText: input.prompt, initialFiles: input.files });
     },
     [openProject],
@@ -200,21 +282,6 @@ export function App() {
       setHomeError(e instanceof Error ? e.message : "删除失败");
     }
   }, []);
-
-  const exportPackage = useCallback(() => {
-    if (!projectId) return;
-    setChatBusy(true);
-    void api
-      .exportPackage(projectId)
-      .then((result) => {
-        setChatItems((cur) => [
-          ...cur,
-          { id: nextId(), role: "agent", text: result.pdfUrl ? `提案包已导出：${result.pdfUrl}` : "提案包已导出。" },
-        ]);
-      })
-      .catch((e) => setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `导出失败：${e instanceof Error ? e.message : "未知错误"}` }]))
-      .finally(() => setChatBusy(false));
-  }, [projectId, setChatBusy, setChatItems]);
 
   if (view.mode === "home") {
     return (
@@ -232,8 +299,6 @@ export function App() {
 
   const deskProjectId = view.projectId;
   const deskSnapshot = snapshot?.project.id === deskProjectId ? snapshot : undefined;
-  const direction = objects.find((o) => o.kind === "direction_set" && o.status === "confirmed" && o.selectedId);
-  const planObj = objects.find((o) => o.kind === "plan");
 
   return (
     <div className="app-shell">
@@ -242,12 +307,6 @@ export function App() {
         <div className="brand">砌间<small>QIJIAN AI DESIGN</small></div>
         <button type="button" className="back-btn" onClick={() => leaveProject()}>← 项目列表</button>
         <span className="proj-name">{snapshot?.project.name}</span>
-        <div className="top-right">
-          {direction?.kind === "direction_set" && (
-            <span className="pill acc">方向 · {direction.directions.find((d) => d.id === direction.selectedId)?.title}</span>
-          )}
-          <button type="button" className="export-btn" onClick={exportPackage}>导出提案包</button>
-        </div>
       </header>
       <div className="workbench">
         <Desk
@@ -255,50 +314,43 @@ export function App() {
           objects={objects}
           initialViewport={deskSnapshot?.deskState.viewport}
           onMove={desk.onMove}
-          onMoveEnd={desk.onMoveEnd}
-          onViewportChange={desk.onViewportChange}
+          onMoveEnd={onMoveEnd}
+          onViewportChange={onViewportChange}
           focusRequest={desk.focusRequest}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onDropFiles={placement.addImageFiles}
+          overlay={
+            <DeskToolbar
+              canUndo={history.canUndo}
+              canRedo={history.canRedo}
+              onHand={() => setSelectedId(undefined)}
+              onUndo={history.undo}
+              onRedo={history.redo}
+              onText={placement.addStickyNote}
+              onImage={() => imagePickerRef.current?.click()}
+            />
+          }
           renderObject={(obj) => (
             <DeskObjectView
               obj={obj}
-              handlers={{
-                onConfirm: desk.onConfirm,
-                onSelectDirection: desk.onSelectDirection,
-                onAdopt: desk.onAdopt,
-                onRedrawPlan: () => setSetupOpen(true),
-              }}
+              editing={placement.editingId === obj.id}
+              onStartEdit={placement.startEdit}
+              onCommitText={placement.commitText}
             />
           )}
-        >
-          {deskSnapshot && setupOpen && (
-            <div className="obj obj-setup" style={{ left: 420, top: 90 }}>
-              <SpaceMapSetup
-                projectId={deskProjectId}
-                initialFileId={floorPlanFileId ?? (planObj?.kind === "plan" ? planObj.sourceFileId : undefined)}
-                existingSpaces={planObj?.kind === "plan" ? planObj.spaces : undefined}
-                onCancel={() => setSetupOpen(false)}
-                onSave={async (payload) => {
-                  const saved = await desk.withRefresh(async () => {
-                    const existing = planObj && desk.artifactOf(planObj.id);
-                    const inputRefs = typeof payload.source_file_id === "string" ? [{ file_id: payload.source_file_id }] : [];
-                    if (existing) {
-                      await api.appendVersion(existing.id, payload, inputRefs);
-                    } else {
-                      await api.createArtifact(deskProjectId, {
-                        artifactType: "space_map",
-                        payload,
-                        inputRefs,
-                        layout: { kind: "plan", x: 420, y: 90, w: 640 },
-                      });
-                    }
-                  });
-                  if (!saved) throw new Error("空间地图未保存，请检查错误后重试");
-                  setSetupOpen(false);
-                }}
-              />
-            </div>
-          )}
-        </Desk>
+        />
+        <input
+          ref={imagePickerRef}
+          type="file"
+          multiple
+          accept={CANVAS_IMAGE_ACCEPT}
+          className="sr-only"
+          onChange={(e) => {
+            placement.addImageFiles(Array.from(e.currentTarget.files ?? []));
+            e.currentTarget.value = "";
+          }}
+        />
         <ChatPanel
           projectId={deskProjectId}
           items={chat.chatItems}

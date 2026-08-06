@@ -1,9 +1,10 @@
 import type { Hono } from "hono";
 import { z } from "zod";
+import type { ArtifactService } from "../../services/artifact-service.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
 import { body } from "./shared.js";
 
-export function registerDeskRoutes(app: Hono, deps: { desks: DeskStateService }) {
+export function registerDeskRoutes(app: Hono, deps: { desks: DeskStateService; artifacts: ArtifactService }) {
   app.get("/api/projects/:id/desk", async (c) => c.json(await deps.desks.snapshot(c.req.param("id"))));
 
   app.patch("/api/projects/:id/desk", async (c) => {
@@ -21,5 +22,9 @@ export function registerDeskRoutes(app: Hono, deps: { desks: DeskStateService })
       w: z.number().positive().optional(),
     }).refine((value) => Object.keys(value).length > 0));
     return c.json(await deps.desks.moveObject(c.req.param("id"), c.req.param("artifactId"), patch));
+  });
+
+  app.delete("/api/projects/:id/desk/objects/:artifactId", async (c) => {
+    return c.json(await deps.artifacts.deletePlaced(c.req.param("id"), c.req.param("artifactId")));
   });
 }
