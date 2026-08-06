@@ -172,7 +172,6 @@ export function Desk({
         <button type="button" aria-label="缩小" onClick={() => setView((v) => ({ ...v, zoom: Math.max(0.3, v.zoom - 0.1) }))}>−</button>
         <button type="button" onClick={() => setView({ x: 40, y: 20, zoom: 0.62 })}>复位</button>
       </div>
-      <p className="desk-hint">拖动空白平移 · 滚轮缩放 · 拖动物件摆放 · 右键删除 · Ctrl+Z 撤销</p>
       {overlay}
       {menu && (
         <div className="desk-context-menu" style={{ left: menu.x, top: menu.y }}>

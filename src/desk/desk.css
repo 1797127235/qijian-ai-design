@@ -82,10 +82,6 @@ button { font-family: inherit; }
   background: var(--desk-bg); cursor: pointer; font-size: 13px; color: var(--color-ink-soft); padding: 0 8px;
 }
 .desk-tools .zoom { font-family: var(--font-outlier); font-size: 11px; color: var(--color-mute); padding: 0 6px; }
-.desk-hint {
-  position: absolute; left: 16px; bottom: 16px; z-index: 40; pointer-events: none;
-  font-family: var(--font-outlier); font-size: 10.5px; color: var(--color-mute-soft); letter-spacing: .06em;
-}
 
 /* ── 底部创作工具条 ── */
 .desk-toolbar {
