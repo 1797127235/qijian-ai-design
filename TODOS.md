@@ -35,3 +35,22 @@
 - **Cons:** worker 配置、渲染失败兜底、大 PDF 性能需处理。
 - **Context:** D5 决策记录（gstack decision log）。上传管线 `inspectUpload` 已提取 pageCount。
 - **Depends on / blocked by:** 无。
+
+## 5. 选中物件浮动操作条
+
+- **What:** 选中图片/效果图物件时浮出操作条：提示词（面板入口）/重新生成/查看大图/下载。参考建筑学长画布浮动条。
+- **Why:** 重新生成与看大图是改图高频动作；连线+面板生图切片（`docs/canvas-connections-generate-design.md`）用户确认 2026-08-06 进 TODOS。
+- **Context:** 面板组件（PromptPanel）落地后可复用为操作条的一项。
+- **Depends on / blocked by:** 连线+面板生图切片完成后做。
+
+## 6. 图片加工（局部重绘/细节增强/视角转换/宫格拆分）
+
+- **What:** 建筑学长形态的图片加工能力；局部重绘需蒙版交互（涂鸦层），细节增强/视角转换是 provider 参数化调用。
+- **Why:** 深化改图能力；依赖 provider 接口能力确认，且蒙版交互本身是独立工作量。
+- **Depends on / blocked by:** provider 能力摸底；连线+面板生图切片完成。
+
+## 7. 原图 vs 生成图滑块对比
+
+- **What:** 改图场景的前后对比视图（滑块/并排）。
+- **Why:** 改图验收高频；用户 2026-08-06 确认先进 TODOS（先有大图查看再说）。
+- **Depends on / blocked by:** TODO 5（查看大图）优先。
