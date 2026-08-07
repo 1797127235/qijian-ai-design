@@ -1,6 +1,6 @@
 # Design: 中键漫游 + 框选多选 → Agent 生图（多 from 连线）
 
-**状态：** DRAFT（/office-hours 2026-08-07）  
+**状态：** APPROVED（/office-hours 2026-08-07）  
 **分支：** `codex/canvas-reliability`  
 **模式：** Startup · Approach **A 最小可交付**  
 **gstack 副本：** `~/.gstack/projects/1797127235-qijian-ai-design/liu-codex-canvas-reliability-design-20260807-113513.md`
