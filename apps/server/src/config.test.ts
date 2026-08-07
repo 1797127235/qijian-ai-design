@@ -14,3 +14,20 @@ describe("server config", () => {
     expect(config.agentModel).toBe("model-one");
   });
 });
+
+  it("defaults langsmith tracing off", () => {
+    const config = loadConfig({});
+    expect(config.langsmithTracing).toBe(false);
+    expect(config.langsmithProject).toBe("pi");
+  });
+
+  it("enables langsmith from env", () => {
+    const config = loadConfig({
+      LANGSMITH_TRACING: "true",
+      LANGSMITH_API_KEY: "lsv2_test",
+      LANGSMITH_PROJECT: "pi",
+    });
+    expect(config.langsmithTracing).toBe(true);
+    expect(config.langsmithApiKey).toBe("lsv2_test");
+  });
+

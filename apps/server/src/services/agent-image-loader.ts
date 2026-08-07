@@ -23,6 +23,12 @@ const MAX_RENDER_EDGE = 1_600;
 const MAX_AGENT_IMAGES = 12;
 const MAX_AGENT_BASE64_CHARACTERS = 24 * 1024 * 1024;
 
+/**
+ * 把用户的附件转换成 Agent 视觉输入。
+ *  - JPEG/PNG：直接读盘 → base64（保持原 mimeType）
+ *  - PDF：用 @napi-rs/canvas + pdfjs 把每页渲染成 PNG → base64
+ *  - 限额：最多 8 页、12 张图、24MB base64 字符（防 LLM 上下文爆掉）
+ */
 export async function loadAgentImages(
   db: Database,
   readBytes: (objectKey: string) => Promise<Buffer>,
@@ -56,6 +62,10 @@ export async function loadAgentImages(
   return images;
 }
 
+/**
+ * PDF → PNG 列表：自动按最长边 1600px 缩放（保留比例），用 @napi-rs/canvas 后端渲染。
+ * 缩放是为了给 LLM 的多模态 token 留出预算，同时保护画布图片不会糊。
+ */
 async function renderPdf(bytes: Uint8Array, knownPageCount?: number, remainingPages = MAX_PDF_PAGES_FOR_AGENT): Promise<AgentImageContent[]> {
   const loading = getDocument({ data: Uint8Array.from(bytes) });
   const document = await loading.promise;

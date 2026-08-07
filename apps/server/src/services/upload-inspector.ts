@@ -1,3 +1,10 @@
+/**
+ * 上传文件 inspector：在落盘前验证「内容 vs 声明类型」一致 + 读出关键元数据。
+ *
+ *  - JPEG/PNG：解析头部拿宽高；过大的直接拒（防 DOS / 防巨大图卡前端）
+ *  - PDF：用 pdfjs-dist 拿 numPages；加密 PDF 单独提示
+ *  - 任何声明类型与 magic bytes 不符都抛 422 INVALID_FILE_CONTENT
+ */
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { AppError } from "../lib/errors.js";
 
@@ -7,6 +14,7 @@ function startsWith(bytes: Uint8Array, signature: number[]) {
   return signature.every((value, index) => bytes[index] === value);
 }
 
+/** 解析图片宽高（PNG: IHDR chunk；JPEG: 扫 SOFn marker）。失败返回 undefined。 */
 function imageDimensions(bytes: Uint8Array, mediaType: string): { width: number; height: number } | undefined {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (mediaType === "image/png") {
@@ -34,6 +42,12 @@ function imageDimensions(bytes: Uint8Array, mediaType: string): { width: number;
   return undefined;
 }
 
+/**
+ * 上传前检查：
+ *  - 拿到 pageCount（PDF）或校验尺寸（JPEG/PNG）
+ *  - 像素数 > 80M 视为过大图，拒收
+ *  - 加密 PDF 单独提示（让用户换格式）
+ */
 export async function inspectUpload(bytes: Uint8Array, mediaType: string): Promise<{ pageCount?: number }> {
   const dimensions = imageDimensions(bytes, mediaType);
   if (dimensions) {

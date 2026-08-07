@@ -1,3 +1,12 @@
+/**
+ * 工厂：拼一个 pi AgentSession。
+ *
+ *  - 模型：ModelRuntime 单例，懒加载；用 config.agentProvider/agentModel 选
+ *  - 资源加载器：禁用 extensions/skills/promptTemplates/contextFiles（与文件无交叉污染）
+ *  - SessionManager.continueRecent：进程内续历史（每个 projectId:threadId 一个目录）
+ *  - 工具：只暴露 generate_from_desk + get_task 两个（白名单）
+ *  - 订阅：每条事件透传给 emit；工具执行事件入 EventWriteTracker 持久化；assistant 文本入 chat
+ */
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -26,6 +35,8 @@ import type { EventSink } from "./events.js";
 import { agentSessionDir } from "./session-paths.js";
 import { deskSystemPrompt } from "./system-prompt.js";
 import { createDeskTools } from "./tools/index.js";
+import type { TraceRegistry } from "./tracing/index.js";
+import { capJson, mapErrorFromUnknown } from "./tracing/index.js";
 
 export interface SessionFactoryDependencies {
   artifacts: ArtifactService;
@@ -38,6 +49,7 @@ export interface SessionFactoryDependencies {
   config: Pick<ServerConfig, "agentProvider" | "agentModel">;
   jobs?: AgentJobRunner;
   jobStore?: AgentJobStore;
+  traces?: TraceRegistry;
 }
 
 export class SessionFactory {
@@ -55,6 +67,12 @@ export class SessionFactory {
     return this.deps.files.loadAgentImages(projectId, attachments);
   }
 
+  /**
+   * 创建一个 pi AgentSession。
+   *  - modelRuntime 进程内单例（首次调用 init 后续复用）
+   *  - 每个 (projectId, threadId) 一个 session 目录，continueRecent 自动 resume
+   *  - 订阅：所有事件 fan-out 给 emit；工具执行事件入 tracker 异步写库；assistant 文本入 chat
+   */
   async create(projectId: string, threadId: string): Promise<AgentSession> {
     const key = `${projectId}:${threadId}`;
     const cwd = process.cwd();
@@ -97,9 +115,60 @@ export class SessionFactory {
     });
     session.subscribe((event) => {
       this.deps.emit({ type: "agent_event", event: { projectId, threadId, ...event } });
+      // H7: 用入口捕获的 run_id（队头仍是当前轮；span 侧不依赖 [0] 以外语义）
       const runId = this.activeRunIds.get(key)?.[0];
+      const traces = this.deps.traces;
+      const ctx = traces?.get(runId);
       if (runId && isToolExecutionEvent(event)) {
+        if (event.type === "tool_execution_start" && ctx) {
+          const span = traces!.startSpan(runId, {
+            name: `tool.${event.toolName}`,
+            run_type: "tool",
+            inputs: capJson(event.args) as Record<string, unknown>,
+            metadata: { tool_call_id: event.toolCallId, tool_name: event.toolName },
+          });
+          if (span) ctx.toolSpans.set(event.toolCallId, span);
+        }
+        if (event.type === "tool_execution_end" && ctx) {
+          const span = ctx.toolSpans.get(event.toolCallId);
+          const failed = event.isError || (event.result && typeof event.result === "object"
+            && (event.result as { details?: { ok?: boolean } }).details?.ok === false);
+          if (span) {
+            if (failed) {
+              traces!.recordError(span, mapErrorFromUnknown(
+                (event.result as { details?: { error?: string } })?.details?.error
+                  ?? "tool failed",
+                { aborted: false },
+              ));
+            } else {
+              traces!.end(span, {
+                status: "ok",
+                outputs: capJson(event.result) as Record<string, unknown>,
+              });
+            }
+            ctx.toolSpans.delete(event.toolCallId);
+          }
+        }
         this.writes.track(projectId, persistToolEvent(this.deps.chats, runId, event), runId);
+      }
+      // model.turn：message_start / message_end 粗粒度
+      if (ctx && event && typeof event === "object") {
+        const et = (event as { type?: string }).type;
+        if (et === "message_start" && (event as { message?: { role?: string } }).message?.role === "assistant") {
+          if (!ctx.modelSpan) {
+            ctx.modelSpan = traces!.startSpan(runId, {
+              name: "model.turn",
+              run_type: "llm",
+              metadata: {
+                model: `${this.deps.config.agentProvider}/${this.deps.config.agentModel}`,
+              },
+            });
+          }
+        }
+        if (et === "message_end" && ctx.modelSpan) {
+          traces!.end(ctx.modelSpan, { status: "ok" });
+          ctx.modelSpan = undefined;
+        }
       }
       const text = assistantTextFromEvent(event);
       if (!text) return;

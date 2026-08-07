@@ -401,7 +401,7 @@ export function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <span className="seal-box">砌</span>
+        <img className="brand-mark" src="/brand-mark.svg" alt="Qijian" width={30} height={30} />
         <div className="brand">砌间<small>QIJIAN AI DESIGN</small></div>
         <button type="button" className="back-btn" onClick={() => leaveProject()}>← 项目列表</button>
         <span className="proj-name">{snapshot?.project.name}</span>

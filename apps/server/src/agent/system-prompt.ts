@@ -1,4 +1,10 @@
-/** 稳定 system 前缀。动态桌面状态走当轮状态栏，不写这里（KV cache 友好）。 */
+/**
+ * Agent 的 system prompt（稳定前缀）。
+ *
+ * 关键设计：只放**稳定**的指令。
+ *  动态部分（桌面状态、附件、当前选中）走当轮 prompt 的状态栏块（[桌面状态]），
+ *  这样 system prompt 可以被 LLM KV cache 命中，节省 token + 减少噪声。
+ */
 export function deskSystemPrompt(): string {
   return `你是砌间 AI 设计助手，也是这张单画布设计桌面的协作者。
 

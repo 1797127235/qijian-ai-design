@@ -1,3 +1,9 @@
+/**
+ * Hono 应用工厂。
+ *  - 中间件：logger / secureHeaders（CORS 资源策略 cross-origin 允许 /api/files 给前端图）/ api CORS
+ *  - 路由按实体拆：projects / desk / chat / artifacts / files
+ *  - 统一错误：AppError → JSON {code, message, retryable, details}；其他 → 500 INTERNAL_ERROR
+ */
 import { cors } from "hono/cors";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
@@ -16,6 +22,7 @@ import { registerDeskRoutes } from "./routes/desk.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 
+/** HTTP 层依赖：所有 service 单例 + 路由需要用到的 service 子集。 */
 interface HttpDependencies {
   config: ServerConfig;
   artifacts: ArtifactService;
@@ -23,23 +30,29 @@ interface HttpDependencies {
   files: FileStorage;
   chats: ChatService;
   sessions: AgentSessionRegistry;
+  /** 面板生图路由才用；Agent 路径走 WebSocket/agent tools，不需要 */
   generate?: CanvasGenerateService;
 }
 
 export function createHttpApp(deps: HttpDependencies) {
   const app = new Hono();
   app.use(logger());
+  // 允许前端从另一个 origin 加载 /api/files 的图片：cross-origin
   app.use(secureHeaders({ crossOriginResourcePolicy: "cross-origin", xFrameOptions: false }));
+  // /api/* 才走 CORS：避免污染 /health
   app.use("/api/*", cors({ origin: deps.config.corsOrigins, credentials: true }));
 
+  // 健康检查：livenessProbe 用
   app.get("/health", (c) => c.json({ ok: true }));
 
+  // 路由注册：每个文件管自己的资源
   registerProjectRoutes(app, deps);
   registerDeskRoutes(app, { desks: deps.desks, artifacts: deps.artifacts, generate: deps.generate });
   registerChatRoutes(app, deps);
   registerArtifactRoutes(app, deps);
   registerFileRoutes(app, deps);
 
+  // 404 / 500 都走 AppError 形态
   app.notFound((c) => c.json({ error: { code: "NOT_FOUND", message: "接口不存在", retryable: false } }, 404));
   app.onError((error, c) => {
     const status = error instanceof AppError ? error.status : 500;

@@ -36,7 +36,21 @@ export type {
 } from "./chat/types.js";
 export { formatChatContext, runStatusMessage } from "./chat/types.js";
 
+/**
+ * 聊天服务：thread/message/run/tool_call 的 CRUD 与协作语义。
+ *
+ * 关键并发模型：
+ *  - 同一 thread 只能有一个 running run（DB partial unique 索引兜底）
+ *  - instanceId（进程 UUID）标识「我」创建/拥有的 run，方便别人清扫我挂死的 run
+ *  - 陈旧 run 自动清理：本实例以外的 running run 自动标 interrupted
+ *    自己的 run 超过 10 分钟未结束也视作挂死（模型无超时兜底）
+ *
+ * 幂等：
+ *  - chat_messages.external_id 唯一（前端断网重发同一消息不重复入库）
+ *  - 同 external_id 但内容不一致 → 409
+ */
 export class ChatService {
+  /** 当前进程 UUID，挂在每个 run 的 ownerId 上，便于跨实例清扫。 */
   private readonly instanceId = randomUUID();
 
   constructor(private readonly db: Database) {}
@@ -46,6 +60,10 @@ export class ChatService {
     return toThreadDto(thread);
   }
 
+  /**
+   * 解析 thread：传 threadId 时校验归属；不传则取最新；都没有就新建（一个项目起步时也有 thread）。
+   * 历史数据中的 latest 也兼容「无 thread」的情况。
+   */
   async resolveThread(projectId: string, threadId?: string) {
     if (threadId) {
       const [thread] = await this.db
@@ -89,6 +107,11 @@ export class ChatService {
     return messageReferencesFile(this.db, fileId);
   }
 
+  /**
+   * 追加一条非 user 消息（assistant 文本、状态文案等）。
+   * externalId 可选：传了则按幂等键去重；不传则直接 insert。
+   * 不做 running 互斥检查（这是 user prompt 路径的职责，见 appendPrompt）。
+   */
   async append(
     projectId: string,
     threadId: string,
@@ -133,6 +156,13 @@ export class ChatService {
     return { message: toMessageDto(existing), created: false };
   }
 
+  /**
+   * 核心入口：用户发送 prompt。
+   * 事务内完成：参数校验 → 附件所有权校验 → 插 user_message → 插关联附件 → 起 run。
+   * 互斥语义：发现本 thread 有 running run 时，区分「我自己的」与「他实例的」；
+   *  他实例的立刻 interrupted，本实例超过 10 分钟也视作挂死清掉。
+   *  互斥的意图不是「拒绝重发」，而是「不要在已有任务上再叠一个」。
+   */
   async appendPrompt(
     projectId: string,
     threadId: string,
@@ -255,6 +285,15 @@ export class ChatService {
     });
   }
 
+  /** H7：把 LangSmith root id 写回 chat_runs，便于对照本地 run。 */
+  async setSmithRunId(runId: string, smithRunId: string) {
+    await this.db
+      .update(chatRuns)
+      .set({ smithRunId })
+      .where(eq(chatRuns.id, runId));
+  }
+
+  /** 工具开始：插入 chat_tool_calls 行（onConflictDoNothing 用于重放）。 */
   async startToolCall(runId: string, toolCallId: string, toolName: string, args: unknown) {
     const [created] = await this.db
       .insert(chatToolCalls)
@@ -264,6 +303,10 @@ export class ChatService {
     return created ? toToolCallDto(created) : undefined;
   }
 
+  /**
+   * 工具结束：upsert 同一 (runId, toolCallId) 行，标 succeeded/failed 写 result/error/cost。
+   * error 截断 2000 字符防爆库。
+   */
   async finishToolCall(
     runId: string,
     toolCallId: string,
@@ -302,7 +345,7 @@ export class ChatService {
     return toToolCallDto(row);
   }
 
-  /** prompt 正常返回后：若本 run 有失败工具 → failed，否则 completed。 */
+  /** prompt 正常返回后扫一遍：run 是否有 failed 工具 → run 标 failed，否则 completed。 */
   async summarizeRunTools(runId: string): Promise<{ status: "completed" | "failed"; error?: string }> {
     const rows = await this.db
       .select({
@@ -320,6 +363,10 @@ export class ChatService {
     };
   }
 
+  /**
+   * 收尾：把 run 标 stopped/completed/failed，并把该 run 下所有 still-running tool_calls 一起结束。
+   * 一次事务内做完，状态机不允许 run=stopped 时仍有 tool=runnning。
+   */
   async finishRun(runId: string, status: Exclude<ChatRunStatus, "running" | "interrupted">, error?: string) {
     const run = await this.db.transaction(async (tx) => {
       const [finished] = await tx
@@ -342,6 +389,10 @@ export class ChatService {
     return run ? runStatusMessage(toRunDto(run)) : undefined;
   }
 
+  /**
+   * 用户主动停当前 thread 上「我拥有」的 running run（前端 stop 按钮调用）。
+   * 只动本实例的 run，不会去打扰其他实例仍在执行的任务。
+   */
   async finishRunningRuns(projectId: string, threadId: string, status: "stopped" | "failed", error?: string) {
     const rows = await this.db.transaction(async (tx) => {
       const finished = await tx
@@ -372,6 +423,10 @@ export class ChatService {
     });
   }
 
+  /**
+   * 私有：把「其他实例」的 running run 标 interrupted（接管的不是任务本身，而是把它们视为已死避免阻塞）。
+   * 每次 history() 触发一次 → 用户看到的历史总是最新的语义。
+   */
   private async interruptStaleRuns(projectId: string, threadId: string) {
     await this.db.transaction(async (tx) => {
       const interrupted = await tx
@@ -393,6 +448,11 @@ export class ChatService {
     });
   }
 
+  /**
+   * 拉对话历史：消息按 sequence 升序，并把 run 状态注入为「虚拟 assistant 消息」
+   * （status 文案由 runStatusMessage 生成，前端不用单独处理 run 状态）。
+   * 一次往返：消息 + 未完结的 run + 100 条最近 tool calls。
+   */
   async history(projectId: string, threadId?: string): Promise<{ threadId: string; messages: ChatMessageDto[]; toolCalls: ChatToolCallDto[] }> {
     const thread = await this.resolveThread(projectId, threadId);
     await this.interruptStaleRuns(projectId, thread.id);
@@ -428,6 +488,7 @@ export class ChatService {
     };
   }
 
+  /** 给 Agent 提供最近 N 条消息的可读文本（注入到 system prompt 的对话背景段）。 */
   async recentContext(projectId: string, threadId: string, limit = 80): Promise<string> {
     const rows = await this.db
       .select()

@@ -21,6 +21,7 @@
     "@vitejs/plugin-react": "latest",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.0",
+    "langsmith": "^0.8.9",
     "lucide-react": "latest",
     "pdfjs-dist": "^6.2.108",
     "pg": "^8.22.0",

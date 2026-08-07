@@ -1,3 +1,8 @@
+/**
+ * Chat DTO 类型 + 序列化器：把 DB row 转换成给前端的稳定契约。
+ * 这里只放「与 schema 形状对齐，但 Date 变 ISO string」的无逻辑转换。
+ * 真正业务（runStatusMessage 注入状态文案、formatChatContext 拼 prompt 上下文）也在本文件。
+ */
 import { chatMessages, chatRuns, chatThreads, chatToolCalls } from "../../db/schema.js";
 
 export type ChatRole = "user" | "assistant";
@@ -38,6 +43,7 @@ export interface ChatRunDto {
   userMessageId: string;
   status: ChatRunStatus;
   error?: string;
+  smithRunId?: string;
   startedAt: string;
   finishedAt?: string;
 }
@@ -58,6 +64,7 @@ export interface ChatToolCallDto {
   finishedAt?: string;
 }
 
+/** row → DTO：Date → ISO string。 */
 export function toMessageDto(row: typeof chatMessages.$inferSelect, attachments: ChatAttachmentDto[] = []): ChatMessageDto {
   return {
     id: row.id,
@@ -70,6 +77,7 @@ export function toMessageDto(row: typeof chatMessages.$inferSelect, attachments:
   };
 }
 
+/** row → DTO。 */
 export function toThreadDto(row: typeof chatThreads.$inferSelect): ChatThreadDto {
   return {
     id: row.id,
@@ -80,6 +88,7 @@ export function toThreadDto(row: typeof chatThreads.$inferSelect): ChatThreadDto
   };
 }
 
+/** row → DTO。 */
 export function toRunDto(row: typeof chatRuns.$inferSelect): ChatRunDto {
   return {
     id: row.id,
@@ -88,11 +97,13 @@ export function toRunDto(row: typeof chatRuns.$inferSelect): ChatRunDto {
     userMessageId: row.userMessageId,
     status: row.status,
     error: row.error ?? undefined,
+    smithRunId: row.smithRunId ?? undefined,
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt?.toISOString(),
   };
 }
 
+/** row → DTO。 */
 export function toToolCallDto(row: typeof chatToolCalls.$inferSelect): ChatToolCallDto {
   return {
     id: row.id,
@@ -109,6 +120,11 @@ export function toToolCallDto(row: typeof chatToolCalls.$inferSelect): ChatToolC
   };
 }
 
+/**
+ * 把 run 状态翻译成一条「虚拟 assistant 消息」，注入 history 返回。
+ * running 状态不发（避免消息列表滚个不停），interrupted/stopped/failed 三态发对应文案。
+ * id 用 "run-status:{id}" 避免与真实 message.id 冲突。
+ */
 export function runStatusMessage(run: ChatRunDto): ChatMessageDto | undefined {
   const text = run.status === "interrupted"
     ? "上一次任务因服务重启或异常退出而中断。为避免重复修改画布，系统没有自动重试；你可以重新发送这条要求。"
@@ -129,6 +145,11 @@ export function runStatusMessage(run: ChatRunDto): ChatMessageDto | undefined {
   };
 }
 
+/**
+ * 把 messages 序列化成 Agent system prompt 里用的「对话背景」字符串。
+ *  - 中文标签「设计师/设计助手」便于 LLM 识别角色
+ *  - 倒序遍历累加字符数，超 maxCharacters 截断最近的若干条（保留最新对话）
+ */
 export function formatChatContext(
   messages: Array<Pick<ChatMessageDto, "role" | "text">>,
   maxCharacters = 30_000,

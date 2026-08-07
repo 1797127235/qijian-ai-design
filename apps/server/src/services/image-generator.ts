@@ -3,9 +3,17 @@ import type { ServerConfig } from "../config.js";
 import { HttpError } from "../lib/errors.js";
 import type { FileStorage } from "./file-storage.js";
 
+/**
+ * 图像生成适配器：对接外部文生图/图编辑 API（默认 codex2api/grok-imagine-*）。
+ *
+ *  - 两条请求路径：text-only（POST /images/generations）+ with-refs（POST /images/edits）
+ *  - 优先 b64_json 响应：避免再访问被墙的结果图床
+ *  - 结果图下载走专用 downloadFetcher：上游 x.ai 图床被墙时代理转发（国内 dev 必要）
+ *  - 所有响应做签名校验（JPEG/PNG/WEBP magic），杜绝「返回了 HTML 错误页但 200」伪造
+ */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
-/** 从错误响应里抠上游 message，避免「400」裸奔无法排查 */
+/** 从错误响应里抠上游 message，避免「400」裸奔无法排查。 */
 async function errorDetail(response: Response): Promise<string> {
   try {
     const body = (await response.clone().json()) as { error?: { message?: unknown }; message?: unknown };
@@ -16,12 +24,14 @@ async function errorDetail(response: Response): Promise<string> {
   }
   return "";
 }
+/** mediaType → 文件扩展名映射。 */
 const imageExtensions = new Map([
   ["image/jpeg", ".jpg"],
   ["image/png", ".png"],
   ["image/webp", ".webp"],
 ]);
 
+/** 校验图片文件 magic bytes（不是看扩展名/Content-Type），防止被假响应骗。 */
 function hasImageSignature(mediaType: string, bytes: Uint8Array) {
   if (mediaType === "image/jpeg") return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (mediaType === "image/png") {
@@ -92,6 +102,10 @@ export class HttpImageGenerator implements ImageGenerator {
     }
   }
 
+  /**
+   * 主入口：调用上游 → 拿到 b64 或 url → 入库到本项目 → 返回 fileId/url/sourceUrl。
+   * 异常时一律抛 HttpError 503（网络/上游问题，retryable=true 让前端可重试）。
+   */
   async generate(input: GenerateImageInput, signal?: AbortSignal): Promise<GeneratedImage> {
     if (!this.config.imageEndpoint || !this.config.imageApiKey) {
       throw new HttpError(503, "尚未配置 IMAGE_API_URL 和 IMAGE_API_KEY，无法生成效果图");
@@ -147,6 +161,7 @@ export class HttpImageGenerator implements ImageGenerator {
     return { url: stored.url, fileId: stored.id, sourceUrl: auditUrl, providerId };
   }
 
+  /** 无参考图：直接 POST /images/generations，response_format=b64_json 省一次下载。 */
   private async requestTextOnly(prompt: string, signal?: AbortSignal) {
     // b64_json 直出图数据，免去访问被墙的结果图床
     const body: Record<string, unknown> = { prompt, n: 1, response_format: "b64_json" };
@@ -159,7 +174,7 @@ export class HttpImageGenerator implements ImageGenerator {
     });
   }
 
-  /** 有参考图：multipart /images/edits；model 用 imageEditModel。 */
+  /** 有参考图：multipart /images/edits，model 用 imageEditModel。xAI grok-imagine edit 只接受单张参考图（调用方已截断）。 */
   private async requestWithReferences(prompt: string, refs: ReferenceFile[], signal?: AbortSignal) {
     const endpoint = this.editsEndpoint();
     const form = new FormData();
@@ -179,6 +194,7 @@ export class HttpImageGenerator implements ImageGenerator {
     });
   }
 
+  /** 把 imageEndpoint 从 generations 推断到 edits；已经显式指明则透传。 */
   private editsEndpoint() {
     const base = this.config.imageEndpoint!;
     if (base.includes("/images/edits")) return base;
@@ -186,6 +202,10 @@ export class HttpImageGenerator implements ImageGenerator {
     return base.endsWith("/") ? `${base}images/edits` : `${base}/images/edits`;
   }
 
+  /**
+   * 下载上游图床结果：先校验 protocol → content-type 白名单 → content-length 预估 → 真实 magic 校验。
+   * 三道防线防止「上游把 HTML 错误页伪装成 image/png」导致下游渲染炸。
+   */
   private async download(sourceUrl: string, signal?: AbortSignal) {
     let parsed: URL;
     try {

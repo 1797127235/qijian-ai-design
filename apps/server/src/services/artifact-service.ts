@@ -6,6 +6,17 @@ import { artifactTypes, type ArtifactStatus, type ArtifactType, type CreatedBy, 
 import { HttpError } from "../lib/errors.js";
 import { contentHash } from "../lib/json.js";
 
+/**
+ * Artifact 服务：管理 artifact 与版本链、放置/移动/删除的桌面布局变化。
+ *
+ * 核心不变式：
+ *  - artifactVersions 不可变（append-only），artifacts.current_version_id 是指针
+ *  - inputRefs 记录该版本依赖的 file_id（PDF 带 page），用于引用追踪 / GC
+ *  - 放置（createPlaced）= 新建 artifact + v1 + 写 desk_state.objects，单事务
+ *  - 删除（deletePlaced）= 删 artifact 行（级联删 versions） + 同步清 desk_state.objects 与 connections
+ *
+ * 幂等性：createPlaced 接受 clientOpId，相同 id 在 10 分钟内返回同一结果（用于前端断网重试）。
+ */
 export interface AppendVersionInput {
   payload: Record<string, unknown>;
   inputRefs?: unknown[];
@@ -26,8 +37,11 @@ export interface RestorePlacedInput {
 type DatabaseTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type NewDeskObject = Omit<DeskLayoutObject, "artifact_id">;
 
+/** 画布图片可接受的 media_type（与 ALLOWED_UPLOAD_MEDIA_TYPES 不同——后者管上传，这里管落桌）。 */
 const CANVAS_IMAGE_MEDIA_TYPES = new Set(["image/jpeg", "image/png"]);
+/** clientOpId 幂等窗口。 */
 const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+/** 幂等表最大条目（超出按插入顺序淘汰最旧）。 */
 const IDEMPOTENCY_MAX_ENTRIES = 500;
 
 type CreatePlacedResult = {
@@ -36,17 +50,26 @@ type CreatePlacedResult = {
   object: DeskLayoutObject;
 };
 
+/**
+ * ArtifactService。
+ * 持有进程内 recentPlacements 缓存（clientOpId → result），仅用于幂等，不持久化。
+ */
 export class ArtifactService {
   private readonly recentPlacements = new Map<string, { result: CreatePlacedResult; expiresAt: number }>();
 
   constructor(private readonly db: Database) {}
 
+  /** 创建 artifact 但不落桌。 */
   async create(projectId: string, artifactType: ArtifactType, input: AppendVersionInput) {
     if (!artifactTypes.includes(artifactType)) throw new HttpError(422, "不支持的 Artifact 类型");
     this.validateConfirmedPayload(artifactType, input);
     return this.db.transaction((tx) => this.createInTransaction(tx, projectId, artifactType, input));
   }
 
+  /**
+   * 创建并落桌：写 artifact + v1 + desk_state.objects，单事务。
+   * 接受 clientOpId 实现幂等：相同 id 在 IDEMPOTENCY_TTL_MS 内直接返回缓存结果。
+   */
   async createPlaced(projectId: string, artifactType: ArtifactType, input: AppendVersionInput, layout: NewDeskObject, clientOpId?: string) {
     if (!artifactTypes.includes(artifactType)) throw new HttpError(422, "不支持的 Artifact 类型");
     this.validateConfirmedPayload(artifactType, input);
@@ -114,6 +137,10 @@ export class ArtifactService {
     });
   }
 
+  /**
+   * 追加新版本到现有 artifact，current_version_id 指针前移。
+   * 继承上一版本的 inputRefs（未传时），保证 GC 引用图不断。
+   */
   async append(artifactId: string, input: AppendVersionInput) {
     return this.db.transaction(async (tx) => {
       const [artifact] = await tx.select().from(artifacts).where(eq(artifacts.id, artifactId)).for("update");
@@ -135,6 +162,10 @@ export class ArtifactService {
     });
   }
 
+  /**
+   * 回滚：current_version_id 指针后移到指定 versionId（不传则回到上一版）。
+   * 数据不删，保留历史；前端看的是「指针指向的版本」。
+   */
   async rollback(artifactId: string, versionId?: string) {
     return this.db.transaction(async (tx) => {
       const [artifact] = await tx.select().from(artifacts).where(eq(artifacts.id, artifactId)).for("update");
@@ -168,6 +199,12 @@ export class ArtifactService {
     return row;
   }
 
+  /**
+   * artifact 是否引用 fileId？查两个地方：
+   *  1) artifact_versions.inputRefs[*].file_id（结构化引用）
+   *  2) artifact_versions.payload.file_id / payload.pdf_file（payload 内嵌，向后兼容）
+   * 用 jsonb_array_elements 在 SQL 内做引用检查，避免把所有版本拉回应用层。
+   */
   async referencesFile(fileId: string): Promise<boolean> {
     // 结构化引用优先：input_refs 中的 file_id；payload 内嵌 file_id 作兼容（如 canvas_image.payload.file_id）。
     const [hit] = await this.db
@@ -186,6 +223,7 @@ export class ArtifactService {
     return Boolean(hit);
   }
 
+  /** 写幂等缓存：先扫一遍过期的清掉，超容量时按插入顺序淘汰最旧。 */
   private rememberPlacement(clientOpId: string, result: CreatePlacedResult) {
     const now = Date.now();
     for (const [key, entry] of this.recentPlacements) {
@@ -218,6 +256,10 @@ export class ArtifactService {
     }
   }
 
+  /**
+   * 校验 inputRefs 中所有 file_id 归属当前项目；若带 page 字段则 page ≤ 文件 pageCount。
+   * 失败抛 422（不是 409），因为这是请求参数问题不是状态冲突。
+   */
   private async validateInputRefs(    tx: DatabaseTransaction,
     projectId: string,
     inputRefs: unknown[],

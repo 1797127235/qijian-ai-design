@@ -1,4 +1,13 @@
-/** Agent 写桌：异步受理 generate_from_desk（Job 外壳）。 */
+/**
+ * Agent 写桌：generate_from_desk 工具。
+ *
+ * 流程：
+ *  1. 校验 prompt / source（默认用本轮选中）
+ *  2. ownedCurrent 校验源属于当前项目
+ *  3. jobs.run 异步：prepare 落 pending 卡 + 连线 → 后台 work 出图
+ *  4. 立即返回 accepted 工具结果，不 await work
+ *  5. 失败/取消时 fail() 返结构化错误，前端在状态栏能看到
+ */
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
@@ -66,6 +75,7 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
           projectId: ctx.projectId,
           threadId: session.threadId,
           runId: session.runId(),
+          toolCallId,
           kind: "generate_from_desk",
           input: { prompt, source_artifact_id: sourceId },
           prepare: async () => {

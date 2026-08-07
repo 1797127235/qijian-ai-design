@@ -1,4 +1,9 @@
-/** 工具结果业务失败判定（与前端 process-summary 对齐）。 */
+/**
+ * 工具结果「业务失败」判定。
+ *  - pi 的 isError 只在 throw 时才 true；工具内部 fail() 不抛，result.details.ok=false
+ *  - 本函数统一判定：isError || details.ok===false || details.status==="failed" || 失败文案
+ *  - 失败文案靠中文关键词正则（与前端 process-summary 对齐，避免前后端判失败不一致）
+ */
 
 function contentText(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -28,6 +33,7 @@ export function isToolBusinessFailure(result: unknown, isError?: boolean): boole
   return Boolean(text && /失败|错误|未找到|不能|无法/.test(text));
 }
 
+/** 从工具结果里抠出错原因：details.error 优先，content 文本兜底（截断 2000 字符防爆库）。 */
 export function toolFailureMessage(result: unknown): string | undefined {
   if (result && typeof result === "object") {
     const details = (result as { details?: Record<string, unknown> }).details;

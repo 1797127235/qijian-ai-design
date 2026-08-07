@@ -1,3 +1,12 @@
+/**
+ * Agent 事件 → DB 持久化工具。
+ *
+ *  - 工具开始/结束事件：写 chat_tool_calls
+ *  - assistant 文本：从 message_end 抠出来写 chat_messages
+ *  - 序列化（jsonSnapshot）处理 bigint + 超长截断
+ *  - EventWriteTracker：跟踪一次 run 的所有异步写库，prompt 结束前 await 完
+ *
+ */
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ChatService } from "../services/chat-service.js";
 import type { EventSink } from "./events.js";
@@ -7,10 +16,17 @@ type ToolExecutionEvent = Extract<AgentSessionEvent, {
   type: "tool_execution_start" | "tool_execution_end";
 }>;
 
+/** 类型守卫：是不是工具执行事件。 */
 export function isToolExecutionEvent(event: AgentSessionEvent): event is ToolExecutionEvent {
   return event.type === "tool_execution_start" || event.type === "tool_execution_end";
 }
 
+/**
+ * 序列化任意值入库：
+ *  - bigint 变字符串（drizzle jsonb 不收 bigint）
+ *  - 超 maxCharacters 截断，避免一条工具结果把整行撑爆
+ *  - 循环引用 / 不可序列化对象降级为 {serializationError} 不抛
+ */
 export function jsonSnapshot(value: unknown, maxCharacters = 250_000): unknown {
   try {
     const serialized = JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item) ?? "null";
@@ -21,6 +37,7 @@ export function jsonSnapshot(value: unknown, maxCharacters = 250_000): unknown {
   }
 }
 
+/** 从工具 result.content[] 抠出文本（pi 工具结果结构：{content: [{type, text}, ...], details}）。 */
 function resultError(result: unknown): string | undefined {
   if (!result || typeof result !== "object") return undefined;
   const content = (result as { content?: unknown }).content;
@@ -34,6 +51,7 @@ function resultError(result: unknown): string | undefined {
   return text || undefined;
 }
 
+/** 从 result.details.cost / result.details.usage.cost 抠 provider 报告的费用。 */
 function resultCost(result: unknown): unknown {
   if (!result || typeof result !== "object") return undefined;
   const details = (result as { details?: unknown }).details;
@@ -44,6 +62,11 @@ function resultCost(result: unknown): unknown {
   return usage && typeof usage === "object" ? jsonSnapshot((usage as { cost?: unknown }).cost) : undefined;
 }
 
+/**
+ * 持久化单条工具执行事件。
+ *  - start：插 chat_tool_calls 行（onConflictDoNothing 用于重放）
+ *  - end：upsert 同一行，标 succeeded/failed；失败原因用 toolFailureMessage 优先，content 兜底
+ */
 export async function persistToolEvent(
   chats: Pick<ChatService, "startToolCall" | "finishToolCall">,
   runId: string,
@@ -66,6 +89,10 @@ export async function persistToolEvent(
   );
 }
 
+/**
+ * 从 message_end 抠出 assistant 文本。用于实时把 AI 回复写进 chat_messages。
+ * content 可能是 string 也可能是 [{type:"text", text:"..."}, ...] 数组，都要支持。
+ */
 export function assistantTextFromEvent(event: unknown): string | undefined {
   if (!event || typeof event !== "object" || (event as { type?: unknown }).type !== "message_end") return undefined;
   const message = (event as { message?: unknown }).message;
@@ -86,7 +113,13 @@ export function assistantTextFromEvent(event: unknown): string | undefined {
   return text || undefined;
 }
 
-/** 跟踪一次 agent run 的异步写库，prompt 结束前可 await。 */
+/**
+ * 跟踪一次 agent run 的异步写库（不阻塞事件流）。
+ *  - 每次 track 注入一个 pending promise + 可选 runId
+ *  - awaitRun(runId)：等该 run 的所有写库结束；如有过错会 rethrow
+ *  - drain()：所有写库（一般用于服务关停）
+ *  - 写库失败会 emit type:"error" 给前端（前端可看到「运行记录保存失败」）
+ */
 export class EventWriteTracker {
   private readonly eventWrites = new Set<Promise<void>>();
   private readonly runWrites = new Map<string, Set<Promise<void>>>();

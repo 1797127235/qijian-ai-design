@@ -26,6 +26,7 @@ import { DeskStateService } from "./services/desk-state-service.js";
 import { FileStorage } from "./services/file-storage.js";
 import { HttpImageGenerator } from "./services/image-generator.js";
 import { ChatService } from "./services/chat-service.js";
+import { createTraceRegistry } from "./agent/tracing/index.js";
 
 // —— 基础设施 ——
 const config = loadConfig();
@@ -47,8 +48,9 @@ files.setReferenceCheckers([chats, artifacts]);
 // —— Agent 异步任务（job）——
 // publish 先用 no-op 占位，等 ChatGateway 构造好再回填成 chat.emit
 let publish: EventSink = () => undefined;
+const traces = createTraceRegistry(config);
 const jobStore = new AgentJobStore(db);
-const jobs = new AgentJobRunner(jobStore, (event) => publish(event));
+const jobs = new AgentJobRunner(jobStore, (event) => publish(event), traces);
 // 启动时把上次崩溃遗留的 running job 标记为 interrupted，避免「幽灵生成」
 void jobs.interruptStaleOnBoot()
   .then((n) => {
@@ -68,9 +70,10 @@ const sessions = new AgentSessionRegistry({
   config,
   jobs,
   jobStore,
+  traces,
   emit: (event) => publish(event),
 });
-const chat = new ChatGateway(sessions, chats);
+const chat = new ChatGateway(sessions, chats, traces);
 // publish 回填：从此刻起，Agent/Job 抛出的事件统一进 ChatGateway，由它按连接 fan-out
 publish = chat.emit;
 
@@ -99,6 +102,8 @@ async function shutdown() {
   sockets.close();
   server.close();
   await sessions.shutdown();
+  traces.forceCloseAll("server shutdown");
+  await traces.flush();
   await pool.end();
 }
 process.once("SIGINT", () => void shutdown());

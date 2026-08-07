@@ -1,7 +1,12 @@
-/** Phase 0：把桌面快照压成状态栏文本，只进当轮模型输入，不写聊天历史。 */
+/**
+ * 桌面状态栏：把 DeskSnapshot 压成当轮 prompt 的一段文本。
+ *  - 只进当轮模型输入，不写 chat_messages（KV cache 友好）
+ *  - 大桌面截断 MAX_DESK_STATUS_OBJECTS 件
+ *  - 短标签：便签取前 14 字 / 效果图取 prompt 前 14 字 / 画布图固定文案
+ */
 import type { ArtifactSnapshot, DeskSnapshot } from "../domain/types.js";
 
-/** 大桌面截断，避免状态栏吃掉上下文窗口。 */
+/** 大桌面截断：状态栏只列前 30 件，超出标「…共 N 件」。 */
 export const MAX_DESK_STATUS_OBJECTS = 30;
 
 /** 状态栏/chip 用的短标签，不塞 payload 全文或 base64。 */
@@ -29,8 +34,10 @@ function formatObjectLine(artifact: ArtifactSnapshot): string {
 }
 
 /**
- * 构造 `[桌面状态]` 块：项目名、当前选中、桌上物件列表。
- * selectedArtifactIds 仅取第一项（与前端单选一致）；脏/已删 id 标为无效。
+ * 构造 `[桌面状态]` 块：项目名 + 当前选中 + 桌上物件列表。
+ *  - selectedArtifactIds 仅取第一项（与前端单选一致）
+ *  - 脏/已删 id 标为无效（让 Agent 知道这个 id 不可用）
+ *  - 只列 desk_state.objects 里出现的 artifact，未放置的隐藏（避免噪声）
  */
 export function buildDeskStatusBlock(
   snapshot: DeskSnapshot | null | undefined,
@@ -78,7 +85,8 @@ export function buildDeskStatusBlock(
 
 /**
  * 解析选中物件的 file_id，供 loadAgentImages 做多模态。
- * 跳过：不在桌、便签、pending 效果图、无 file_id。
+ * 跳过：不在桌、便签（无图）、pending 效果图、无 file_id 的物件。
+ * 返回去重后的 file_id 列表，喂给 Agent 视觉输入。
  */
 export function selectedVisualFileIds(
   snapshot: DeskSnapshot | null | undefined,

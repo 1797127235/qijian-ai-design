@@ -1,4 +1,9 @@
-/** Agent 工具共享上下文：依赖、项目校验、桌面变更通知、本轮选中、异步 job。 */
+/**
+ * 工具共享层：每个工具的依赖 + 上下文工厂。
+ *  - 工具的 ok / fail 协议：{content: [{type:"text", text}], details}
+ *  - place/ownedCurrent 工具内复用的高层动作
+ *  - 工具不直接 import service，都走 ToolDependencies
+ */
 import type { ArtifactService } from "../../services/artifact-service.js";
 import type { CanvasGenerateService } from "../../services/canvas-generate-service.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
@@ -6,6 +11,7 @@ import type { ImageGenerator } from "../../services/image-generator.js";
 import type { AgentJobRunner } from "../async-job/runner.js";
 import type { AgentJobStore } from "../async-job/store.js";
 import type { EventSink } from "../events.js";
+import { mapError, type ErrorCode } from "../tracing/index.js";
 
 export interface ToolDependencies {
   artifacts: ArtifactService;
@@ -36,18 +42,41 @@ export interface ToolContext {
   place: (artifactId: string, kind: string, x: number, y: number, rot?: number, width?: number) => Promise<void>;
 }
 
+/** 工具成功结果：text 给 LLM 读，details 持久化到 chat_tool_calls。 */
 export function ok(text: string, details: Record<string, unknown> = {}) {
   return { content: [{ type: "text" as const, text }], details };
 }
 
+/** 工具失败结果：details 自动带 ok:false + error_code（H7）。 */
 export function fail(text: string, details: Record<string, unknown> = {}) {
-  return { content: [{ type: "text" as const, text }], details: { ok: false, ...details } };
+  const existingCode = typeof details.error_code === "string" ? details.error_code as ErrorCode : undefined;
+  const mapped = mapError({
+    message: typeof details.error === "string" ? String(details.error) : text,
+    code: existingCode,
+  });
+  const error_code = existingCode ?? mapped.error_code;
+  return {
+    content: [{ type: "text" as const, text }],
+    details: {
+      ...details,
+      ok: false,
+      error: typeof details.error === "string" ? details.error : mapped.message,
+      error_code,
+    },
+  };
 }
 
+/** file_id 列表 → artifact_versions.inputRefs 结构（去重 + 包装）。 */
 export function storedFileInputRefs(fileIds: string[] | undefined) {
   return [...new Set(fileIds ?? [])].map((fileId) => ({ file_id: fileId }));
 }
 
+/**
+ * 工具上下文工厂：
+ *  - changed: 写桌后 emit object_changed（前端可监听此事件触发 refetch）
+ *  - ownedCurrent: 校验 artifact 归属当前项目，并返回当前版本
+ *  - place: 工具内的「放一个物件到桌面」快捷动作
+ */
 export function createToolContext(
   projectId: string,
   deps: ToolDependencies,

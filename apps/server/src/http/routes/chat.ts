@@ -1,3 +1,9 @@
+/**
+ * 对话路由：thread 列表 / 创建 / 删除 / 历史。
+ *  - 删 thread 必须先 forget session（释放 pi session 资源）→ 删 chat_threads 行
+ *  - GET messages 不传 threadId 时取最新 thread（resolveThread 内部兜底新建）
+ *  - prompt / stop 走 WebSocket，不在这里
+ */
 import type { Hono } from "hono";
 import type { AgentSessionRegistry } from "../../agent/session-registry.js";
 import type { ChatService } from "../../services/chat-service.js";

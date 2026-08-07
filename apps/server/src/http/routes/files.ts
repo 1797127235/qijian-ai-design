@@ -1,3 +1,10 @@
+/**
+ * 文件路由：上传 / 删除 / 读取。
+ *  - 上传：Content-Length 早拒绝 → formData → 类型白名单 → 尺寸 → FileStorage.put（含 inspect）
+ *  - 删除：FileStorage 内部会过所有 referenceCheckers，防止误删引用中文件
+ *  - 读取：inline disposition 让浏览器直接渲染图而不是下载
+ *  - cross-origin-resource-policy: cross-origin 允许前端画布 <img> 跨源加载
+ */
 import { basename } from "node:path";
 import type { Hono } from "hono";
 import {
@@ -10,6 +17,7 @@ import type { FileStorage } from "../../services/file-storage.js";
 
 export function registerFileRoutes(app: Hono, deps: { files: FileStorage }) {
   app.post("/api/projects/:id/files", async (c) => {
+    // Content-Length 头早拒：避免读完 30MB 才告诉前端太大
     const contentLength = c.req.header("content-length");
     if (!contentLength) throw new AppError(400, "BAD_REQUEST", "上传请求必须提供 Content-Length");
     const declaredLength = Number(contentLength);

@@ -25,6 +25,12 @@ export interface ServerConfig {
   imageEditModel?: string;
   /** 图像服务/结果 CDN 的 HTTP 代理；x.ai 图床被墙时必须，如 http://127.0.0.1:7897 */
   imageFetchProxy?: string;
+  /** H7 LangSmith 观测 */
+  langsmithTracing: boolean;
+  langsmithApiKey?: string;
+  langsmithProject?: string;
+  langsmithEndpoint?: string;
+  langsmithDebugSync: boolean;
 }
 
 /**
@@ -50,5 +56,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     imageEditModel: env.IMAGE_EDIT_MODEL ?? env.IMAGE_MODEL ?? "grok-imagine-image-quality",
     // 代理：IMAGE_FETCH_PROXY 显式 > 标准 HTTPS_PROXY 约定
     imageFetchProxy: env.IMAGE_FETCH_PROXY ?? env.HTTPS_PROXY ?? env.https_proxy,
+    langsmithTracing: (env.LANGSMITH_TRACING ?? "").toLowerCase() === "true",
+    langsmithApiKey: env.LANGSMITH_API_KEY,
+    langsmithProject: env.LANGSMITH_PROJECT ?? "pi",
+    langsmithEndpoint: env.LANGSMITH_ENDPOINT,
+    langsmithDebugSync: (env.LANGSMITH_DEBUG_SYNC ?? "").toLowerCase() === "true",
   };
 }

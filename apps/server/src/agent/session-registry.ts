@@ -12,6 +12,14 @@ export { agentPrompt } from "./agent-prompt.js";
 export { jsonSnapshot, persistToolEvent, assistantTextFromEvent } from "./agent-event-persister.js";
 export { agentSessionDir } from "./session-paths.js";
 
+/**
+ * AgentSessionRegistry：每个 (projectId, threadId) 一个 pi session，懒加载 + 空闲回收。
+ *
+ *  - sessions: key = "projectId:threadId" → Promise<AgentSession>（用 promise 让并发 get 去重）
+ *  - idleTimers: N 分钟无活动则 dispose，腾出 pi 内部 LLM 上下文内存
+ *  - activeRunIds: 同一 thread 可能有多个并发 run 排队（理论），按顺序
+ *  - selectionBySession: 本轮 prompt 携带的画布选中，仅 prompt 期间有效
+ */
 const DEFAULT_SESSION_IDLE_MS = 30 * 60 * 1000;
 
 export class AgentSessionRegistry {
@@ -24,7 +32,7 @@ export class AgentSessionRegistry {
   private readonly generate: SessionFactoryDependencies["generate"];
   private readonly jobs: SessionFactoryDependencies["jobs"];
   private readonly jobStore: SessionFactoryDependencies["jobStore"];
-  /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源 */
+  /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源。 */
   private readonly selectionBySession = new Map<string, string[]>();
   private shuttingDown = false;
 
@@ -41,8 +49,11 @@ export class AgentSessionRegistry {
   }
 
   /**
-   * 跑一轮对话：用户原文 + 桌面状态栏（及可选选中图）进模型。
-   * selectedArtifactIds 来自本条 WS，服务端不缓存选中（方案 1）。
+   * 跑一轮对话：把「用户原文 + 桌面状态 + 后台任务状态 + 选中视觉」喂给模型。
+   *  - selectedArtifactIds 来自本条 WS，不做服务端缓存（方案 1：选择跟消息走，不单独推）
+   *  - 状态栏只进当轮 prompt，不写入 chat_messages（KV cache 友好）
+   *  - 附件与选中视觉去重：避免同一张图作为附件和选中各传一份 base64
+   *  - 完成后 awaits writes（等本次 run 的所有异步写库结束）
    */
   async prompt(
     projectId: string,
@@ -114,6 +125,10 @@ export class AgentSessionRegistry {
     this.scheduleIdle(key, pending);
   }
 
+  /**
+   * 停止 thread 上的运行：先 abort 图像 HTTP + 取消 async job，再 abort session。
+   * 顺序很重要：先掐外部副作用再掐 LLM loop，避免 LLM 停了但 HTTP 还在跑。
+   */
   async stop(projectId: string, threadId: string) {
     const key = `${projectId}:${threadId}`;
     const pending = this.sessions.get(key);
@@ -148,6 +163,7 @@ export class AgentSessionRegistry {
     return pending.length;
   }
 
+  /** 关停：清空闲计时器 → 取消 job → 释放所有 session（abort+dispose）→ drain 写库。 */
   async shutdown() {
     this.shuttingDown = true;
     for (const timer of this.idleTimers.values()) clearTimeout(timer);
@@ -159,6 +175,10 @@ export class AgentSessionRegistry {
     await this.writes.drain();
   }
 
+  /**
+   * 懒加载 session：不存在就建；并发 get 同一 key 共用同一个 promise（避免 race condition 双建）。
+   * 异常时从 map 移除，下次重新尝试。
+   */
   private get(projectId: string, threadId: string) {
     if (this.shuttingDown) throw new Error("Agent 服务正在关闭");
     const key = `${projectId}:${threadId}`;
@@ -188,6 +208,7 @@ export class AgentSessionRegistry {
     this.idleTimers.delete(key);
   }
 
+  /** 排一个空闲回收 timer：unref 不阻塞进程退出；只有 map 里的 promise 仍是当前这个才排。 */
   private scheduleIdle(key: string, pending: Promise<AgentSession>) {
     if (this.shuttingDown || this.sessions.get(key) !== pending) return;
     this.clearIdle(key);

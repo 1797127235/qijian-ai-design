@@ -8,6 +8,20 @@ import type { DeskStateService } from "./desk-state-service.js";
 import type { FileStorage } from "./file-storage.js";
 import type { ImageGenerator, ReferenceFile } from "./image-generator.js";
 
+/**
+ * 画布生成编排服务：把「源物件 + prompt」变成「源旁落一张 effect_image」的全套动作。
+ *
+ * 这是 Agent 与面板共用写桌的唯一入口。
+ *
+ * 两阶段：
+ *  - prepare：快照 → 收集参考 → 落 pending 卡 + 连线（同步、可重入、可幂等）
+ *  - complete：调图像 API → append 终态版本（可后台、可取消、可重试）
+ *
+ * 取消与超时：
+ *  - per lockKey 维护 AbortController，重复请求会先 abort 上一个
+ *  - 120s 兜底超时；外部 signal 可提前 abort（agent stop）
+ *  - 失败 best-effort 写一版 payload.error，前端就能看到红色失败状态
+ */
 const EFFECT_WIDTH = 220;
 const PLACE_GAP = 60;
 const GENERATE_TIMEOUT_MS = 120_000;
@@ -41,7 +55,7 @@ export interface GenerateFromCanvasResult {
   error?: string;
 }
 
-/** prepare 阶段产物，供 Agent 异步 complete 使用 */
+/** prepare 阶段产物，供 Agent 异步 complete 使用。 */
 export interface PreparedGenerate {
   pending: GenerateFromCanvasResult;
   composedPrompt: string;
@@ -51,6 +65,11 @@ export interface PreparedGenerate {
   lockKey: string;
 }
 
+/**
+ * CanvasGenerateService。
+ *  - recent: clientOpId 幂等缓存
+ *  - inflight: lockKey → AbortController（per project+artifact 唯一进行中）
+ */
 export class CanvasGenerateService {
   private readonly recent = new Map<string, { result: GenerateFromCanvasResult; expiresAt: number }>();
   private readonly inflight = new Map<string, AbortController>();
@@ -115,7 +134,11 @@ export class CanvasGenerateService {
     };
   }
 
-  /** 出图并写终态（可后台调用）。 */
+  /**
+   * 出图并写终态（可后台调用）。
+   * 异常兜底：失败也写一版 payload.error 到 artifact，让前端能区分「进行中」和「失败」。
+   * lockKey 互斥：同 project+artifact 的上一次 inflight 会被 abort。
+   */
   async complete(prepared: PreparedGenerate, signal?: AbortSignal): Promise<GenerateFromCanvasResult> {
     const { pending, composedPrompt, referenceFileIds, origin, createdBy, lockKey } = prepared;
     const projectId = lockKey.split(":")[0];
@@ -184,13 +207,14 @@ export class CanvasGenerateService {
     }
   }
 
+  /** 中止某个（project, source）上的 inflight。 */
   abort(projectId: string, sourceArtifactId: string) {
     const key = `${projectId}:${sourceArtifactId}`;
     this.inflight.get(key)?.abort();
     this.inflight.delete(key);
   }
 
-  /** 取消该项目所有进行中的生图（agent stop） */
+  /** 取消该项目所有进行中的生图（agent stop / 服务关停时调用）。 */
   abortProject(projectId: string) {
     const prefix = `${projectId}:`;
     for (const [key, controller] of this.inflight) {
@@ -200,6 +224,7 @@ export class CanvasGenerateService {
     }
   }
 
+  /** 把最终结果回填到 recent 表里所有命中此 artifact 的 clientOpId（统一 finalize 状态）。 */
   private cacheResult(artifactId: string, result: GenerateFromCanvasResult) {
     for (const [clientOpId, entry] of this.recent) {
       if (entry.result.artifact.id === artifactId) {
@@ -291,6 +316,7 @@ export class CanvasGenerateService {
     };
   }
 
+  /** 期望纳入 prompt 的图片参考数：源 + 所有入边。若实际收集到的 < 期望，prompt 末尾加缺图提示。 */
   private expectedImageRefs(
     snapshot: Awaited<ReturnType<DeskStateService["snapshot"]>>,
     source: { id: string; artifactType: ArtifactType; payload: Record<string, unknown> },
@@ -305,6 +331,7 @@ export class CanvasGenerateService {
     return n;
   }
 
+  /** 收集参考：源 + 所有入边。图片入 referenceFileIds，便签文本入 noteTexts（拼进 prompt）。 */
   private collectReferences(
     snapshot: Awaited<ReturnType<DeskStateService["snapshot"]>>,
     source: { id: string; artifactType: ArtifactType; payload: Record<string, unknown> },
@@ -331,6 +358,7 @@ export class CanvasGenerateService {
     return { referenceFileIds, noteTexts };
   }
 
+  /** 拼最终 prompt：用户原意 + 收集到的便签文本 + 缺图提示。空 prompt 兜底为「生成效果图」。 */
   private composePrompt(userPrompt: string, noteTexts: string[], missingRef: boolean) {
     const parts = [userPrompt.trim()].filter(Boolean);
     if (noteTexts.length > 0) parts.push(`参考要求：${noteTexts.join("；")}`);
@@ -338,6 +366,7 @@ export class CanvasGenerateService {
     return parts.join("\n") || "生成效果图";
   }
 
+  /** 把 fileIds 读出为 ReferenceFile 列表（缺一个跳一个，不阻断主流程）。 */
   private async loadReferenceFiles(projectId: string, fileIds: string[]): Promise<ReferenceFile[]> {
     const out: ReferenceFile[] = [];
     for (const fileId of fileIds) {

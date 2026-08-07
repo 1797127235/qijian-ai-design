@@ -114,7 +114,7 @@ ChatGateway (WS 协议 / run 起止)
 |----|------|------|------|
 | **H5** | Skills 全关 | `noSkills: true` | 领域纪律只能塞 system，膨胀且难演进 |
 | **H6** | 无 Agent eval | 单元测试为主 | harness 改动靠手点，回归不可见 |
-| **H7** | 可观测不完整 | tool 有落库，缺 trace UI / 失败分类 | 「未找到 Artifact」类问题难归因 |
+| **H7** | 可观测不完整 | **实现中（2026-08-07）**：LangSmith 双写 + error_code + job trace 关联；本地账本仍为产品真相 | 开发者可在 Smith 看 run 树 |
 | **H8** | 双通道写桌 | 面板 HTTP 生图 vs agent 工具 | 幂等 / 历史 / 撤销语义不统一 |
 | **H9** | 并发 run 记账 | 事件绑 `activeRunIds[0]` | 跟发时 tool 可能记到错误 run |
 
@@ -166,6 +166,13 @@ ChatGateway (WS 协议 / run 起止)
 - 失败时广播 `任务执行失败：…`（`runStatusMessage`）  
 
 **对应：** H2  
+
+### 切片 H7 — LangSmith 观测 ← **已接线（Phase 1）**
+
+- `apps/server/src/agent/tracing/*`：Tracer / Noop / map-error / 有界队列 / TraceRegistry  
+- env：`LANGSMITH_TRACING` `LANGSMITH_API_KEY` `LANGSMITH_PROJECT` `LANGSMITH_ENDPOINT?` `LANGSMITH_DEBUG_SYNC?`  
+- root 等本 run jobs 终态再 end；job span parent=root；`chat_runs.smith_run_id` + `agent_jobs.trace_*`  
+- 测试：map-error + Noop；生命周期手测  
 
 ### 切片 B — 长工具不堵 loop ← **实现中 / 已接 Agent 路径**
 
