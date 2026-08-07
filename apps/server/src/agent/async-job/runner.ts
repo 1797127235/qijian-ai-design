@@ -91,8 +91,21 @@ export class AgentJobRunner {
         tool_call_id: opts.toolCallId,
       },
     });
+    // 尽早注册 controller，使 prepare 窗口内的 cancel 也能命中
+    const controller = new AbortController();
+    this.controllers.set(job.id, controller);
+
     try {
       const prepared = await opts.prepare(job.id);
+      if (controller.signal.aborted) {
+        await this.finalize(job.id, opts.projectId, opts.kind, "cancelled", {
+          error: "已取消",
+          artifactId: prepared.artifactId,
+          errorCode: "JOB_CANCELLED",
+        }, opts.runId);
+        this.controllers.delete(job.id);
+        throw new DOMException("已取消", "AbortError");
+      }
       artifactId = prepared.artifactId;
       if (artifactId) {
         await this.store.setArtifact(job.id, artifactId);
@@ -108,13 +121,16 @@ export class AgentJobRunner {
       });
       prepareSpan = undefined;
     } catch (error) {
+      this.controllers.delete(job.id);
       const mapped = mapErrorFromUnknown(error);
       this.traces?.recordError(prepareSpan, mapped);
       prepareSpan = undefined;
+      const aborted = error instanceof Error && error.name === "AbortError";
       const message = error instanceof Error ? error.message : "准备任务失败";
-      await this.finalize(job.id, opts.projectId, opts.kind, "failed", {
-        error: message,
-        errorCode: mapped.error_code,
+      // prepare 窗口 cancel 已 finalize cancelled；此处按 Abort 收口，避免误标 failed
+      await this.finalize(job.id, opts.projectId, opts.kind, aborted ? "cancelled" : "failed", {
+        error: aborted ? (message || "已取消") : message,
+        errorCode: aborted ? "JOB_CANCELLED" : mapped.error_code,
       }, opts.runId);
       throw error;
     }
@@ -124,10 +140,9 @@ export class AgentJobRunner {
       this.emit({ type: "object_changed", projectId: opts.projectId, artifactId });
     }
 
-    const controller = new AbortController();
-    this.controllers.set(job.id, controller);
-
-    void this.executeWork(job, opts, controller, artifactId);
+    void this.executeWork(job, opts, controller, artifactId).catch((error) => {
+      console.error(`Async job ${job.id} could not be finalized`, error);
+    });
 
     const details = acceptedDetails({ ...job, artifactId }, artifactId);
     return { text: acceptedToolText(details), details };

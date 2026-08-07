@@ -42,6 +42,16 @@ describe("mapSnapshot", () => {
     expect(objects[0]).toMatchObject({ kind: "canvas_image", url: "/api/files/f-123" });
   });
 
+  it("maps empty canvas_image placeholder without url", () => {
+    const objects = mapSnapshot(snapshotWith("canvas_image", {}));
+    expect(objects[0]).toMatchObject({ kind: "canvas_image", url: undefined, pending: false });
+  });
+
+  it("maps pending canvas_image with its prompt", () => {
+    const objects = mapSnapshot(snapshotWith("canvas_image", { pending: true, prompt: "北欧书房" }));
+    expect(objects[0]).toMatchObject({ kind: "canvas_image", url: undefined, pending: true, prompt: "北欧书房" });
+  });
+
   it("maps pending effect_image without url", () => {
     const objects = mapSnapshot(snapshotWith("effect_image", { pending: true, prompt: "现代客厅" }));
     expect(objects[0]).toMatchObject({ kind: "effect_image", pending: true, prompt: "现代客厅" });

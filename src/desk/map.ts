@@ -9,8 +9,17 @@ function mapArtifact(artifact: ArtifactSnapshot, layout: { x: number; y: number;
   switch (artifact.artifactType) {
     case "sticky_note":
       return { ...base, kind: "sticky_note", text: text(payload.text) };
-    case "canvas_image":
-      return { ...base, kind: "canvas_image", url: api.fileUrl(text(payload.file_id)) };
+    case "canvas_image": {
+      const fileId = text(payload.file_id);
+      return {
+        ...base,
+        kind: "canvas_image",
+        url: fileId ? api.fileUrl(fileId) : undefined,
+        pending: payload.pending === true,
+        error: typeof payload.error === "string" ? payload.error : undefined,
+        prompt: text(payload.prompt) || undefined,
+      };
+    }
     case "effect_image": {
       const pending = payload.pending === true;
       const error = typeof payload.error === "string" ? payload.error : undefined;

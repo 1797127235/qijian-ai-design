@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
+import { MAX_SELECTED_ARTIFACTS } from "../../domain/selection-limits.js";
 import type { PreparedGenerate } from "../../services/canvas-generate-service.js";
 import { fail, ok, type ToolContext } from "./shared.js";
 
@@ -24,6 +25,7 @@ const parameters = Type.Object({
   })),
   reference_artifact_ids: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
     description: "参考物件 id 列表（材质/风格参考等，不含主源）。省略时用本轮选中减去主源。",
+    maxItems: MAX_SELECTED_ARTIFACTS,
   })),
 });
 
@@ -65,12 +67,20 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
         return fail("未指定源物件：请用户先在画布上点选一张图，或传入 source_artifact_id。");
       }
 
+      // 显式 reference_artifact_ids 替换选中派生列表；省略参数时才用选中减去主源
+      const hasExplicitRefs = params.reference_artifact_ids !== undefined;
       const refsFromParams = (params.reference_artifact_ids ?? [])
         .map((id) => id.trim())
         .filter(Boolean);
       const refsFromSelection = selected.filter((id) => id !== sourceId);
-      const referenceArtifactIds = [...new Set([...refsFromParams, ...refsFromSelection])]
-        .filter((id) => id !== sourceId);
+      const referenceArtifactIds = [...new Set(
+        hasExplicitRefs ? refsFromParams : refsFromSelection,
+      )]
+        .filter((id) => id !== sourceId)
+        .slice(0, MAX_SELECTED_ARTIFACTS);
+      if (hasExplicitRefs && refsFromParams.length > MAX_SELECTED_ARTIFACTS) {
+        return fail(`参考物件不能超过 ${MAX_SELECTED_ARTIFACTS} 个`);
+      }
 
       try {
         await ctx.ownedCurrent(sourceId);
@@ -133,7 +143,7 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
               result: {
                 artifact_id: result.artifact.id,
                 status: result.status,
-                connection_id: result.connection.id,
+                connection_id: result.connection?.id,
               },
             };
           },

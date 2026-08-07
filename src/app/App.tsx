@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Trash2, Upload } from "lucide-react";
 import { api, type DeskSnapshot, type ProjectSummary } from "../lib/api";
 import { Desk } from "../desk/Desk";
 import { DeskObjectView } from "../desk/nodes";
@@ -58,15 +59,25 @@ export function App() {
 
   const generateGate = useMemo(() => createGenerateHistoryGate(), []);
   const historyRecordRef = useRef<(op: import("./useDeskHistory").DeskHistoryOp) => void>(() => undefined);
+  const historyPatchFillRef = useRef<(artifactId: string, to: { payload: Record<string, unknown>; inputRefs?: unknown[] }) => void>(() => undefined);
 
   const onDeskObjectChanged = useCallback((pid: string, artifactId: string | undefined, snap: DeskSnapshot) => {
     if (!artifactId) return;
     const art = snap.artifacts.find((a) => a.id === artifactId);
-    if (!art || art.artifactType !== "effect_image") return;
+    if (!art) return;
+    // 同卡填回终态（成功 file_id / 失败 error）：刷新 fill_version 的 to，便于 redo
+    if (art.artifactType === "canvas_image" || art.artifactType === "effect_image") {
+      const pending = art.payload.pending === true;
+      if (!pending) {
+        historyPatchFillRef.current(artifactId, { payload: art.payload, inputRefs: art.inputRefs });
+      }
+    }
+    if (art.artifactType !== "effect_image") return;
     // 仅新建 pending/刚落桌时记 history；重试版本前进不记（gate 同 id 也会挡）
     const object = snap.deskState.objects.find((o) => o.artifact_id === artifactId);
-    const connection = snap.deskState.connections.find((c) => c.to === artifactId);
-    if (!object || !connection) return;
+    // 多参考生图会写多条 from→效果 连线；redo 必须全量恢复
+    const edgeConnections = snap.deskState.connections.filter((c) => c.to === artifactId);
+    if (!object || edgeConnections.length === 0) return;
     generateGate.tryRecord(
       artifactId,
       (op) => historyRecordRef.current(op),
@@ -77,7 +88,7 @@ export function App() {
         inputRefs: art.inputRefs,
         layout: { kind: object.kind, x: object.x, y: object.y, rot: object.rot, w: object.w },
       },
-      connection,
+      edgeConnections,
     );
   }, [generateGate]);
 
@@ -87,6 +98,7 @@ export function App() {
   const [selectedConnectionId, setSelectedConnectionId] = useState<string>();
   const viewportRef = useRef<Viewport>({ x: 40, y: 20, zoom: 0.62 });
   const imagePickerRef = useRef<HTMLInputElement>(null);
+  const imageUploadTargetRef = useRef<string>();
   const desk = useDeskActions({
     projectId,
     snapshot,
@@ -103,6 +115,7 @@ export function App() {
   );
   const history = useDeskHistory({ projectId, enqueue: desk.enqueue, refreshDesk, onError: pushCanvasError });
   historyRecordRef.current = history.record;
+  historyPatchFillRef.current = history.patchLatestFill;
   const placement = useDeskPlacement({
     projectId,
     snapshot,
@@ -300,6 +313,9 @@ export function App() {
   const openProject = useCallback(
     async (nextProjectId: string, options?: { initialText?: string; initialFiles?: File[]; history?: "push" | "replace" | "none" }) => {
       const historyMode = options?.history ?? "push";
+      // 先切断旧项目 socket，避免切换窗口内仍用旧连接发新项目消息
+      closeChat();
+      setChatConnection("connecting");
       activeProjectRef.current = nextProjectId;
       setComposerHandoff(options?.initialText || options?.initialFiles?.length
         ? { text: options.initialText, files: options.initialFiles }
@@ -326,7 +342,7 @@ export function App() {
         setChatItems([{ id: nextId(), role: "agent", text: `打开项目失败：${e instanceof Error ? e.message : "未知错误"}` }]);
       }
     },
-    [bindProjectChat, clearViewportTimer, refreshDesk, setChatBusy, setChatConnection, setChatItems],
+    [bindProjectChat, clearViewportTimer, closeChat, refreshDesk, setChatBusy, setChatConnection, setChatItems],
   );
 
   // 仅卸载时关 WS；依赖稳定，避免 HMR 重跑 effect 时反复 close 却不重连
@@ -480,9 +496,7 @@ export function App() {
             }
           }}
           onDropFiles={placement.addImageFiles}
-          onDeleteObject={placement.deleteObject}
           onCreateConnection={createConnection}
-          onDeleteConnection={deleteConnection}
           overlay={
             <DeskToolbar
               canUndo={history.canUndo}
@@ -495,9 +509,29 @@ export function App() {
               onUndo={history.undo}
               onRedo={history.redo}
               onText={placement.addStickyNote}
-              onImage={() => imagePickerRef.current?.click()}
+              onImage={placement.addImagePlaceholder}
             />
           }
+          renderNodeToolbar={(obj) => (
+            <>
+              {obj.kind === "canvas_image" && !obj.url && !obj.pending && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    imageUploadTargetRef.current = obj.id;
+                    imagePickerRef.current?.click();
+                  }}
+                >
+                  <Upload size={14} />
+                  上传图片
+                </button>
+              )}
+              <button type="button" className="danger" onClick={() => placement.deleteObject(obj.id)}>
+                <Trash2 size={14} />
+                删除
+              </button>
+            </>
+          )}
           renderObject={(obj) => (
             <DeskObjectView
               obj={obj}
@@ -507,7 +541,7 @@ export function App() {
               onRetryGenerate={(id) => {
                 // id 是失败卡本身；真实参考源从连入边 from 解析，不能再当 source 新建一张
                 const target = objects.find((item) => item.id === id);
-                if (!target || target.kind !== "effect_image") return;
+                if (!target || (target.kind !== "effect_image" && target.kind !== "canvas_image")) return;
                 const inbound = connections.find((c) => c.to === id);
                 const sourceArtifactId = inbound?.from ?? id;
                 void gen.generate({
@@ -524,7 +558,25 @@ export function App() {
               source={panelSource}
               references={panelRefs}
               busy={gen.busySourceId === panelSource.id}
-              onGenerate={(prompt) => void gen.generate({ sourceArtifactId: panelSource.id, prompt })}
+              onGenerate={(prompt) => {
+                // 空占位图卡：生成结果填回该卡本身，不新建效果图节点
+                const fillBack = panelSource.kind === "canvas_image" && !panelSource.url;
+                const prev = fillBack
+                  ? deskSnapshot?.artifacts.find((a) => a.id === panelSource.id)
+                  : undefined;
+                void gen.generate({
+                  sourceArtifactId: panelSource.id,
+                  prompt,
+                  ...(fillBack
+                    ? {
+                      targetArtifactId: panelSource.id,
+                      fillBack: true,
+                      previousPayload: prev?.payload ?? {},
+                      previousInputRefs: prev?.inputRefs,
+                    }
+                    : {}),
+                });
+              }}
               onClose={gen.closePanel}
             />
           )}
@@ -532,11 +584,13 @@ export function App() {
         <input
           ref={imagePickerRef}
           type="file"
-          multiple
           accept={CANVAS_IMAGE_ACCEPT}
           className="sr-only"
           onChange={(e) => {
-            placement.addImageFiles(Array.from(e.currentTarget.files ?? []));
+            const file = e.currentTarget.files?.[0];
+            const targetId = imageUploadTargetRef.current;
+            imageUploadTargetRef.current = undefined;
+            if (file && targetId) placement.uploadImageToObject(targetId, file);
             e.currentTarget.value = "";
           }}
         />

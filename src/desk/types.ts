@@ -1,6 +1,18 @@
 export type DeskObject =
   | { id: string; kind: "sticky_note"; x: number; y: number; rot: number; status: "draft" | "confirmed"; text: string }
-  | { id: string; kind: "canvas_image"; x: number; y: number; rot: number; status: "draft" | "confirmed"; url: string }
+  | {
+      id: string;
+      kind: "canvas_image";
+      x: number;
+      y: number;
+      rot: number;
+      status: "draft" | "confirmed";
+      /** 空占位卡无 url；上传或生成填回后存在 */
+      url?: string;
+      pending?: boolean;
+      error?: string;
+      prompt?: string;
+    }
   | {
       id: string;
       kind: "effect_image";

@@ -122,7 +122,7 @@ export function registerDeskRoutes(app: Hono, deps: {
           result: {
             artifact_id: result.artifact.id,
             status: result.status,
-            connection_id: result.connection.id,
+            connection_id: result.connection?.id,
           },
         };
       },

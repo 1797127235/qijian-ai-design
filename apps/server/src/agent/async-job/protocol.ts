@@ -31,7 +31,7 @@ export function formatJobsStatusBlock(jobs: AgentJobDto[]): string {
   if (jobs.length === 0) return "";
   const lines = jobs.map((job) => {
     const art = job.artifactId ? ` artifact=${job.artifactId}` : "";
-    const err = job.error ? ` error=${job.error.slice(0, 40)}` : "";
+    const err = job.error ? " error=任务失败" : "";
     const prompt = jobLabel(job);
     return `- ${job.status}  ${job.kind}  task=${job.id}${art}${prompt}${err}`;
   });

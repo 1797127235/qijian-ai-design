@@ -197,8 +197,11 @@ export class AgentJobStore {
     return rows.map(toDto);
   }
 
-  /** 启动清扫：把 accepted/running 全部标 interrupted（boot 唯一调用点）。 */
-  async interruptStale(): Promise<AgentJobDto[]> {
+  /**
+   * 启动清扫：把 boot 前已存在的 accepted/running 标 interrupted。
+   * 用 createdAt < processStartedAt 约束，避免误杀 boot 后新建的 job。
+   */
+  async interruptStale(processStartedAt = new Date()): Promise<AgentJobDto[]> {
     const rows = await this.db
       .update(agentJobs)
       .set({
@@ -206,7 +209,10 @@ export class AgentJobStore {
         error: "服务重启或异常退出",
         finishedAt: new Date(),
       })
-      .where(or(eq(agentJobs.status, "accepted"), eq(agentJobs.status, "running")))
+      .where(and(
+        or(eq(agentJobs.status, "accepted"), eq(agentJobs.status, "running")),
+        sql`${agentJobs.createdAt} < ${processStartedAt}`,
+      ))
       .returning();
     return rows.map(toDto);
   }

@@ -37,10 +37,13 @@ export function createGetTaskTool(ctx: ToolContext) {
       const job = await store.get(ctx.projectId, taskId);
       if (!job) return fail("未找到任务（可能不属于当前项目）", { task_id: taskId });
 
+      const publicError = job.error
+        ? (/取消|超时|中断/.test(job.error) ? job.error.slice(0, 80) : "任务失败")
+        : undefined;
       const text = [
         `任务 ${job.id}（${job.kind}）状态=${job.status}`,
         job.artifactId ? `artifact_id=${job.artifactId}` : null,
-        job.error ? `error=${job.error}` : null,
+        publicError ? `error=${publicError}` : null,
       ].filter(Boolean).join("；");
 
       return ok(text, {
@@ -48,7 +51,7 @@ export function createGetTaskTool(ctx: ToolContext) {
         kind: job.kind,
         status: job.status,
         artifact_id: job.artifactId,
-        error: job.error,
+        error: publicError,
       });
     },
   });

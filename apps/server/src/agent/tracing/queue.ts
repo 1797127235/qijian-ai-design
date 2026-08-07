@@ -31,7 +31,9 @@ export class BoundedAsyncQueue {
     while (this.active < this.concurrency && this.q.length > 0) {
       const task = this.q.shift()!;
       this.active += 1;
-      void task()
+      // Promise.resolve().then 包一层，同步 throw 也走 catch/finally，避免 active 泄漏
+      void Promise.resolve()
+        .then(task)
         .catch((error) => {
           console.warn("[langsmith] export failed:", error instanceof Error ? error.message : error);
         })
@@ -42,10 +44,12 @@ export class BoundedAsyncQueue {
     }
   }
 
-  async drain(timeoutMs = 2_000) {
+  /** @returns true 若在超时前排空；false 表示仍有排队/进行中任务 */
+  async drain(timeoutMs = 2_000): Promise<boolean> {
     const start = Date.now();
     while ((this.q.length > 0 || this.active > 0) && Date.now() - start < timeoutMs) {
       await new Promise((r) => setTimeout(r, 50));
     }
+    return this.q.length === 0 && this.active === 0;
   }
 }

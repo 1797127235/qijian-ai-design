@@ -16,7 +16,7 @@ describe("createGenerateHistoryGate", () => {
     expect(gate.tryRecord("fx-1", record, entry, conn)).toBe(true);
     expect(gate.tryRecord("fx-1", record, entry, conn)).toBe(false);
     expect(record).toHaveBeenCalledTimes(1);
-    expect(record).toHaveBeenCalledWith({ type: "generate", entry, connection: conn });
+    expect(record).toHaveBeenCalledWith({ type: "generate", entry, connections: [conn] });
   });
 
   it("reset clears seen ids", () => {

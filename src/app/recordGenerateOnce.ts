@@ -9,11 +9,12 @@ export function createGenerateHistoryGate() {
       artifactId: string,
       record: (op: DeskHistoryOp) => void,
       entry: DeskHistoryEntry,
-      connection: { id: string; from: string; to: string },
+      connections: { id: string; from: string; to: string } | { id: string; from: string; to: string }[],
     ) {
       if (seen.has(artifactId)) return false;
       seen.add(artifactId);
-      record({ type: "generate", entry, connection });
+      const list = Array.isArray(connections) ? connections : [connections];
+      record({ type: "generate", entry, connections: list });
       return true;
     },
     /** 项目切换时清空 */

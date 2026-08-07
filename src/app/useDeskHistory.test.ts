@@ -86,4 +86,17 @@ describe("desk history stacks", () => {
     const taken = takeUndo(stacks);
     expect(taken.op).toEqual(remove);
   });
+
+  it("fill_version keeps from/to payload for same-card undo", () => {
+    const fill: DeskHistoryOp = {
+      type: "fill_version",
+      artifactId: "img-1",
+      from: { payload: {} },
+      to: { payload: { file_id: "f1" }, inputRefs: [{ file_id: "f1" }] },
+    };
+    const stacks = pushOp(emptyStacks(), fill);
+    const taken = takeUndo(stacks);
+    expect(taken.op).toEqual(fill);
+    expect(canRedo(taken.stacks)).toBe(true);
+  });
 });

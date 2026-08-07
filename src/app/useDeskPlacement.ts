@@ -55,6 +55,74 @@ export function useDeskPlacement(options: {
     });
   }, [projectId, enqueue, history, nextPlacement, onError, refreshDesk, setSelectedIds]);
 
+  const addImagePlaceholder = useCallback(() => {
+    if (!projectId) return;
+    const { x, y } = nextPlacement();
+    const clientOpId = crypto.randomUUID();
+    void enqueue(async () => {
+      try {
+        const result = await api.createArtifact(projectId, {
+          artifactType: "canvas_image",
+          payload: {},
+          clientOpId,
+          layout: { kind: "canvas_image", x, y, rot: 0 },
+        });
+        history.record({
+          type: "place",
+          entry: {
+            artifactId: result.artifact.id,
+            artifactType: "canvas_image",
+            payload: {},
+            layout: { kind: "canvas_image", x, y, rot: 0 },
+          },
+        });
+        setSelectedIds([result.artifact.id]);
+      } catch (error) {
+        onError(`创建图片占位卡失败：${error instanceof Error ? error.message : "未知错误"}`);
+      }
+      await refreshDesk(projectId).catch(() => undefined);
+    });
+  }, [projectId, enqueue, history, nextPlacement, onError, refreshDesk, setSelectedIds]);
+
+  /** 空占位卡状态栏「上传」：文件直接填回该卡（appendVersion），不新建物件。 */
+  const uploadImageToObject = useCallback(
+    (artifactId: string, file: File) => {
+      if (!projectId) return;
+      const problem = validateCanvasImageFile(file);
+      if (problem) {
+        onError(`${file.name}：${problem}`);
+        return;
+      }
+      void enqueue(async () => {
+        let uploadedId: string | undefined;
+        try {
+          const before = await refreshDesk(projectId).catch(() => undefined);
+          const prev = before?.artifacts.find((a) => a.id === artifactId);
+          const stored = await api.uploadFile(projectId, file);
+          uploadedId = stored.id;
+          const toPayload = { file_id: stored.id };
+          const toRefs = [{ file_id: stored.id }];
+          await api.appendVersion(artifactId, toPayload, toRefs);
+          uploadedId = undefined;
+          history.record({
+            type: "fill_version",
+            artifactId,
+            from: {
+              payload: prev?.payload ?? {},
+              inputRefs: prev?.inputRefs,
+            },
+            to: { payload: toPayload, inputRefs: toRefs },
+          });
+        } catch (error) {
+          if (uploadedId) void api.deleteFile(projectId, uploadedId).catch(() => undefined);
+          onError(`上传图片失败（${file.name}）：${error instanceof Error ? error.message : "未知错误"}`);
+        }
+        await refreshDesk(projectId).catch(() => undefined);
+      });
+    },
+    [projectId, enqueue, history, onError, refreshDesk],
+  );
+
   const addImageFiles = useCallback(
     (files: File[]) => {
       if (!projectId || files.length === 0) return;
@@ -68,8 +136,10 @@ export function useDeskPlacement(options: {
       void enqueue(async () => {
         for (const file of accepted) {
           const { x, y } = nextPlacement();
+          let uploadedId: string | undefined;
           try {
             const stored = await api.uploadFile(projectId, file);
+            uploadedId = stored.id;
             const clientOpId = crypto.randomUUID();
             const result = await api.createArtifact(projectId, {
               artifactType: "canvas_image",
@@ -88,7 +158,9 @@ export function useDeskPlacement(options: {
                 layout: { kind: "canvas_image", x, y, rot: 0 },
               },
             });
+            uploadedId = undefined;
           } catch (error) {
+            if (uploadedId) void api.deleteFile(projectId, uploadedId).catch(() => undefined);
             onError(`图片落桌失败（${file.name}）：${error instanceof Error ? error.message : "未知错误"}`);
           }
         }
@@ -171,6 +243,8 @@ export function useDeskPlacement(options: {
     editingId,
     startEdit: setEditingId,
     addStickyNote,
+    addImagePlaceholder,
+    uploadImageToObject,
     addImageFiles,
     deleteObject,
     deleteSelected,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConnectionsLayer } from "./Connections";
-import { nodeSize, sourceAnchor } from "./connection-geometry";
+import { nodeAabb, nodeSize, sourceAnchor } from "./connection-geometry";
 import { positionFromPointer, screenToWorld, zoomAtPoint, type Viewport } from "./geometry";
 import type { DeskConnection, DeskObject } from "./types";
 
@@ -34,10 +34,9 @@ export function Desk({
   onMarqueeSelect,
   onSelectConnection,
   onDropFiles,
-  onDeleteObject,
   onCreateConnection,
-  onDeleteConnection,
   renderObject,
+  renderNodeToolbar,
   overlay,
   children,
 }: {
@@ -54,10 +53,10 @@ export function Desk({
   onMarqueeSelect?: (ids: string[]) => void;
   onSelectConnection?: (id?: string) => void;
   onDropFiles?: (files: File[]) => void;
-  onDeleteObject?: (id: string) => void;
   onCreateConnection?: (from: string, to: string) => void;
-  onDeleteConnection?: (id: string) => void;
   renderObject: (obj: DeskObject) => ReactNode;
+  /** 单选节点时渲染其上方悬浮工具条内容（按钮由调用方给）；定位/显隐由 Desk 负责 */
+  renderNodeToolbar?: (obj: DeskObject) => ReactNode;
   overlay?: ReactNode;
   children?: ReactNode;
 }) {
@@ -74,7 +73,6 @@ export function Desk({
   const [preview, setPreview] = useState<{ x1: number; y1: number; x2: number; y2: number }>();
   const vpRef = useRef<HTMLDivElement>(null);
   const handledFocusToken = useRef<number>();
-  const [menu, setMenu] = useState<{ kind: "object" | "connection"; id: string; x: number; y: number }>();
   const spaceHeld = useRef(false);
 
   useEffect(() => {
@@ -137,8 +135,13 @@ export function Desk({
     return screenToWorld({ x: e.clientX, y: e.clientY }, { x: rect.left, y: rect.top }, view);
   };
 
+  /** client → desk 局部坐标（框选层相对 .desk，不是视口 0,0）。 */
+  const deskLocalFromEvent = (e: { clientX: number; clientY: number }) => {
+    const rect = vpRef.current!.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
   const beginPan = (e: React.PointerEvent) => {
-    setMenu(undefined);
     pan.current = { sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
     setPanning(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -154,11 +157,11 @@ export function Desk({
     }
 
     if (e.button !== 0) return;
-    setMenu(undefined);
     onSelectConnection?.(undefined);
     const world = worldFromEvent(e);
+    const local = deskLocalFromEvent(e);
     marquee.current = { sx: e.clientX, sy: e.clientY, wx: world.x, wy: world.y };
-    setMarqueeScreen({ x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY });
+    setMarqueeScreen({ x1: local.x, y1: local.y, x2: local.x, y2: local.y });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -170,12 +173,9 @@ export function Desk({
     }
 
     if (marquee.current) {
-      setMarqueeScreen({
-        x1: marquee.current.sx,
-        y1: marquee.current.sy,
-        x2: e.clientX,
-        y2: e.clientY,
-      });
+      const start = deskLocalFromEvent({ clientX: marquee.current.sx, clientY: marquee.current.sy });
+      const end = deskLocalFromEvent(e);
+      setMarqueeScreen({ x1: start.x, y1: start.y, x2: end.x, y2: end.y });
       return;
     }
 
@@ -234,10 +234,7 @@ export function Desk({
     const end = worldFromEvent(e);
     const box = { x1: m.wx, y1: m.wy, x2: end.x, y2: end.y };
     const hits = objects
-      .filter((obj) => {
-        const size = nodeSize(obj);
-        return aabbIntersects(box, { x: obj.x, y: obj.y, w: size.w, h: size.h });
-      })
+      .filter((obj) => aabbIntersects(box, nodeAabb(obj)))
       .map((obj) => obj.id);
     onMarqueeSelect?.(hits);
   };
@@ -254,8 +251,8 @@ export function Desk({
       const p = worldFromEvent(e);
       const target = objects.find((obj) => {
         if (obj.id === connect.current!.fromId) return false;
-        const size = nodeSize(obj);
-        return p.x >= obj.x - 12 && p.x <= obj.x + size.w + 12 && p.y >= obj.y - 12 && p.y <= obj.y + size.h + 12;
+        const box = nodeAabb(obj);
+        return p.x >= box.x - 12 && p.x <= box.x + box.w + 12 && p.y >= box.y - 12 && p.y <= box.y + box.h + 12;
       });
       if (target) onCreateConnection?.(connect.current.fromId, target.id);
       connect.current = undefined;
@@ -303,7 +300,6 @@ export function Desk({
   }, [reportViewport]);
 
   const selectObject = (obj: DeskObject, opts: SelectOpts) => {
-    setMenu(undefined);
     onSelect?.(obj.id, opts);
     onSelectConnection?.(undefined);
   };
@@ -335,25 +331,6 @@ export function Desk({
     (vpRef.current as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  const openObjectMenu = (e: React.MouseEvent, obj: DeskObject) => {
-    if (!onDeleteObject) return;
-    e.preventDefault();
-    e.stopPropagation();
-    onSelect?.(obj.id, { panel: false });
-    onSelectConnection?.(undefined);
-    const rect = vpRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setMenu({ kind: "object", id: obj.id, x: e.clientX - rect.left, y: e.clientY - rect.top });
-  };
-
-  const openConnectionMenu = (id: string, e: React.MouseEvent) => {
-    if (!onDeleteConnection) return;
-    onSelectConnection?.(id);
-    const rect = vpRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setMenu({ kind: "connection", id, x: e.clientX - rect.left, y: e.clientY - rect.top });
-  };
-
   const onDrop = (e: React.DragEvent) => {
     if (!onDropFiles || e.dataTransfer.files.length === 0) return;
     e.preventDefault();
@@ -361,6 +338,9 @@ export function Desk({
   };
 
   const selectedSet = new Set(selectedIds);
+  const toolbarObject = renderNodeToolbar && selectedIds.length === 1
+    ? objects.find((o) => o.id === selectedIds[0])
+    : undefined;
   const marqueeStyle = marqueeScreen
     ? {
       left: Math.min(marqueeScreen.x1, marqueeScreen.x2),
@@ -393,7 +373,6 @@ export function Desk({
             onSelectConnection?.(id);
             onSelect?.(undefined);
           }}
-          onContextMenu={openConnectionMenu}
         />
         {objects.map((obj) => {
           const size = nodeSize(obj);
@@ -407,7 +386,6 @@ export function Desk({
               onPointerDown={(e) => startNodeDrag(e, obj)}
               onClick={(e) => onObjectClick(e, obj)}
               onDragStart={(e) => e.preventDefault()}
-              onContextMenu={(e) => openObjectMenu(e, obj)}
             >
               {renderObject(obj)}
               {showHandles && onCreateConnection && (
@@ -428,6 +406,18 @@ export function Desk({
       </div>
       {marqueeStyle && (
         <div className="desk-marquee" style={marqueeStyle} aria-hidden="true" />
+      )}
+      {toolbarObject && renderNodeToolbar && (
+        <div
+          className="desk-node-toolbar"
+          style={{
+            left: view.x + (toolbarObject.x + nodeSize(toolbarObject).w / 2) * view.zoom,
+            top: view.y + toolbarObject.y * view.zoom - 14,
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          {renderNodeToolbar(toolbarObject)}
+        </div>
       )}
       <div className="desk-tools">
         <button
@@ -467,20 +457,6 @@ export function Desk({
         </button>
       </div>
       {overlay}
-      {menu && (
-        <div className="desk-context-menu" style={{ left: menu.x, top: menu.y }}>
-          <button
-            type="button"
-            onClick={() => {
-              if (menu.kind === "object") onDeleteObject?.(menu.id);
-              else onDeleteConnection?.(menu.id);
-              setMenu(undefined);
-            }}
-          >
-            {menu.kind === "object" ? "删除" : "删除连线"}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

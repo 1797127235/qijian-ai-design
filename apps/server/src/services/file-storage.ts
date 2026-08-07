@@ -21,9 +21,12 @@ import { inspectUpload } from "./upload-inspector.js";
 export type { AgentImageContent, VisualAttachment } from "./agent-image-loader.js";
 export { inspectUpload } from "./upload-inspector.js";
 
+/** 引用检查可在删除事务内执行（同一连接可见未提交快照 + 行锁）。 */
+export type FileReferenceExecutor = Pick<Database, "select">;
+
 /** 谁能告诉我 file_id 是否还被引用？由 ChatService / ArtifactService 实现。 */
 export interface FileReferenceChecker {
-  referencesFile(fileId: string): Promise<boolean>;
+  referencesFile(fileId: string, executor?: FileReferenceExecutor): Promise<boolean>;
 }
 
 /** 上传后返回给前端的精简视图（不暴露 objectKey 等内部字段）。 */
@@ -103,18 +106,26 @@ export class FileStorage {
   }
 
   /**
-   * 删除文件：先问所有 referenceCheckers 是否有引用，有就 409；都没有就删 DB 行 + 磁盘文件。
-   * 软删（置 deleted_at）目前未启用，但 schema 留了位（见 TODOS #1 tombstone 讨论）。
+   * 删除文件：事务内 FOR UPDATE 锁行 → 查引用 → 删行 → 再 unlink 磁盘。
+   * 与 artifact/chat 写引用路径对同一 stored_files 行加锁，避免「检查无引用后被引用」的 TOCTOU。
    */
   async deleteUnattached(projectId: string, fileId: string) {
-    const [stored] = await this.db.select().from(storedFiles).where(and(eq(storedFiles.id, fileId), eq(storedFiles.projectId, projectId)));
-    if (!stored) return false;
-    for (const checker of this.referenceCheckers) {
-      if (await checker.referencesFile(fileId)) {
-        throw new AppError(409, "CONFLICT", "附件已被消息或画布使用，不能删除");
+    const stored = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(storedFiles)
+        .where(and(eq(storedFiles.id, fileId), eq(storedFiles.projectId, projectId)))
+        .for("update");
+      if (!row) return null;
+      for (const checker of this.referenceCheckers) {
+        if (await checker.referencesFile(fileId, tx)) {
+          throw new AppError(409, "CONFLICT", "附件已被消息或画布使用，不能删除");
+        }
       }
-    }
-    await this.db.delete(storedFiles).where(eq(storedFiles.id, fileId));
+      await tx.delete(storedFiles).where(eq(storedFiles.id, fileId));
+      return row;
+    });
+    if (!stored) return false;
     await unlink(join(this.config.uploadDir, stored.objectKey)).catch(() => undefined);
     return true;
   }

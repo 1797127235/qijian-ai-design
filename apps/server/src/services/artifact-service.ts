@@ -56,8 +56,14 @@ type CreatePlacedResult = {
  */
 export class ArtifactService {
   private readonly recentPlacements = new Map<string, { result: CreatePlacedResult; expiresAt: number }>();
+  /** 进行中的幂等请求：project:clientOpId → Promise，防止并发双写 */
+  private readonly inflightPlacements = new Map<string, Promise<CreatePlacedResult>>();
 
   constructor(private readonly db: Database) {}
+
+  private idempotencyKey(projectId: string, clientOpId: string) {
+    return `${projectId}:${clientOpId}`;
+  }
 
   /** 创建 artifact 但不落桌。 */
   async create(projectId: string, artifactType: ArtifactType, input: AppendVersionInput) {
@@ -68,17 +74,21 @@ export class ArtifactService {
 
   /**
    * 创建并落桌：写 artifact + v1 + desk_state.objects，单事务。
-   * 接受 clientOpId 实现幂等：相同 id 在 IDEMPOTENCY_TTL_MS 内直接返回缓存结果。
+   * 接受 clientOpId 实现幂等：相同 project+id 在 IDEMPOTENCY_TTL_MS 内直接返回缓存结果。
+   * 并发同 key 共享 in-flight Promise，避免双写。
    */
   async createPlaced(projectId: string, artifactType: ArtifactType, input: AppendVersionInput, layout: NewDeskObject, clientOpId?: string) {
     if (!artifactTypes.includes(artifactType)) throw new HttpError(422, "不支持的 Artifact 类型");
     this.validateConfirmedPayload(artifactType, input);
-    if (clientOpId) {
-      const hit = this.recentPlacements.get(clientOpId);
+    const key = clientOpId ? this.idempotencyKey(projectId, clientOpId) : undefined;
+    if (key) {
+      const hit = this.recentPlacements.get(key);
       if (hit && hit.expiresAt > Date.now()) return hit.result;
-      this.recentPlacements.delete(clientOpId);
+      this.recentPlacements.delete(key);
+      const inflight = this.inflightPlacements.get(key);
+      if (inflight) return inflight;
     }
-    const result = await this.db.transaction(async (tx) => {
+    const work = this.db.transaction(async (tx) => {
       const created = await this.createInTransaction(tx, projectId, artifactType, input);
       const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
       if (!state) throw new HttpError(404, "未找到该设计项目");
@@ -86,9 +96,14 @@ export class ArtifactService {
       const objects = [...state.objects.filter((item) => item.artifact_id !== created.artifact.id), object];
       await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
       return { ...created, object };
+    }).then((result) => {
+      if (key) this.rememberPlacement(key, result);
+      return result;
+    }).finally(() => {
+      if (key) this.inflightPlacements.delete(key);
     });
-    if (clientOpId) this.rememberPlacement(clientOpId, result);
-    return result;
+    if (key) this.inflightPlacements.set(key, work);
+    return work;
   }
 
   /** 撤销删除：以原 UUID 重建 artifact（版本链从 v1 重启）并恢复桌面布局。 */
@@ -205,9 +220,9 @@ export class ArtifactService {
    *  2) artifact_versions.payload.file_id / payload.pdf_file（payload 内嵌，向后兼容）
    * 用 jsonb_array_elements 在 SQL 内做引用检查，避免把所有版本拉回应用层。
    */
-  async referencesFile(fileId: string): Promise<boolean> {
+  async referencesFile(fileId: string, executor: Pick<Database, "select"> = this.db): Promise<boolean> {
     // 结构化引用优先：input_refs 中的 file_id；payload 内嵌 file_id 作兼容（如 canvas_image.payload.file_id）。
-    const [hit] = await this.db
+    const [hit] = await executor
       .select({ id: artifactVersions.id })
       .from(artifactVersions)
       .where(sql`(
@@ -223,20 +238,20 @@ export class ArtifactService {
     return Boolean(hit);
   }
 
-  /** 写幂等缓存：先扫一遍过期的清掉，超容量时按插入顺序淘汰最旧。 */
-  private rememberPlacement(clientOpId: string, result: CreatePlacedResult) {
+  /** 写幂等缓存：key 已含 project 前缀。先扫过期，超容量淘汰最旧。 */
+  private rememberPlacement(key: string, result: CreatePlacedResult) {
     const now = Date.now();
-    for (const [key, entry] of this.recentPlacements) {
-      if (entry.expiresAt <= now) this.recentPlacements.delete(key);
+    for (const [entryKey, entry] of this.recentPlacements) {
+      if (entry.expiresAt <= now) this.recentPlacements.delete(entryKey);
     }
     if (this.recentPlacements.size >= IDEMPOTENCY_MAX_ENTRIES) {
       const oldest = this.recentPlacements.keys().next().value;
       if (oldest !== undefined) this.recentPlacements.delete(oldest);
     }
-    this.recentPlacements.set(clientOpId, { result, expiresAt: now + IDEMPOTENCY_TTL_MS });
+    this.recentPlacements.set(key, { result, expiresAt: now + IDEMPOTENCY_TTL_MS });
   }
 
-  /** canvas_image / effect_image 的 file_id 必须归属当前项目且为 JPEG/PNG。 */
+  /** canvas_image / effect_image 的 file_id 必须归属当前项目且为 JPEG/PNG。FOR UPDATE 与删除互斥。 */
   private async validateCanvasImageFile(
     tx: DatabaseTransaction,
     projectId: string,
@@ -249,7 +264,8 @@ export class ArtifactService {
     const [file] = await tx
       .select({ id: storedFiles.id, mediaType: storedFiles.mediaType })
       .from(storedFiles)
-      .where(and(eq(storedFiles.id, fileId), eq(storedFiles.projectId, projectId)));
+      .where(and(eq(storedFiles.id, fileId), eq(storedFiles.projectId, projectId)))
+      .for("update");
     if (!file) throw new HttpError(422, "图片文件不属于当前项目");
     if (!CANVAS_IMAGE_MEDIA_TYPES.has(file.mediaType)) {
       throw new HttpError(422, "画布图片仅支持 JPEG/PNG");
@@ -258,9 +274,10 @@ export class ArtifactService {
 
   /**
    * 校验 inputRefs 中所有 file_id 归属当前项目；若带 page 字段则 page ≤ 文件 pageCount。
-   * 失败抛 422（不是 409），因为这是请求参数问题不是状态冲突。
+   * SELECT … FOR UPDATE：与 deleteUnattached 串行，防止引用写入与删除交叉。
    */
-  private async validateInputRefs(    tx: DatabaseTransaction,
+  private async validateInputRefs(
+    tx: DatabaseTransaction,
     projectId: string,
     inputRefs: unknown[],
   ) {
@@ -268,15 +285,17 @@ export class ArtifactService {
       if (!ref || typeof ref !== "object") return [];
       const fileId = (ref as Record<string, unknown>).file_id;
       return typeof fileId === "string" ? [fileId] : [];
-    }))];
+    }))].sort();
     if (fileIds.length === 0) return;
     if (fileIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
       throw new HttpError(422, "文件引用 ID 格式不正确");
     }
+    // 排序后加锁，降低多文件并发时的死锁概率
     const owned = await tx
       .select({ id: storedFiles.id, pageCount: storedFiles.pageCount })
       .from(storedFiles)
-      .where(and(eq(storedFiles.projectId, projectId), inArray(storedFiles.id, fileIds)));
+      .where(and(eq(storedFiles.projectId, projectId), inArray(storedFiles.id, fileIds)))
+      .for("update");
     if (owned.length !== fileIds.length) throw new HttpError(422, "存在不属于当前项目的文件引用");
     const pageCountById = new Map(owned.map((file) => [file.id, file.pageCount]));
     for (const ref of inputRefs) {

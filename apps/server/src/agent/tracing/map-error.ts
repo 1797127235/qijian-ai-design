@@ -1,11 +1,9 @@
 /** 唯一错误码映射口：throw / fail / abort / job 终态都走这里。 */
+import { redactErrorMessage } from "./redact.js";
 import type { ErrorCode, MappedError } from "./types.js";
 
-const TEXT_CAP = 2_000;
-
 function clip(message: string): string {
-  const trimmed = message.trim();
-  return trimmed.length > TEXT_CAP ? trimmed.slice(0, TEXT_CAP) : trimmed;
+  return redactErrorMessage(message.trim() || "未知错误", 2_000);
 }
 
 /** 从任意失败来源映射稳定 error_code。 */

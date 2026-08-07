@@ -374,13 +374,15 @@ export function useChatSession(options: {
     closeChat();
     resetChatUi();
     setConnection("connecting");
+    // bind generation：防止 A→B→A 时旧请求回写新会话
+    const bindGen = ++threadLoadSequence.current;
     const threads = await api.chatThreads(projectId);
-    if (activeProjectRef.current !== projectId) return;
+    if (activeProjectRef.current !== projectId || threadLoadSequence.current !== bindGen) return;
     setChatThreads(threads);
     const activeThread = threads[0];
     if (activeThread) {
       const history = await api.chatHistory(projectId, activeThread.id);
-      if (activeProjectRef.current !== projectId) return;
+      if (activeProjectRef.current !== projectId || threadLoadSequence.current !== bindGen) return;
       setActiveChatThreadId(activeThread.id);
       activeChatThreadRef.current = activeThread.id;
       setChatItems(history.messages.map((message) => ({
@@ -390,6 +392,7 @@ export function useChatSession(options: {
         attachments: message.attachments,
       })));
     }
+    if (activeProjectRef.current !== projectId || threadLoadSequence.current !== bindGen) return;
     openChatSocket(projectId);
   }, [activeProjectRef, closeChat, openChatSocket, resetChatUi]);
 
@@ -413,11 +416,18 @@ export function useChatSession(options: {
       if (!threadId) {
         const projectId = activeProjectRef.current;
         if (!projectId) return false;
+        // 先登记 pending，确保后续失败能通过 submissionOutcome 解锁 composer
+        pendingPromptIdRef.current = input.clientMessageId;
+        setSubmissionOutcome(undefined);
         setBusy(true);
         void (async () => {
           try {
             const thread = await api.createChatThread(projectId);
-            if (activeProjectRef.current !== projectId) return;
+            if (activeProjectRef.current !== projectId) {
+              setSubmissionOutcome({ clientMessageId: input.clientMessageId, status: "rejected" });
+              setBusy(false);
+              return;
+            }
             activeChatThreadRef.current = thread.id;
             setActiveChatThreadId(thread.id);
             setChatThreads((current) => [thread, ...current]);
@@ -429,17 +439,17 @@ export function useChatSession(options: {
               input.selectedArtifactIds ?? [],
             )) {
               setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: "消息未发送，请等待连接恢复后重试。" }]);
+              setSubmissionOutcome({ clientMessageId: input.clientMessageId, status: "rejected" });
               setBusy(false);
               return;
             }
-            pendingPromptIdRef.current = input.clientMessageId;
-            setSubmissionOutcome(undefined);
           } catch (error) {
             setChatItems((current) => [...current, {
               id: nextId(),
               role: "agent",
               text: `新建对话失败：${error instanceof Error ? error.message : "未知错误"}`,
             }]);
+            setSubmissionOutcome({ clientMessageId: input.clientMessageId, status: "rejected" });
             setBusy(false);
           }
         })();

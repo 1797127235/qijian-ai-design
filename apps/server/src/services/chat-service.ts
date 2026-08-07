@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, lt, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, ne } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { chatMessageAttachments, chatMessages, chatRuns, chatThreads, chatToolCalls, storedFiles } from "../db/schema.js";
 import {
@@ -103,8 +103,8 @@ export class ChatService {
     if (!deleted) throw new Error("对话不存在或不属于当前项目");
   }
 
-  async referencesFile(fileId: string): Promise<boolean> {
-    return messageReferencesFile(this.db, fileId);
+  async referencesFile(fileId: string, executor: Parameters<typeof messageReferencesFile>[0] = this.db): Promise<boolean> {
+    return messageReferencesFile(executor, fileId);
   }
 
   /**
@@ -208,28 +208,33 @@ export class ChatService {
         .where(and(eq(chatRuns.threadId, threadId), eq(chatRuns.status, "running")))
         .limit(1);
       if (running) {
-        // 清扫陈旧 run：其他实例残留，或本实例挂死超过 10 分钟（模型调用无超时兜底）
+        // 仅超时才清扫；owner 不等不等于已死（多实例误杀活任务）
         const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
         const swept = await tx
           .update(chatRuns)
-          .set({ status: "interrupted", error: "任务残留自动清理", finishedAt: new Date() })
+          .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: new Date() })
           .where(and(
             eq(chatRuns.id, running.id),
             eq(chatRuns.status, "running"),
-            or(ne(chatRuns.ownerId, this.instanceId), lt(chatRuns.startedAt, staleBefore)),
+            lt(chatRuns.startedAt, staleBefore),
           ))
           .returning({ id: chatRuns.id });
         if (swept.length === 0) {
           throw new AppError(409, "ATTACHMENT_BUSY", "当前对话仍有任务在执行，请稍后再发送", true);
         }
+        await tx
+          .update(chatToolCalls)
+          .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: new Date() })
+          .where(and(inArray(chatToolCalls.runId, swept.map((run) => run.id)), eq(chatToolCalls.status, "running")));
       }
 
+      // FOR UPDATE：与 FileStorage.deleteUnattached 互斥，避免消息挂上已删/正删文件
       const files = uniqueAttachmentIds.length === 0
         ? []
         : await tx.select().from(storedFiles).where(and(
             eq(storedFiles.projectId, projectId),
-            inArray(storedFiles.id, uniqueAttachmentIds),
-          ));
+            inArray(storedFiles.id, [...uniqueAttachmentIds].sort()),
+          )).for("update");
       if (files.length !== uniqueAttachmentIds.length) {
         throw new AppError(422, "ATTACHMENT_NOT_FOUND", "一个或多个附件不存在或不属于当前项目");
       }
@@ -424,25 +429,26 @@ export class ChatService {
   }
 
   /**
-   * 私有：把「其他实例」的 running run 标 interrupted（接管的不是任务本身，而是把它们视为已死避免阻塞）。
-   * 每次 history() 触发一次 → 用户看到的历史总是最新的语义。
+   * 私有：仅清理超时 running run（按 startedAt，不按 ownerId）。
+   * 多实例部署下 owner 不等不等于已死；误 interrupt 会杀活任务。
    */
   private async interruptStaleRuns(projectId: string, threadId: string) {
+    const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
     await this.db.transaction(async (tx) => {
       const interrupted = await tx
         .update(chatRuns)
-        .set({ status: "interrupted", finishedAt: new Date() })
+        .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: new Date() })
         .where(and(
           eq(chatRuns.projectId, projectId),
           eq(chatRuns.threadId, threadId),
           eq(chatRuns.status, "running"),
-          ne(chatRuns.ownerId, this.instanceId),
+          lt(chatRuns.startedAt, staleBefore),
         ))
         .returning({ id: chatRuns.id });
       if (interrupted.length > 0) {
         await tx
           .update(chatToolCalls)
-          .set({ status: "interrupted", error: "服务重启或异常退出", finishedAt: new Date() })
+          .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: new Date() })
           .where(and(inArray(chatToolCalls.runId, interrupted.map((run) => run.id)), eq(chatToolCalls.status, "running")));
       }
     });

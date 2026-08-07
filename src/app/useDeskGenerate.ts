@@ -9,6 +9,13 @@ export interface GenerateOptions {
   prompt: string;
   /** 重试：失败/草稿 effect_image 自身 id，在原卡上生成 */
   targetArtifactId?: string;
+  /**
+   * 空占位填回：结果写回 target（通常 = source），记 fill_version 而非 generate。
+   * previous* 为调用前快照，undo 写回。
+   */
+  fillBack?: boolean;
+  previousPayload?: Record<string, unknown>;
+  previousInputRefs?: unknown[];
 }
 
 /** 面板生图：H8 秒级 accepted；终态靠 WS object_changed。 */
@@ -48,8 +55,25 @@ export function useDeskGenerate(options: {
         const snap = await refreshDesk(projectId).catch(() => undefined);
         const artifact = snap?.artifacts.find((a) => a.id === result.artifact.id);
         const object = snap?.deskState.objects.find((o) => o.artifact_id === result.artifact.id);
-        // 重试不记新 history；新建 pending 记一条（与 agent 路径去重）
-        if (!opts.targetArtifactId) {
+        // 多参考 = 多条连线；API 只回 primary，以 desk 快照为准
+        const edgeConnections = snap?.deskState.connections.filter((c) => c.to === result.artifact.id)
+          ?? (result.connection ? [result.connection] : []);
+        if (opts.fillBack && opts.targetArtifactId) {
+          // 同卡填回：记版本前后，undo 恢复空白/旧内容（不删卡）
+          history.record({
+            type: "fill_version",
+            artifactId: opts.targetArtifactId,
+            from: {
+              payload: opts.previousPayload ?? {},
+              inputRefs: opts.previousInputRefs,
+            },
+            to: {
+              payload: artifact?.payload ?? { pending: true, prompt: opts.prompt, source: "canvas_panel" },
+              inputRefs: artifact?.inputRefs,
+            },
+          });
+        } else if (!opts.targetArtifactId && edgeConnections.length > 0) {
+          // 新建效果图；重试不记
           generateGate.tryRecord(
             result.artifact.id,
             history.record,
@@ -62,7 +86,7 @@ export function useDeskGenerate(options: {
                 ? { kind: object.kind, x: object.x, y: object.y, rot: object.rot, w: object.w }
                 : { kind: "effect_image", x: 0, y: 0, rot: 0 },
             },
-            result.connection,
+            edgeConnections,
           );
         }
         setPanelSourceId(undefined);

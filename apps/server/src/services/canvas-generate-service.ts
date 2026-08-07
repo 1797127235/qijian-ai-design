@@ -26,6 +26,19 @@ const EFFECT_WIDTH = 220;
 const PLACE_GAP = 60;
 const GENERATE_TIMEOUT_MS = 120_000;
 
+/** 对用户/落库可见的错误文案：去掉路径、URL、堆栈等内部细节。 */
+function publicGenerateError(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "生成失败";
+  if (/已取消|超时|Abort/.test(trimmed)) return "生成已取消或超时";
+  if (/网络|timeout|ETIMEDOUT|ECONN/i.test(trimmed)) return "图像服务暂时不可用，请稍后重试";
+  if (/尚未配置|IMAGE_API/.test(trimmed)) return "图像服务未配置";
+  if (/超过 20MB|无法归档|无效响应|不支持|不允许的图片主机|图片类型/.test(trimmed)) {
+    return trimmed.slice(0, 120);
+  }
+  return "生成失败，请稍后重试";
+}
+
 export type GenerateSource = "canvas_panel" | "agent_chat";
 export type GenerateCreatedBy = "designer" | "agent";
 
@@ -35,8 +48,8 @@ export interface GenerateFromCanvasInput {
   prompt: string;
   clientOpId: string;
   /**
-   * 重试时传入已有失败/待生成的 effect_image id，在原卡上 append，不新建。
-   * 省略则 createPlaced 新卡。
+   * 重试时传入已有失败/待生成的 effect_image id，或空占位 canvas_image id（生成结果直接填回该卡），
+   * 在原卡上 append，不新建。省略则 createPlaced 新卡。
    */
   targetArtifactId?: string;
   /** 额外参考物件（不含主源）；与主源入边合并去重 */
@@ -52,7 +65,8 @@ export interface GenerateFromCanvasResult {
   artifact: { id: string };
   version: { id: string; status: string };
   object: DeskLayoutObject;
-  connection: DeskConnection;
+  /** 新建效果图时的主源连线；填回已有卡（targetArtifactId）时可能不存在 */
+  connection?: DeskConnection;
   status: "pending" | "succeeded" | "failed";
   error?: string;
 }
@@ -74,6 +88,7 @@ export interface PreparedGenerate {
  */
 export class CanvasGenerateService {
   private readonly recent = new Map<string, { result: GenerateFromCanvasResult; expiresAt: number }>();
+  private readonly inflightOps = new Map<string, Promise<GenerateFromCanvasResult>>();
   private readonly inflight = new Map<string, AbortController>();
 
   constructor(
@@ -84,13 +99,26 @@ export class CanvasGenerateService {
     private readonly images: ImageGenerator,
   ) {}
 
+  private opKey(projectId: string, clientOpId: string) {
+    return `${projectId}:${clientOpId}`;
+  }
+
   /** 面板路径：同步 prepare + complete。 */
   async generate(input: GenerateFromCanvasInput): Promise<GenerateFromCanvasResult> {
-    const hit = this.recent.get(input.clientOpId);
+    const key = this.opKey(input.projectId, input.clientOpId);
+    const hit = this.recent.get(key);
     if (hit && hit.expiresAt > Date.now()) return hit.result;
+    const existing = this.inflightOps.get(key);
+    if (existing) return existing;
 
-    const prepared = await this.prepare(input);
-    return this.complete(prepared, input.signal);
+    const work = (async () => {
+      const prepared = await this.prepare(input);
+      return this.complete(prepared, input.signal);
+    })().finally(() => {
+      this.inflightOps.delete(key);
+    });
+    this.inflightOps.set(key, work);
+    return work;
   }
 
   /**
@@ -125,7 +153,10 @@ export class CanvasGenerateService {
       connection: preparedTarget.connection,
       status: "pending",
     };
-    this.recent.set(input.clientOpId, { result: pending, expiresAt: Date.now() + 10 * 60 * 1000 });
+    this.recent.set(this.opKey(input.projectId, input.clientOpId), {
+      result: pending,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
 
     return {
       pending,
@@ -187,9 +218,14 @@ export class CanvasGenerateService {
       this.cacheResult(pending.artifact.id, done);
       return done;
     } catch (error) {
-      const message = error instanceof Error
+      // 已被更新请求接管的 stale controller 不得再写失败版本
+      if (this.inflight.get(lockKey) !== controller) {
+        return { ...pending, status: "failed", error: "生成已取消或超时" };
+      }
+      const raw = error instanceof Error
         ? (error.name === "AbortError" ? "生成已取消或超时" : error.message)
         : "生成失败";
+      const message = publicGenerateError(raw);
       try {
         await this.artifacts.append(pending.artifact.id, {
           payload: { pending: false, prompt: composedPrompt, source: origin, error: message },
@@ -210,11 +246,19 @@ export class CanvasGenerateService {
     }
   }
 
-  /** 中止某个（project, source）上的 inflight。 */
-  abort(projectId: string, sourceArtifactId: string) {
-    const key = `${projectId}:${sourceArtifactId}`;
+  /** 中止 project 上 source 或 target 对应的 inflight（retry 用 target 作 lockKey）。 */
+  abort(projectId: string, sourceOrTargetArtifactId: string) {
+    const key = `${projectId}:${sourceOrTargetArtifactId}`;
     this.inflight.get(key)?.abort();
     this.inflight.delete(key);
+    // 兼容：也扫一遍同 project 下仍以该 id 为 lock 后缀的项
+    const prefix = `${projectId}:`;
+    for (const [k, controller] of this.inflight) {
+      if (k.startsWith(prefix) && k.endsWith(`:${sourceOrTargetArtifactId}`)) {
+        controller.abort();
+        this.inflight.delete(k);
+      }
+    }
   }
 
   /** 取消该项目所有进行中的生图（agent stop / 服务关停时调用）。 */
@@ -227,11 +271,11 @@ export class CanvasGenerateService {
     }
   }
 
-  /** 把最终结果回填到 recent 表里所有命中此 artifact 的 clientOpId（统一 finalize 状态）。 */
+  /** 把最终结果回填到 recent 表里所有命中此 artifact 的 key（统一 finalize 状态）。 */
   private cacheResult(artifactId: string, result: GenerateFromCanvasResult) {
-    for (const [clientOpId, entry] of this.recent) {
+    for (const [key, entry] of this.recent) {
       if (entry.result.artifact.id === artifactId) {
-        this.recent.set(clientOpId, { result, expiresAt: Date.now() + 10 * 60 * 1000 });
+        this.recent.set(key, { result, expiresAt: Date.now() + 10 * 60 * 1000 });
       }
     }
   }
@@ -293,7 +337,9 @@ export class CanvasGenerateService {
     const target = snapshot.artifacts.find((a) => a.id === targetId);
     const targetLayout = snapshot.deskState.objects.find((o) => o.artifact_id === targetId);
     if (!target || !targetLayout) throw new HttpError(404, "重试目标不在桌面上");
-    if (target.artifactType !== "effect_image") throw new HttpError(422, "只能在效果图上重试生成");
+    if (target.artifactType !== "effect_image" && target.artifactType !== "canvas_image") {
+      throw new HttpError(422, "只能在图片卡上重试生成");
+    }
 
     const connection = await this.linkInputsToEffect(
       input.projectId,
@@ -319,7 +365,7 @@ export class CanvasGenerateService {
     };
   }
 
-  /** 主源 + 每个参考 → 效果图各一条连线；返回主源连线（供 history 单条记录）。 */
+  /** 主源 + 每个参考 → 效果图各一条连线；返回主源连线（供 history 单条记录）。target 与 from 相同（填回）时跳过自连。 */
   private async linkInputsToEffect(
     projectId: string,
     effectId: string,
@@ -327,7 +373,8 @@ export class CanvasGenerateService {
     extraRefIds: string[],
     clientOpId: string,
   ) {
-    const fromIds = [sourceArtifactId, ...extraRefIds.filter((id) => id !== sourceArtifactId)];
+    const fromIds = [sourceArtifactId, ...extraRefIds.filter((id) => id !== sourceArtifactId)]
+      .filter((from) => from !== effectId);
     let primary: DeskConnection | undefined;
     for (let i = 0; i < fromIds.length; i++) {
       const from = fromIds[i];
@@ -340,7 +387,6 @@ export class CanvasGenerateService {
       if (from === sourceArtifactId) primary = connection;
       else if (!primary) primary = connection;
     }
-    if (!primary) throw new HttpError(500, "连线创建失败");
     return primary;
   }
 

@@ -60,3 +60,12 @@
 - **What:** ~~`sessions.stop` 收窄到 thread~~ → `cancelThread(projectId, threadId)`；面板 `thread_id=null` 不被 stop 杀掉。
 - **Done:** 2026-08-07 with H8 unified generate.
 
+## 9. 效果图归档 SSRF 加固（C1，暂不修）
+
+- **What:** `HttpImageGenerator.download` / `assertSafeImageUrl`：下载前对 hostname 做 `dns.lookup`，对解析 IP 拒绝私网/链路本地/IPv6 ULA；或改为已知图床 host allowlist。现有实现仅校验 URL 字面量 host（localhost/私网 IPv4 字符串），挡不住 DNS rebinding 与 IPv6 绕过。
+- **Why:** provider 返回的图片 URL 进入服务端下载信任边界；被污染 URL 可能扫内网。本机/可信 provider 概率低，2026-08-07 review 记为 C1，产品选择先记录不修。
+- **Pros:** 合入后闭环 LLM/图像 URL 信任边界；allowlist 实现成本更低。
+- **Cons:** lookup 增延迟；allowlist 换 CDN 要改配置。
+- **Context:** `apps/server/src/services/image-generator.ts`（`assertSafeImageUrl` / `isPrivateOrLinkLocalHost` / `redirect: "error"` / `readBodyBounded`）。
+- **Depends on / blocked by:** 无；provider 域名稳定时可先做 allowlist。
+

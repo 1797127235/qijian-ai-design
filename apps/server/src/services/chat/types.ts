@@ -103,7 +103,34 @@ export function toRunDto(row: typeof chatRuns.$inferSelect): ChatRunDto {
   };
 }
 
-/** row → DTO。 */
+/** 客户端可见工具载荷：只保留安全摘要，避免原样泄露 provider/路径细节。 */
+function clientSafeToolPayload(value: unknown): unknown {
+  if (value == null) return value;
+  if (typeof value === "string") return value.length > 500 ? `${value.slice(0, 500)}…` : value;
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return { type: "array", length: value.length };
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const summary: Record<string, unknown> = {};
+    for (const key of ["status", "task_id", "artifact_id", "kind", "connection_id", "error_code", "prompt", "source_artifact_id"]) {
+      if (key in obj) {
+        const v = obj[key];
+        summary[key] = typeof v === "string" && v.length > 200 ? `${v.slice(0, 200)}…` : v;
+      }
+    }
+    if (Object.keys(summary).length > 0) return summary;
+    return { type: "object", keys: Object.keys(obj).slice(0, 12) };
+  }
+  return String(value);
+}
+
+function clientSafeError(error?: string | null): string | undefined {
+  if (!error) return undefined;
+  if (/取消|超时|中断|已停止|未找到|校验|无效|不能为空/.test(error)) return error.slice(0, 200);
+  return "任务执行失败";
+}
+
+/** row → DTO（客户端安全）。 */
 export function toToolCallDto(row: typeof chatToolCalls.$inferSelect): ChatToolCallDto {
   return {
     id: row.id,
@@ -111,9 +138,9 @@ export function toToolCallDto(row: typeof chatToolCalls.$inferSelect): ChatToolC
     toolCallId: row.toolCallId,
     toolName: row.toolName,
     status: row.status,
-    args: row.args,
-    result: row.result ?? undefined,
-    error: row.error ?? undefined,
+    args: clientSafeToolPayload(row.args),
+    result: row.result == null ? undefined : clientSafeToolPayload(row.result),
+    error: clientSafeError(row.error),
     cost: row.cost ?? undefined,
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt?.toISOString(),
@@ -126,13 +153,14 @@ export function toToolCallDto(row: typeof chatToolCalls.$inferSelect): ChatToolC
  * id 用 "run-status:{id}" 避免与真实 message.id 冲突。
  */
 export function runStatusMessage(run: ChatRunDto): ChatMessageDto | undefined {
-  const text = run.status === "interrupted"
-    ? "上一次任务因服务重启或异常退出而中断。为避免重复修改画布，系统没有自动重试；你可以重新发送这条要求。"
-    : run.status === "stopped"
-      ? "任务已停止。"
-      : run.status === "failed"
-        ? `任务执行失败：${run.error ?? "未知错误"}`
-        : undefined;
+  let text: string | undefined;
+  if (run.status === "interrupted") {
+    text = "上一次任务因服务重启或异常退出而中断。为避免重复修改画布，系统没有自动重试；你可以重新发送这条要求。";
+  } else if (run.status === "stopped") {
+    text = "任务已停止。";
+  } else if (run.status === "failed") {
+    text = `任务执行失败：${clientSafeError(run.error) ?? "未知错误"}`;
+  }
   if (!text) return undefined;
   return {
     id: `run-status:${run.id}`,

@@ -28,6 +28,9 @@ function selectionLabel(object: DeskObject) {
     if (object.error) return "效果图 · 失败";
     return "效果图";
   }
+  if (object.pending) return "图片 · 生成中";
+  if (object.error) return "图片 · 失败";
+  if (!object.url) return "图片 · 空占位";
   return "画布图";
 }
 
@@ -88,8 +91,9 @@ export function ChatComposer({
         if (event.dataTransfer.types.includes("Files")) event.preventDefault();
       }}
       onDrop={(event) => {
-        if (draftLocked || !event.dataTransfer.files.length) return;
+        if (!event.dataTransfer.files.length) return;
         event.preventDefault();
+        if (draftLocked) return;
         onAddFiles(Array.from(event.dataTransfer.files));
       }}
     >

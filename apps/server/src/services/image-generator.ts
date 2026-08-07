@@ -117,12 +117,17 @@ export class HttpImageGenerator implements ImageGenerator {
       ? await this.requestWithReferences(prompt, refs, signal)
       : await this.requestTextOnly(prompt, signal);
     if (!response.ok) throw new HttpError(503, `图像服务调用失败：${response.status}${await errorDetail(response)}`);
-    const body = (await response.json()) as {
+    let body: {
       data?: Array<{ url?: string; b64_json?: string; id?: string }>;
       url?: string;
       id?: string;
       images?: Array<{ url?: string; b64_json?: string }>;
     };
+    try {
+      body = (await response.json()) as typeof body;
+    } catch {
+      throw new HttpError(503, "图像服务返回了无效响应");
+    }
     const first = body.data?.[0] ?? body.images?.[0];
     const sourceUrl = body.url ?? first?.url;
     const b64 = first && "b64_json" in first ? first.b64_json : undefined;
@@ -131,6 +136,10 @@ export class HttpImageGenerator implements ImageGenerator {
     let mediaType: string;
     let auditUrl: string;
     if (b64) {
+      // base64 膨胀约 4/3；先按字符长度拒超大串，避免解码时内存放大
+      if (b64.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 8) {
+        throw new HttpError(503, "效果图超过 20MB，无法归档");
+      }
       storedBytes = Uint8Array.from(Buffer.from(b64, "base64"));
       mediaType = "image/png";
       auditUrl = "data:image/png;base64";
@@ -203,8 +212,8 @@ export class HttpImageGenerator implements ImageGenerator {
   }
 
   /**
-   * 下载上游图床结果：先校验 protocol → content-type 白名单 → content-length 预估 → 真实 magic 校验。
-   * 三道防线防止「上游把 HTML 错误页伪装成 image/png」导致下游渲染炸。
+   * 下载上游图床结果：protocol/host 白名单 → content-type → 有界流式读 body → magic 校验。
+   * 禁止默认 redirect，降低 SSRF；body 超限立即中止。
    */
   private async download(sourceUrl: string, signal?: AbortSignal) {
     let parsed: URL;
@@ -213,10 +222,8 @@ export class HttpImageGenerator implements ImageGenerator {
     } catch {
       throw new HttpError(503, "图像服务返回了无效的图片 URL");
     }
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      throw new HttpError(503, "图像服务返回了不支持的图片 URL");
-    }
-    const response = await this.send(this.downloadFetcher, parsed, { signal });
+    assertSafeImageUrl(parsed);
+    const response = await this.send(this.downloadFetcher, parsed, { signal, redirect: "error" });
     if (!response.ok) throw new HttpError(503, `效果图归档下载失败：${response.status}`);
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() ?? "";
     if (!imageExtensions.has(mediaType)) throw new HttpError(503, "效果图归档仅支持 JPG、PNG 和 WebP");
@@ -224,11 +231,79 @@ export class HttpImageGenerator implements ImageGenerator {
     if (Number.isFinite(declaredSize) && declaredSize > MAX_IMAGE_BYTES) {
       throw new HttpError(503, "效果图超过 20MB，无法归档");
     }
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bytes = await readBodyBounded(response, MAX_IMAGE_BYTES, signal);
     if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_BYTES) {
       throw new HttpError(503, bytes.byteLength === 0 ? "效果图内容为空" : "效果图超过 20MB，无法归档");
     }
     if (!hasImageSignature(mediaType, bytes)) throw new HttpError(503, "效果图内容与声明的图片类型不匹配");
     return { bytes, mediaType };
   }
+}
+
+function assertSafeImageUrl(parsed: URL) {
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new HttpError(503, "图像服务返回了不支持的图片 URL");
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === "localhost"
+    || host.endsWith(".localhost")
+    || host === "0.0.0.0"
+    || host === "::1"
+    || host === "[::1]"
+    || host.endsWith(".local")
+    || host.endsWith(".internal")
+    || isPrivateOrLinkLocalHost(host)
+  ) {
+    throw new HttpError(503, "图像服务返回了不允许的图片主机");
+  }
+}
+
+function isPrivateOrLinkLocalHost(host: string) {
+  // IPv4 dotted form only; hostnames are allowed (provider CDNs).
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return false;
+  const parts = m.slice(1).map(Number);
+  if (parts.some((n) => n > 255)) return true;
+  const [a, b] = parts;
+  if (a === 10 || a === 127 || a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  return false;
+}
+
+async function readBodyBounded(response: Response, maxBytes: number, signal?: AbortSignal): Promise<Uint8Array> {
+  if (!response.body) {
+    const buf = new Uint8Array(await response.arrayBuffer());
+    if (buf.byteLength > maxBytes) throw new HttpError(503, "效果图超过 20MB，无法归档");
+    return buf;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new HttpError(503, "效果图超过 20MB，无法归档");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }

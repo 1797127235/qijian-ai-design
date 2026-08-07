@@ -22,7 +22,9 @@ export function PromptPanel({
     setPrompt(initialPrompt(source));
   }, [source.id]);
 
-  const canSubmit = prompt.trim().length > 0 || source.kind === "canvas_image" || source.kind === "effect_image";
+  // 有图（canvas/effect 已出图）可空 prompt 直接图生图；空占位卡与便签必须填提示词
+  const sourceHasImage = (source.kind === "canvas_image" || source.kind === "effect_image") && Boolean(source.url);
+  const canSubmit = prompt.trim().length > 0 || sourceHasImage;
   const size = nodeSize(source);
   const top = source.y + size.h + 14;
   
@@ -48,7 +50,7 @@ export function PromptPanel({
       <textarea
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        placeholder="描述你想生成的效果…"
+        placeholder={source.kind === "canvas_image" && !source.url ? "描述您要生成的图片内容…" : "描述你想生成的效果…"}
         rows={3}
         disabled={busy}
         autoFocus
@@ -78,6 +80,6 @@ export function PromptPanel({
 
 function initialPrompt(source: DeskObject) {
   if (source.kind === "sticky_note") return source.text;
-  if (source.kind === "effect_image") return source.prompt ?? "";
+  if (source.kind === "canvas_image" || source.kind === "effect_image") return source.prompt ?? "";
   return "";
 }

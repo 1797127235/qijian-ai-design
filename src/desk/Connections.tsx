@@ -7,14 +7,12 @@ export function ConnectionsLayer({
   selectedId,
   preview,
   onSelect,
-  onContextMenu,
 }: {
   objects: DeskObject[];
   connections: DeskConnection[];
   selectedId?: string;
   preview?: { x1: number; y1: number; x2: number; y2: number };
   onSelect?: (id: string) => void;
-  onContextMenu?: (id: string, e: React.MouseEvent) => void;
 }) {
   const byId = new Map(objects.map((o) => [o.id, o]));
   return (
@@ -31,7 +29,6 @@ export function ConnectionsLayer({
           <g key={c.id}>
             <path className="conn-hit" d={d} fill="none" stroke="transparent" strokeWidth={16} style={{ cursor: "pointer" }}
               onClick={(e) => { e.stopPropagation(); onSelect?.(c.id); }}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(c.id, e); }}
             />
             <path d={d} fill="none" stroke={active ? "var(--color-accent)" : "var(--color-hairline-strong)"}
               strokeWidth={active ? 3 : 2} style={{ pointerEvents: "none" }} />

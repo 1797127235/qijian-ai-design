@@ -10,6 +10,12 @@ export interface DeskHistoryEntry {
   layout: { kind: string; x: number; y: number; rot: number; w?: number };
 }
 
+/** 同卡版本填回（空占位上传/生成）：undo 写回 from，不删物件。 */
+export type FillVersionSlice = {
+  payload: Record<string, unknown>;
+  inputRefs?: unknown[];
+};
+
 export type DeskHistoryOp =
   | { type: "place"; entry: DeskHistoryEntry }
   | { type: "remove"; entry: DeskHistoryEntry }
@@ -17,7 +23,8 @@ export type DeskHistoryOp =
   | { type: "update_text"; artifactId: string; from: string; to: string }
   | { type: "place_connection"; connection: { id: string; from: string; to: string } }
   | { type: "remove_connection"; connection: { id: string; from: string; to: string } }
-  | { type: "generate"; entry: DeskHistoryEntry; connection: { id: string; from: string; to: string } };
+  | { type: "generate"; entry: DeskHistoryEntry; connections: { id: string; from: string; to: string }[] }
+  | { type: "fill_version"; artifactId: string; from: FillVersionSlice; to: FillVersionSlice };
 
 export interface DeskHistoryStacks {
   past: DeskHistoryOp[];
@@ -80,6 +87,9 @@ async function applyInverse(projectId: string, op: DeskHistoryOp): Promise<void>
     case "generate":
       await api.deleteObject(projectId, op.entry.artifactId);
       return;
+    case "fill_version":
+      await api.appendVersion(op.artifactId, op.from.payload, op.from.inputRefs);
+      return;
   }
 }
 
@@ -113,7 +123,7 @@ async function applyForward(projectId: string, op: DeskHistoryOp): Promise<void>
     case "remove_connection":
       await api.deleteConnection(projectId, op.connection.id);
       return;
-    case "generate":
+    case "generate": {
       await api.createArtifact(projectId, {
         artifactType: op.entry.artifactType,
         payload: op.entry.payload,
@@ -121,11 +131,23 @@ async function applyForward(projectId: string, op: DeskHistoryOp): Promise<void>
         artifactId: op.entry.artifactId,
         layout: op.entry.layout,
       });
-      await api.createConnection(projectId, {
-        from: op.connection.from,
-        to: op.connection.to,
-        connectionId: op.connection.id,
-      });
+      try {
+        for (const connection of op.connections) {
+          await api.createConnection(projectId, {
+            from: connection.from,
+            to: connection.to,
+            connectionId: connection.id,
+          });
+        }
+      } catch (error) {
+        // 部分成功时回滚 artifact，避免 history 与桌面不一致
+        await api.deleteObject(projectId, op.entry.artifactId).catch(() => undefined);
+        throw error;
+      }
+      return;
+    }
+    case "fill_version":
+      await api.appendVersion(op.artifactId, op.to.payload, op.to.inputRefs);
       return;
   }
 }
@@ -156,6 +178,25 @@ export function useDeskHistory(options: {
     },
     [syncFlags],
   );
+
+  /** 异步填回完成后，把最近一条 fill_version 的 to 更新为终态（含 file_id / error）。 */
+  const patchLatestFill = useCallback((artifactId: string, to: FillVersionSlice) => {
+    const patch = (ops: DeskHistoryOp[]) => {
+      for (let i = ops.length - 1; i >= 0; i -= 1) {
+        const op = ops[i];
+        if (op.type === "fill_version" && op.artifactId === artifactId) {
+          const next = ops.slice();
+          next[i] = { ...op, to };
+          return next;
+        }
+      }
+      return ops;
+    };
+    stacksRef.current = {
+      past: patch(stacksRef.current.past),
+      future: patch(stacksRef.current.future),
+    };
+  }, []);
 
   const undo = useCallback(() => {
     if (!projectId) return;
@@ -193,7 +234,7 @@ export function useDeskHistory(options: {
     });
   }, [projectId, enqueue, refreshDesk, onError, syncFlags]);
 
-  return { record, undo, redo, canUndo: flags.canUndo, canRedo: flags.canRedo };
+  return { record, patchLatestFill, undo, redo, canUndo: flags.canUndo, canRedo: flags.canRedo };
 }
 
 export type DeskHistory = ReturnType<typeof useDeskHistory>;

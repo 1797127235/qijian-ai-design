@@ -51,14 +51,6 @@ let publish: EventSink = () => undefined;
 const traces = createTraceRegistry(config);
 const jobStore = new AgentJobStore(db);
 const jobs = new AgentJobRunner(jobStore, (event) => publish(event), traces);
-// 启动时把上次崩溃遗留的 running job 标记为 interrupted，避免「幽灵生成」
-void jobs.interruptStaleOnBoot()
-  .then((n) => {
-    if (n > 0) console.log(`Interrupted ${n} stale agent job(s) on boot`);
-  })
-  .catch((error) => {
-    console.warn("Failed to interrupt stale agent jobs on boot:", error instanceof Error ? error.message : error);
-  });
 // Agent 写桌：generate_from_desk → Job 异步外壳 → CanvasGenerateService
 const sessions = new AgentSessionRegistry({
   artifacts,
@@ -79,32 +71,67 @@ publish = chat.emit;
 
 /**
  * HTTP 启动 + WS upgrade 路由。
+ *  - 先 await boot 清扫，再 listen，避免 interruptStale 误杀启动后新建的 job
  *  - WS 只挂在 `/api/projects/:id/chat`，项目 ID 取自 URL；其他路径 destroy
  *  - 用 `noServer: true` 自己接管 upgrade，避免 ws 库创建第二个 http server
  */
 const app = createHttpApp({ config, artifacts, desks, files, chats, sessions, generate, jobs });
-const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-  console.log(`Qijian agent server listening on http://localhost:${info.port}`);
-});
 const sockets = new WebSocketServer({ noServer: true });
 
-// HTTP upgrade 拦截：只放行 chat 通道，匹配项目 UUID
-server.on("upgrade", (request, socket, head) => {
-  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
-  const match = url.pathname.match(/^\/api\/projects\/([0-9a-f-]+)\/chat$/i);
-  if (!match) return socket.destroy();
-  sockets.handleUpgrade(request, socket, head, (webSocket) => chat.connect(match[1], webSocket));
-});
+async function start() {
+  // 启动时把上次崩溃遗留的 running job 标记为 interrupted，避免「幽灵生成」
+  try {
+    const n = await jobs.interruptStaleOnBoot();
+    if (n > 0) console.log(`Interrupted ${n} stale agent job(s) on boot`);
+  } catch (error) {
+    console.warn("Failed to interrupt stale agent jobs on boot:", error instanceof Error ? error.message : error);
+  }
 
-/** 优雅关停：先关 WS（避免写入到关闭的连接）→ HTTP server → Agent 会话 → DB pool */
-async function shutdown() {
-  for (const socket of sockets.clients) socket.close(1001, "server shutdown");
-  sockets.close();
-  server.close();
-  await sessions.shutdown();
-  traces.forceCloseAll("server shutdown");
-  await traces.flush();
-  await pool.end();
+  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
+    console.log(`Qijian agent server listening on http://localhost:${info.port}`);
+  });
+
+  // HTTP upgrade 拦截：校验项目存在后再放行 chat 通道
+  server.on("upgrade", (request, socket, head) => {
+    void (async () => {
+      try {
+        const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+        const match = url.pathname.match(/^\/api\/projects\/([0-9a-f-]+)\/chat$/i);
+        if (!match) {
+          socket.destroy();
+          return;
+        }
+        const projectId = match[1];
+        const exists = await desks.projectExists(projectId);
+        if (!exists) {
+          socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        sockets.handleUpgrade(request, socket, head, (webSocket) => chat.connect(projectId, webSocket));
+      } catch {
+        socket.destroy();
+      }
+    })();
+  });
+
+  /** 优雅关停：先关 WS → await HTTP close → Agent 会话 → DB pool */
+  async function shutdown() {
+    for (const client of sockets.clients) client.close(1001, "server shutdown");
+    await new Promise<void>((resolve) => sockets.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+    await sessions.shutdown();
+    traces.forceCloseAll("server shutdown");
+    await traces.flush();
+    await pool.end();
+  }
+  process.once("SIGINT", () => void shutdown());
+  process.once("SIGTERM", () => void shutdown());
 }
-process.once("SIGINT", () => void shutdown());
-process.once("SIGTERM", () => void shutdown());
+
+void start().catch((error) => {
+  console.error("Failed to start server:", error);
+  process.exit(1);
+});

@@ -9,6 +9,8 @@ import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { AppError } from "../lib/errors.js";
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+/** 上传侧 PDF 页数上限（与 agent 渲染预算对齐，防病理 PDF DOS）。 */
+const MAX_PDF_PAGES = 50;
 
 function startsWith(bytes: Uint8Array, signature: number[]) {
   return signature.every((value, index) => bytes[index] === value);
@@ -62,14 +64,25 @@ export async function inspectUpload(bytes: Uint8Array, mediaType: string): Promi
   if (mediaType !== "application/pdf" || !startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) {
     throw new AppError(422, "INVALID_FILE_CONTENT", "文件内容与声明的 PDF、JPG 或 PNG 类型不一致");
   }
+  const loading = getDocument({
+    data: Uint8Array.from(bytes),
+    // 限制解析工作量，避免病理 PDF 占满 CPU/内存
+    disableAutoFetch: true,
+    disableStream: true,
+    stopAtErrors: true,
+  });
   try {
-    const loading = getDocument({ data: Uint8Array.from(bytes) });
     const document = await loading.promise;
     const pageCount = document.numPages;
-    await loading.destroy();
+    if (pageCount > MAX_PDF_PAGES) {
+      throw new AppError(422, "INVALID_FILE_CONTENT", `PDF 页数不能超过 ${MAX_PDF_PAGES} 页`);
+    }
     return { pageCount };
   } catch (error) {
+    if (error instanceof AppError) throw error;
     const message = error instanceof Error && /password/i.test(error.message) ? "暂不支持加密 PDF" : "PDF 文件损坏或无法读取";
     throw new AppError(422, "INVALID_FILE_CONTENT", message);
+  } finally {
+    await loading.destroy().catch(() => undefined);
   }
 }

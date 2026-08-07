@@ -163,6 +163,8 @@ export class LangSmithTracer implements AgentTracer {
   }
 
   private enqueue(handle: LiveHandle, task: () => Promise<void>) {
+    // 真正的网络工作放进 BoundedAsyncQueue，由 concurrency 限流；
+    // handle.chain 只串行等待「已入队的前序任务完成」，不提前启动 fetch。
     const run = async () => {
       try {
         await task();
@@ -170,15 +172,24 @@ export class LangSmithTracer implements AgentTracer {
         console.warn("[langsmith] export failed:", error instanceof Error ? error.message : error);
       }
     };
-    // 串在该 handle 自己的 chain 上，保证 post → end 顺序
-    handle.chain = handle.chain.then(run, run);
     if (this.debugSync) {
+      handle.chain = handle.chain.then(run, run);
       void handle.chain;
       return;
     }
-    // 队列只做并发限流；真正顺序靠 handle.chain
+    const previous = handle.chain;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    handle.chain = previous.then(() => gate, () => gate);
     this.queue.enqueue(async () => {
-      await handle.chain;
+      try {
+        await previous.catch(() => undefined);
+        await run();
+      } finally {
+        release();
+      }
     });
   }
 }

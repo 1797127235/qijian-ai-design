@@ -12,9 +12,24 @@ describe("assertPayload", () => {
     expect(() => assertPayload("sticky_note", { text: 42 })).toThrow("便签内容必须是文本");
   });
 
-  it("rejects canvas images without file_id", () => {
-    expect(() => assertPayload("canvas_image", {})).toThrow("必须包含 file_id");
-    expect(() => assertPayload("canvas_image", { file_id: "  " })).toThrow("必须包含 file_id");
+  it("accepts empty canvas_image placeholders (create-then-fill flow)", () => {
+    expect(() => assertPayload("canvas_image", {})).not.toThrow();
+  });
+
+  it("accepts pending canvas_image without file_id", () => {
+    expect(() => assertPayload("canvas_image", { pending: true, prompt: "x" })).not.toThrow();
+  });
+
+  it("accepts failed canvas_image without file_id", () => {
+    expect(() => assertPayload("canvas_image", { error: "timeout", pending: false })).not.toThrow();
+  });
+
+  it("rejects blank canvas_image file_id", () => {
+    expect(() => assertPayload("canvas_image", { file_id: "  " })).toThrow("不能为空字符串");
+  });
+
+  it("rejects completed canvas_image without file_id", () => {
+    expect(() => assertPayload("canvas_image", { pending: false })).toThrow("完成态必须包含 file_id");
   });
 
   it("accepts canvas images with file_id", () => {

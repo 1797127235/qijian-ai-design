@@ -14,6 +14,12 @@ const nonEmpty = (value: unknown) => typeof value === "string" && value.trim().l
  * 按 artifact 类型校验 payload 的最低完整性。
  * 只做「必须有 / 必须为字符串」之类的最低校验，不做流程关卡（确认/采用属于产品功能，TODO）。
  *
+ * canvas_image 有四个合法态：
+ *  - 空占位：无 file_id 且无 pending/error（等待上传或生成填回）
+ *  - 生成中：payload.pending = true
+ *  - 失败：payload.error 非空
+ *  - 完成：payload.file_id 存在
+ *
  * effect_image 有三个合法态：
  *  - 完成：payload.file_id 存在
  *  - 生成中：payload.pending = true（先占位 artifact，异步完成后写版本）
@@ -23,8 +29,15 @@ export function assertPayload(artifactType: ArtifactType, payload: Record<string
   if (artifactType === "sticky_note" && payload.text !== undefined && typeof payload.text !== "string") {
     throw new DomainValidationError("便签内容必须是文本");
   }
-  if (artifactType === "canvas_image" && !nonEmpty(payload.file_id)) {
-    throw new DomainValidationError("canvas_image 必须包含 file_id");
+  if (artifactType === "canvas_image") {
+    if (payload.file_id !== undefined && !nonEmpty(payload.file_id)) {
+      throw new DomainValidationError("canvas_image 的 file_id 不能为空字符串");
+    }
+    if (payload.pending === false
+      && !(typeof payload.error === "string" && payload.error.length > 0)
+      && !nonEmpty(payload.file_id)) {
+      throw new DomainValidationError("canvas_image 完成态必须包含 file_id");
+    }
   }
   if (artifactType === "effect_image") {
     const pending = payload.pending === true;

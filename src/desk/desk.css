@@ -112,19 +112,6 @@ button { font-family: inherit; }
 }
 .desk-toolbar .tb-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--color-hairline-strong); }
 
-.desk-context-menu {
-  position: absolute; z-index: 60; min-width: 96px; padding: 4px;
-  background: var(--color-card); border: 1px solid var(--color-hairline-strong); border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(28, 26, 22, .18);
-}
-.desk-context-menu button {
-  display: block; width: 100%; padding: 7px 12px; border: 0; border-radius: 5px;
-  background: transparent; color: var(--color-ink); font-size: 13px; text-align: left; cursor: pointer;
-}
-@media (hover: hover) {
-  .desk-context-menu button:hover { background: var(--color-accent-soft); color: var(--color-accent); }
-}
-
 .conn-handle {
   position: absolute; width: 10px; height: 10px; border-radius: 50%;
   background: var(--color-card); border: 1.5px solid var(--color-accent);
@@ -265,6 +252,45 @@ button { font-family: inherit; }
   position: absolute; bottom: 5px; left: 0; right: 0; text-align: center;
   font-family: var(--font-outlier); font-size: 9px; color: var(--color-mute-soft); letter-spacing: .08em;
 }
+
+/* ── 图片节点卡：状态栏悬浮于卡上方（absolute，不参与几何，锚点/框选不偏移） ── */
+.image-card {
+  position: relative; background: #fff; border-radius: 3px;
+  box-shadow: 0 3px 12px rgba(28, 26, 22, .16);
+}
+.image-card-empty {
+  background: var(--color-card);
+  border: 1.5px dashed var(--color-hairline-strong);
+  box-shadow: none;
+}
+.image-card-placeholder {
+  width: 100%; height: 100%;
+  display: grid; place-content: center; justify-items: center; gap: 8px;
+  color: var(--color-mute-soft); font-size: 11.5px; text-align: center; padding: 0 16px;
+  pointer-events: none;
+}
+
+/* ── 单选节点悬浮工具条：屏幕坐标 pill，定位/显隐由 Desk 负责 ── */
+.desk-node-toolbar {
+  position: absolute; z-index: 40;
+  transform: translate(-50%, -100%);
+  display: flex; align-items: center; gap: 2px; padding: 4px;
+  background: var(--color-card);
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(28, 26, 22, .14);
+  animation: pop .18s ease-out;
+}
+.desk-node-toolbar button {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 0; background: transparent; border-radius: 9px; cursor: pointer;
+  padding: 6px 10px; font-family: var(--font-body); font-size: 12.5px; color: var(--color-ink);
+  white-space: nowrap;
+}
+@media (hover: hover) {
+  .desk-node-toolbar button:hover { background: var(--color-surface); }
+}
+.desk-node-toolbar button.danger { color: var(--color-accent); }
 .ph-wood { background: linear-gradient(135deg, #8a6a4f, #5f4630); }
 .ph-green { background: linear-gradient(135deg, #5f7a5c, #3d5340); }
 .ph-cloth { background: linear-gradient(135deg, #9a8a7a, #6e6252); }

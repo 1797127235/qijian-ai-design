@@ -41,6 +41,12 @@ export class DeskStateService {
     return this.db.select().from(projects).orderBy(desc(projects.updatedAt));
   }
 
+  /** 轻量存在性检查（WS upgrade / 鉴权前使用，避免 snapshot 全量加载）。 */
+  async projectExists(projectId: string): Promise<boolean> {
+    const [row] = await this.db.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId)).limit(1);
+    return Boolean(row);
+  }
+
   /** 新建项目同时插入 desk_state 单行（事务保证一致性，避免空状态查询）。 */
   async createProject(name: string) {
     return this.db.transaction(async (tx) => {
