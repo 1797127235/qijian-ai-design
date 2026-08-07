@@ -300,11 +300,16 @@ export function useChatSession(options: {
         return;
       }
       if (event.type === "object_changed") {
-        if (event.artifactId) setFocusFromAgent({ id: event.artifactId, token: Date.now() });
-        void refreshDesk(projectId).catch((e) => {
-          if (activeProjectRef.current !== projectId) return;
-          setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `画布刷新失败：${e instanceof Error ? e.message : "未知错误"}` }]);
-        });
+        // 先 refresh 再聚焦：否则 objects 里还没有新卡，Desk 聚焦 effect 会空转
+        void refreshDesk(projectId)
+          .then(() => {
+            if (activeProjectRef.current !== projectId) return;
+            if (event.artifactId) setFocusFromAgent({ id: event.artifactId, token: Date.now() });
+          })
+          .catch((e) => {
+            if (activeProjectRef.current !== projectId) return;
+            setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `画布刷新失败：${e instanceof Error ? e.message : "未知错误"}` }]);
+          });
         return;
       }
       if (event.type === "error") {

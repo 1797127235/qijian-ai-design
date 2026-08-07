@@ -143,9 +143,15 @@ export function Desk({
       onMove(id, x, y);
       return;
     }
-    if (!pan.current) return;
+    // 先拍快照：endPointer 可能在 setView 更新器执行前清空 pan.current（会白屏）
+    const panningState = pan.current;
+    if (!panningState) return;
     setView((v) => {
-      const next = { ...v, x: pan.current!.vx + e.clientX - pan.current!.sx, y: pan.current!.vy + e.clientY - pan.current!.sy };
+      const next = {
+        ...v,
+        x: panningState.vx + e.clientX - panningState.sx,
+        y: panningState.vy + e.clientY - panningState.sy,
+      };
       reportViewport(next);
       return next;
     });
@@ -180,19 +186,24 @@ export function Desk({
     setPanning(false);
   };
 
-  const onWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const d = e.deltaY < 0 ? 1.08 : 0.92;
-    setView((v) => {
-      const z = clampZoom(v.zoom * d);
-      const rect = vpRef.current!.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const next = zoomAtPoint(v, { x: cx, y: cy }, z);
-      reportViewport(next);
-      return next;
-    });
-  };
+  // wheel 必须非 passive 才能 preventDefault；React onWheel 默认 passive 会刷红
+  useEffect(() => {
+    const el = vpRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const d = e.deltaY < 0 ? 1.08 : 0.92;
+      setView((v) => {
+        const z = clampZoom(v.zoom * d);
+        const rect = el.getBoundingClientRect();
+        const next = zoomAtPoint(v, { x: e.clientX - rect.left, y: e.clientY - rect.top }, z);
+        reportViewport(next);
+        return next;
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [reportViewport]);
 
   const selectObject = (obj: DeskObject, panel: boolean) => {
     setMenu(undefined);
@@ -262,7 +273,6 @@ export function Desk({
       onPointerMove={movePointer}
       onPointerUp={(e) => endPointer(e)}
       onPointerCancel={() => endPointer()}
-      onWheel={onWheel}
       onDragOver={(e) => {
         if (onDropFiles) e.preventDefault();
       }}

@@ -1,13 +1,22 @@
 import { resolve } from "node:path";
 
+/**
+ * 服务端配置：从环境变量读取，所有可选字段都给出本地默认值，
+ * 让开发者 `npm run dev:server` 即可跑起来。
+ */
 export interface ServerConfig {
   port: number;
   databaseUrl: string;
+  /** CORS 白名单来源，逗号分隔；前端 dev server 默认 5173 */
   corsOrigins: string[];
+  /** 上传文件落盘的绝对路径，相对路径会基于 cwd 解析 */
   uploadDir: string;
+  /** 对外暴露的文件 URL 基址（影响 stored_files.object_key 拼出的可访问 URL） */
   publicBaseUrl: string;
+  /** pi-coding-agent 的 provider 名（~/.pi/agent/models.json 里的 key） */
   agentProvider: string;
   agentModel: string;
+  /** 图像生成端点；为空时所有生图调用直接 503（不算 bug，是「未配置」语义） */
   imageEndpoint?: string;
   imageApiKey?: string;
   /** 文生图 model；codex2api 实测 grok-imagine-image-quality */
@@ -18,6 +27,10 @@ export interface ServerConfig {
   imageFetchProxy?: string;
 }
 
+/**
+ * 读取 env 并组装 ServerConfig。
+ * 注入 env 形参便于测试；生产环境直接用 process.env。
+ */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   return {
     port: Number(env.PORT ?? 8787),
@@ -33,7 +46,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     imageEndpoint: env.IMAGE_API_URL,
     imageApiKey: env.IMAGE_API_KEY,
     imageModel: env.IMAGE_MODEL ?? "grok-imagine-image-quality",
+    // imageEditModel 缺省回退到 imageModel（保持单一 provider 时的简洁）
     imageEditModel: env.IMAGE_EDIT_MODEL ?? env.IMAGE_MODEL ?? "grok-imagine-image-quality",
+    // 代理：IMAGE_FETCH_PROXY 显式 > 标准 HTTPS_PROXY 约定
     imageFetchProxy: env.IMAGE_FETCH_PROXY ?? env.HTTPS_PROXY ?? env.https_proxy,
   };
 }

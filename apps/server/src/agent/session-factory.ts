@@ -14,6 +14,8 @@ import type { DeskStateService } from "../services/desk-state-service.js";
 import type { ImageGenerator } from "../services/image-generator.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { FileStorage } from "../services/file-storage.js";
+import type { AgentJobRunner } from "./async-job/runner.js";
+import type { AgentJobStore } from "./async-job/store.js";
 import {
   EventWriteTracker,
   assistantTextFromEvent,
@@ -34,6 +36,8 @@ export interface SessionFactoryDependencies {
   files: FileStorage;
   emit: EventSink;
   config: Pick<ServerConfig, "agentProvider" | "agentModel">;
+  jobs?: AgentJobRunner;
+  jobStore?: AgentJobStore;
 }
 
 export class SessionFactory {
@@ -70,9 +74,16 @@ export class SessionFactory {
     const modelRuntime = await this.modelRuntime;
     const model = modelRuntime.getModel(this.deps.config.agentProvider, this.deps.config.agentModel);
     if (!model) throw new Error(`未找到 Agent 模型：${this.deps.config.agentProvider}/${this.deps.config.agentModel}`);
-    // pi 原生 JSONL：按 thread 独占目录，进程重启后 continueRecent 带回完整 tool 轨迹
     const sessionManager = SessionManager.continueRecent(cwd, agentSessionDir(projectId, threadId));
-    const deskTools = createDeskTools(projectId, this.deps, () => this.selectionBySession.get(key) ?? []);
+    const deskTools = createDeskTools(
+      projectId,
+      this.deps,
+      () => this.selectionBySession.get(key) ?? [],
+      {
+        threadId,
+        runId: () => this.activeRunIds.get(key)?.[0],
+      },
+    );
     const { session } = await createAgentSession({
       cwd,
       modelRuntime,
@@ -80,10 +91,8 @@ export class SessionFactory {
       resourceLoader: loader,
       sessionManager,
       settingsManager,
-      // 仅启用桌面工具，禁用 pi 内置 read/bash/edit/write
       tools: deskTools.map((tool) => tool.name),
       customTools: deskTools,
-      // 有 reasoning 的模型会吐 thinking_* 事件；不支持时 pi 会降到 off
       thinkingLevel: "medium",
     });
     session.subscribe((event) => {

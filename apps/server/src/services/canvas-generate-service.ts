@@ -41,6 +41,16 @@ export interface GenerateFromCanvasResult {
   error?: string;
 }
 
+/** prepare 阶段产物，供 Agent 异步 complete 使用 */
+export interface PreparedGenerate {
+  pending: GenerateFromCanvasResult;
+  composedPrompt: string;
+  referenceFileIds: string[];
+  origin: GenerateSource;
+  createdBy: GenerateCreatedBy;
+  lockKey: string;
+}
+
 export class CanvasGenerateService {
   private readonly recent = new Map<string, { result: GenerateFromCanvasResult; expiresAt: number }>();
   private readonly inflight = new Map<string, AbortController>();
@@ -53,10 +63,19 @@ export class CanvasGenerateService {
     private readonly images: ImageGenerator,
   ) {}
 
+  /** 面板路径：同步 prepare + complete。 */
   async generate(input: GenerateFromCanvasInput): Promise<GenerateFromCanvasResult> {
     const hit = this.recent.get(input.clientOpId);
     if (hit && hit.expiresAt > Date.now()) return hit.result;
 
+    const prepared = await this.prepare(input);
+    return this.complete(prepared, input.signal);
+  }
+
+  /**
+   * 仅落 pending 卡 + 连线（同步）。Agent async 路径先调此方法再 return accepted。
+   */
+  async prepare(input: GenerateFromCanvasInput): Promise<PreparedGenerate> {
     const origin = input.source ?? "canvas_panel";
     const createdBy = input.createdBy ?? "designer";
 
@@ -65,7 +84,6 @@ export class CanvasGenerateService {
     const sourceLayout = snapshot.deskState.objects.find((o) => o.artifact_id === input.sourceArtifactId);
     if (!source || !sourceLayout) throw new HttpError(404, "源物件不在桌面上");
 
-    // 参考图/便签来自「源物件」的入边，重试时仍按真实源解析，不按失败卡
     const inbound = snapshot.deskState.connections.filter((c) => c.to === input.sourceArtifactId);
     const { referenceFileIds, noteTexts } = this.collectReferences(snapshot, source, inbound);
     const composedPrompt = this.composePrompt(
@@ -74,44 +92,56 @@ export class CanvasGenerateService {
       referenceFileIds.length < this.expectedImageRefs(snapshot, source, inbound),
     );
 
-    const prepared = input.targetArtifactId
+    const preparedTarget = input.targetArtifactId
       ? await this.prepareRetryTarget(input, snapshot, composedPrompt, referenceFileIds, origin, createdBy)
       : await this.prepareNewTarget(input, sourceLayout, composedPrompt, referenceFileIds, origin, createdBy);
 
     const pending: GenerateFromCanvasResult = {
-      artifact: { id: prepared.artifactId },
-      version: { id: prepared.versionId, status: prepared.versionStatus },
-      object: prepared.object,
-      connection: prepared.connection,
+      artifact: { id: preparedTarget.artifactId },
+      version: { id: preparedTarget.versionId, status: preparedTarget.versionStatus },
+      object: preparedTarget.object,
+      connection: preparedTarget.connection,
       status: "pending",
     };
     this.recent.set(input.clientOpId, { result: pending, expiresAt: Date.now() + 10 * 60 * 1000 });
 
-    // 互斥键：重试锁目标卡，新建锁源（避免同源连点出多张）
-    const key = `${input.projectId}:${input.targetArtifactId ?? input.sourceArtifactId}`;
-    this.inflight.get(key)?.abort();
+    return {
+      pending,
+      composedPrompt,
+      referenceFileIds,
+      origin,
+      createdBy,
+      lockKey: `${input.projectId}:${input.targetArtifactId ?? input.sourceArtifactId}`,
+    };
+  }
+
+  /** 出图并写终态（可后台调用）。 */
+  async complete(prepared: PreparedGenerate, signal?: AbortSignal): Promise<GenerateFromCanvasResult> {
+    const { pending, composedPrompt, referenceFileIds, origin, createdBy, lockKey } = prepared;
+    const projectId = lockKey.split(":")[0];
+
+    this.inflight.get(lockKey)?.abort();
     const controller = new AbortController();
-    this.inflight.set(key, controller);
+    this.inflight.set(lockKey, controller);
     const timer = setTimeout(() => controller.abort(), GENERATE_TIMEOUT_MS);
-    // 外部 stop → 一并取消图像 HTTP
     const onExternalAbort = () => controller.abort();
-    if (input.signal) {
-      if (input.signal.aborted) controller.abort();
-      else input.signal.addEventListener("abort", onExternalAbort, { once: true });
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener("abort", onExternalAbort, { once: true });
     }
 
     try {
-      const referenceFiles = await this.loadReferenceFiles(input.projectId, referenceFileIds);
+      const referenceFiles = await this.loadReferenceFiles(projectId, referenceFileIds);
       const generated = await this.images.generate(
         {
-          projectId: input.projectId,
+          projectId,
           context: composedPrompt,
           intent: "canvas_panel",
           referenceFiles,
         },
         controller.signal,
       );
-      const version = await this.artifacts.append(prepared.artifactId, {
+      const version = await this.artifacts.append(pending.artifact.id, {
         payload: {
           file_id: generated.fileId,
           prompt: composedPrompt,
@@ -128,14 +158,14 @@ export class CanvasGenerateService {
         version: { id: version.id, status: version.status },
         status: "succeeded",
       };
-      this.recent.set(input.clientOpId, { result: done, expiresAt: Date.now() + 10 * 60 * 1000 });
+      this.cacheResult(pending.artifact.id, done);
       return done;
     } catch (error) {
       const message = error instanceof Error
         ? (error.name === "AbortError" ? "生成已取消或超时" : error.message)
         : "生成失败";
       try {
-        await this.artifacts.append(prepared.artifactId, {
+        await this.artifacts.append(pending.artifact.id, {
           payload: { pending: false, prompt: composedPrompt, source: origin, error: message },
           inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
           status: "draft",
@@ -145,12 +175,12 @@ export class CanvasGenerateService {
         // best-effort
       }
       const failed: GenerateFromCanvasResult = { ...pending, status: "failed", error: message };
-      this.recent.set(input.clientOpId, { result: failed, expiresAt: Date.now() + 10 * 60 * 1000 });
+      this.cacheResult(pending.artifact.id, failed);
       return failed;
     } finally {
       clearTimeout(timer);
-      input.signal?.removeEventListener("abort", onExternalAbort);
-      if (this.inflight.get(key) === controller) this.inflight.delete(key);
+      signal?.removeEventListener("abort", onExternalAbort);
+      if (this.inflight.get(lockKey) === controller) this.inflight.delete(lockKey);
     }
   }
 
@@ -170,7 +200,14 @@ export class CanvasGenerateService {
     }
   }
 
-  /** 新建 effect 卡 + 源→新图连线 */
+  private cacheResult(artifactId: string, result: GenerateFromCanvasResult) {
+    for (const [clientOpId, entry] of this.recent) {
+      if (entry.result.artifact.id === artifactId) {
+        this.recent.set(clientOpId, { result, expiresAt: Date.now() + 10 * 60 * 1000 });
+      }
+    }
+  }
+
   private async prepareNewTarget(
     input: GenerateFromCanvasInput,
     sourceLayout: DeskLayoutObject,
@@ -213,7 +250,6 @@ export class CanvasGenerateService {
     };
   }
 
-  /** 在已有失败/草稿 effect 卡上重置为 pending，不新建物件 */
   private async prepareRetryTarget(
     input: GenerateFromCanvasInput,
     snapshot: Awaited<ReturnType<DeskStateService["snapshot"]>>,
@@ -228,7 +264,6 @@ export class CanvasGenerateService {
     if (!target || !targetLayout) throw new HttpError(404, "重试目标不在桌面上");
     if (target.artifactType !== "effect_image") throw new HttpError(422, "只能在效果图上重试生成");
 
-    // 优先用已有「源→目标」连线；没有则用请求里的 sourceArtifactId 补一条
     let connection = snapshot.deskState.connections.find((c) => c.to === targetId && c.from === input.sourceArtifactId)
       ?? snapshot.deskState.connections.find((c) => c.to === targetId);
     if (!connection) {

@@ -99,6 +99,13 @@
       "when": 1786100000000,
       "tag": "0013_desk_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0014_agent_jobs",
+      "breakpoints": true
     }
   ]
 }

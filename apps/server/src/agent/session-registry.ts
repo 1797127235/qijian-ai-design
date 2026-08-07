@@ -1,6 +1,7 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ChatAttachmentDto } from "../services/chat-service.js";
 import type { AgentImageContent } from "../services/file-storage.js";
+import { formatJobsStatusBlock } from "./async-job/protocol.js";
 import { agentPrompt } from "./agent-prompt.js";
 import { EventWriteTracker, jsonSnapshot, persistToolEvent } from "./agent-event-persister.js";
 import { buildDeskStatusBlock, selectedVisualFileIds } from "./desk-status.js";
@@ -21,6 +22,8 @@ export class AgentSessionRegistry {
   private readonly factory: SessionFactory;
   private readonly desks: SessionFactoryDependencies["desks"];
   private readonly generate: SessionFactoryDependencies["generate"];
+  private readonly jobs: SessionFactoryDependencies["jobs"];
+  private readonly jobStore: SessionFactoryDependencies["jobStore"];
   /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源 */
   private readonly selectionBySession = new Map<string, string[]>();
   private shuttingDown = false;
@@ -33,6 +36,8 @@ export class AgentSessionRegistry {
     this.factory = new SessionFactory(deps, this.writes, this.activeRunIds, this.selectionBySession);
     this.desks = deps.desks;
     this.generate = deps.generate;
+    this.jobs = deps.jobs;
+    this.jobStore = deps.jobStore;
   }
 
   /**
@@ -58,7 +63,12 @@ export class AgentSessionRegistry {
     try {
       // snapshot 失败不阻断对话，状态栏降级为「暂不可用」
       const snapshot = await this.desks.snapshot(projectId).catch(() => null);
-      const statusBlock = buildDeskStatusBlock(snapshot, selectedArtifactIds);
+      const recentJobs = await this.jobStore?.listRecentForStatus(projectId).catch(() => []) ?? [];
+      const jobsBlock = formatJobsStatusBlock(recentJobs);
+      const statusBlock = [
+        buildDeskStatusBlock(snapshot, selectedArtifactIds),
+        jobsBlock,
+      ].filter(Boolean).join("\n\n");
       const attachmentImages = await this.factory.loadAgentImages(projectId, attachments);
       // 与附件同一 file 时去重，避免双份 base64
       const selectedFileIds = selectedVisualFileIds(snapshot, selectedArtifactIds)
@@ -107,8 +117,9 @@ export class AgentSessionRegistry {
   async stop(projectId: string, threadId: string) {
     const key = `${projectId}:${threadId}`;
     const pending = this.sessions.get(key);
-    // 先掐图像 HTTP，再 abort session（工具 execute 内 signal 会跟着 cancelled）
+    // 先掐图像 HTTP + async jobs，再 abort session
     this.generate?.abortProject?.(projectId);
+    await this.jobs?.cancelProject(projectId);
     if (!pending) return true;
     try {
       const aborted = await stopAgentSession(await pending);
@@ -141,6 +152,7 @@ export class AgentSessionRegistry {
     this.shuttingDown = true;
     for (const timer of this.idleTimers.values()) clearTimeout(timer);
     this.idleTimers.clear();
+    await this.jobs?.shutdown();
     const pending = [...this.sessions.values()];
     this.sessions.clear();
     await Promise.allSettled(pending.map(async (session) => releaseAgentSession(await session, true)));

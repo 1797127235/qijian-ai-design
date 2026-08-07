@@ -167,10 +167,12 @@ ChatGateway (WS 协议 / run 起止)
 
 **对应：** H2  
 
-### 切片 B — 长工具不堵 loop（中）← **当前优先**
+### 切片 B — 长工具不堵 loop ← **实现中 / 已接 Agent 路径**
 
-- `generate_from_desk` / 生图：**先** pending 落桌 + `object_changed`，再等图像 API；或 tool 立即返回 `artifact_id + pending`  
-- 用户看到骨架，而不是假离线  
+- 设计：[async-agent-tools](superpowers/specs/2026-08-07-async-agent-tools-design.md)  
+- `agent_jobs` + `AgentJobRunner`：tool 秒级 `accepted + task_id`  
+- `generate_from_desk` 异步；`get_task`；状态栏 `[后台任务]`；`agent_job_updated`  
+- 面板 HTTP 生图仍同步  
 
 **对应：** H3  
 

@@ -13,6 +13,15 @@ export type ServerEvent =
   | { type: "prompt_ack"; projectId: string; threadId: string; clientMessageId?: string; message: ChatMessageDto }
   | { type: "chat_message"; projectId: string; message: ChatMessageDto }
   | { type: "object_changed"; projectId: string; artifactId?: string; undoable?: boolean }
+  | {
+    type: "agent_job_updated";
+    projectId: string;
+    taskId: string;
+    kind: string;
+    status: string;
+    artifactId?: string;
+    error?: string;
+  }
   | { type: "error"; projectId?: string; clientMessageId?: string; error: ServerErrorPayload };
 
 export type EventSink = (event: ServerEvent) => void;

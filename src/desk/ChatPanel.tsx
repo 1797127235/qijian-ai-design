@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { History, LoaderCircle, MessageSquarePlus, PanelRightOpen, X } from "lucide-react";
+import { History, LoaderCircle, MessageSquarePlus, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { ChatConnectionStatus, ChatThread } from "../lib/api";
 import type { ChatItem, DeskObject } from "./types";
 import { useAttachmentDraft } from "./useAttachmentDraft";
@@ -313,7 +313,7 @@ export function ChatPanel({
                 aria-expanded={true}
                 onClick={() => setCollapsed(true)}
               >
-                <X size={18} strokeWidth={1.7} />
+                <PanelRightClose size={18} strokeWidth={1.7} />
               </button>
             </div>
             {historyOpen && (

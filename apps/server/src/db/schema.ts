@@ -151,3 +151,30 @@ export const chatMessageAttachments = pgTable(
     index("chat_message_attachments_file_idx").on(table.fileId),
   ],
 );
+
+/** Agent 异步工具 job：生命周期长于单次 tool_call（受理立即返回）。 */
+export const agentJobs = pgTable(
+  "agent_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").notNull().references(() => chatThreads.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => chatRuns.id, { onDelete: "set null" }),
+    kind: text("kind").notNull(),
+    status: text("status")
+      .$type<"accepted" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted">()
+      .notNull()
+      .default("accepted"),
+    input: jsonb("input").$type<unknown>().notNull().default(sql`'{}'::jsonb`),
+    result: jsonb("result").$type<unknown>(),
+    artifactId: uuid("artifact_id"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("agent_jobs_project_status_idx").on(table.projectId, table.status),
+    index("agent_jobs_project_created_idx").on(table.projectId, table.createdAt),
+  ],
+);

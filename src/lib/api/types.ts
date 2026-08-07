@@ -118,6 +118,16 @@ export type ServerEvent =
   | { type: "chat_message"; projectId: string; message: StoredChatMessage }
   // 画布对象变更：触发画布重渲染；undoable 提示是否可撤销
   | { type: "object_changed"; artifactId?: string; undoable?: boolean }
+  // Agent 异步 job 状态（受理/运行/终态）；桌面仍以 object_changed 刷新为主
+  | {
+    type: "agent_job_updated";
+    projectId?: string;
+    taskId: string;
+    kind: string;
+    status: string;
+    artifactId?: string;
+    error?: string;
+  }
   // 错误事件：retryable 决定前端是否自动重试
   | { type: "error"; clientMessageId?: string; error: { code: string; message: string; retryable: boolean; details?: unknown } };
 
