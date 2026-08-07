@@ -13,7 +13,7 @@ function toDto(row: typeof agentJobs.$inferSelect): AgentJobDto {
   return {
     id: row.id,
     projectId: row.projectId,
-    threadId: row.threadId,
+    threadId: row.threadId ?? undefined,
     runId: row.runId ?? undefined,
     kind: row.kind,
     status: row.status,
@@ -34,7 +34,7 @@ export class AgentJobStore {
 
   async create(input: {
     projectId: string;
-    threadId: string;
+    threadId?: string;
     runId?: string;
     kind: string;
     input: unknown;
@@ -166,6 +166,32 @@ export class AgentJobStore {
       .from(agentJobs)
       .where(and(
         eq(agentJobs.projectId, projectId),
+        inArray(agentJobs.status, ["accepted", "running"]),
+      ));
+    return rows.map(toDto);
+  }
+
+  /** Chat stop：仅当前 thread 的 active jobs（不杀面板 thread_id=null）。 */
+  async listActiveByThread(projectId: string, threadId: string): Promise<AgentJobDto[]> {
+    const rows = await this.db
+      .select()
+      .from(agentJobs)
+      .where(and(
+        eq(agentJobs.projectId, projectId),
+        eq(agentJobs.threadId, threadId),
+        inArray(agentJobs.status, ["accepted", "running"]),
+      ));
+    return rows.map(toDto);
+  }
+
+  /** 跨通道互斥：同 artifact 上仍进行中的 job。 */
+  async listActiveByArtifact(projectId: string, artifactId: string): Promise<AgentJobDto[]> {
+    const rows = await this.db
+      .select()
+      .from(agentJobs)
+      .where(and(
+        eq(agentJobs.projectId, projectId),
+        eq(agentJobs.artifactId, artifactId),
         inArray(agentJobs.status, ["accepted", "running"]),
       ));
     return rows.map(toDto);

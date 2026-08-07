@@ -1,6 +1,7 @@
 # 实现计划：H8 双通道写桌统一
 
-**状态：** READY  
+**状态：** IMPLEMENTED  
+
 **日期：** 2026-08-07  
 **分支：** `codex/canvas-reliability`  
 **规格：** [2026-08-07-h8-unified-generate-design.md](../specs/2026-08-07-h8-unified-generate-design.md)  

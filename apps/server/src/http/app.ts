@@ -15,6 +15,7 @@ import type { CanvasGenerateService } from "../services/canvas-generate-service.
 import type { DeskStateService } from "../services/desk-state-service.js";
 import type { FileStorage } from "../services/file-storage.js";
 import type { ChatService } from "../services/chat-service.js";
+import type { AgentJobRunner } from "../agent/async-job/runner.js";
 import type { AgentSessionRegistry } from "../agent/session-registry.js";
 import { registerArtifactRoutes } from "./routes/artifacts.js";
 import { registerChatRoutes } from "./routes/chat.js";
@@ -30,8 +31,9 @@ interface HttpDependencies {
   files: FileStorage;
   chats: ChatService;
   sessions: AgentSessionRegistry;
-  /** 面板生图路由才用；Agent 路径走 WebSocket/agent tools，不需要 */
+  /** 面板生图：CanvasGenerate + Job 外壳（H8） */
   generate?: CanvasGenerateService;
+  jobs?: AgentJobRunner;
 }
 
 export function createHttpApp(deps: HttpDependencies) {
@@ -47,7 +49,12 @@ export function createHttpApp(deps: HttpDependencies) {
 
   // 路由注册：每个文件管自己的资源
   registerProjectRoutes(app, deps);
-  registerDeskRoutes(app, { desks: deps.desks, artifacts: deps.artifacts, generate: deps.generate });
+  registerDeskRoutes(app, {
+    desks: deps.desks,
+    artifacts: deps.artifacts,
+    generate: deps.generate,
+    jobs: deps.jobs,
+  });
   registerChatRoutes(app, deps);
   registerArtifactRoutes(app, deps);
   registerFileRoutes(app, deps);

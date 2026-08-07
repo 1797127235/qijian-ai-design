@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { api, type DeskSnapshot } from "../lib/api";
+import type { createGenerateHistoryGate } from "./recordGenerateOnce";
 import type { DeskHistory } from "./useDeskHistory";
 
 export interface GenerateOptions {
@@ -10,14 +11,15 @@ export interface GenerateOptions {
   targetArtifactId?: string;
 }
 
-/** 面板生图：不进 desk enqueue；完成后 refresh。重试走 targetArtifactId。 */
+/** 面板生图：H8 秒级 accepted；终态靠 WS object_changed。 */
 export function useDeskGenerate(options: {
   projectId?: string;
   history: DeskHistory;
   refreshDesk: (projectId: string) => Promise<DeskSnapshot>;
   onError: (message: string) => void;
+  generateGate: ReturnType<typeof createGenerateHistoryGate>;
 }) {
-  const { projectId, history, refreshDesk, onError } = options;
+  const { projectId, history, refreshDesk, onError, generateGate } = options;
   const [busySourceId, setBusySourceId] = useState<string>();
   const [panelSourceId, setPanelSourceId] = useState<string>();
   const inflight = useRef(new Map<string, boolean>());
@@ -27,7 +29,6 @@ export function useDeskGenerate(options: {
 
   const generate = useCallback(
     async (input: GenerateOptions | string, promptArg?: string) => {
-      // 兼容旧调用 generate(sourceId, prompt)
       const opts: GenerateOptions = typeof input === "string"
         ? { sourceArtifactId: input, prompt: promptArg ?? "" }
         : input;
@@ -47,11 +48,12 @@ export function useDeskGenerate(options: {
         const snap = await refreshDesk(projectId).catch(() => undefined);
         const artifact = snap?.artifacts.find((a) => a.id === result.artifact.id);
         const object = snap?.deskState.objects.find((o) => o.artifact_id === result.artifact.id);
-        // 重试不记新 history 条目（同一 artifact 版本前进）；新建才 record
+        // 重试不记新 history；新建 pending 记一条（与 agent 路径去重）
         if (!opts.targetArtifactId) {
-          history.record({
-            type: "generate",
-            entry: {
+          generateGate.tryRecord(
+            result.artifact.id,
+            history.record,
+            {
               artifactId: result.artifact.id,
               artifactType: "effect_image",
               payload: artifact?.payload ?? { pending: true, prompt: opts.prompt, source: "canvas_panel" },
@@ -60,10 +62,9 @@ export function useDeskGenerate(options: {
                 ? { kind: object.kind, x: object.x, y: object.y, rot: object.rot, w: object.w }
                 : { kind: "effect_image", x: 0, y: 0, rot: 0 },
             },
-            connection: result.connection,
-          });
+            result.connection,
+          );
         }
-        if (result.status === "failed") onError(`生成失败：${result.error ?? "未知错误"}`);
         setPanelSourceId(undefined);
       } catch (error) {
         onError(`生成失败：${error instanceof Error ? error.message : "未知错误"}`);
@@ -73,7 +74,7 @@ export function useDeskGenerate(options: {
         setBusySourceId(undefined);
       }
     },
-    [projectId, history, refreshDesk, onError],
+    [projectId, history, refreshDesk, onError, generateGate],
   );
 
   return { panelSourceId, busySourceId, openPanel, closePanel, generate };

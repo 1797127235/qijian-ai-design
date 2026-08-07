@@ -216,7 +216,8 @@ export const agentJobs = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-    threadId: uuid("thread_id").notNull().references(() => chatThreads.id, { onDelete: "cascade" }),
+    /** 面板生图可无 thread；Agent 工具路径必填 */
+    threadId: uuid("thread_id").references(() => chatThreads.id, { onDelete: "cascade" }),
     runId: uuid("run_id").references(() => chatRuns.id, { onDelete: "set null" }),
     kind: text("kind").notNull(),
     status: text("status")

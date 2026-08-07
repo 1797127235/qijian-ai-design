@@ -11,7 +11,8 @@ export type AgentJobStatus =
 export interface AgentJobDto {
   id: string;
   projectId: string;
-  threadId: string;
+  /** 面板生图为 undefined；Agent 路径有值 */
+  threadId?: string;
   runId?: string;
   kind: string;
   status: AgentJobStatus;

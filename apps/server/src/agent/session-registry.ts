@@ -132,9 +132,8 @@ export class AgentSessionRegistry {
   async stop(projectId: string, threadId: string) {
     const key = `${projectId}:${threadId}`;
     const pending = this.sessions.get(key);
-    // 先掐图像 HTTP + async jobs，再 abort session
-    this.generate?.abortProject?.(projectId);
-    await this.jobs?.cancelProject(projectId);
+    // 只 cancel 本 thread 的 jobs（job signal 会 abort complete）；不 abortProject，避免杀面板生图
+    await this.jobs?.cancelThread(projectId, threadId);
     if (!pending) return true;
     try {
       const aborted = await stopAgentSession(await pending);

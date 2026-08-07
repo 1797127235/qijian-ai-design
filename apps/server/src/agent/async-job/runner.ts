@@ -16,7 +16,8 @@ import type { AcceptedJobDetails, AgentJobDto, AgentJobStatus } from "./types.js
 
 export interface RunAsyncJobOptions {
   projectId: string;
-  threadId: string;
+  /** 面板生图可省略；Agent 必填 */
+  threadId?: string;
   runId?: string;
   kind: string;
   input: unknown;
@@ -93,7 +94,14 @@ export class AgentJobRunner {
     try {
       const prepared = await opts.prepare(job.id);
       artifactId = prepared.artifactId;
-      if (artifactId) await this.store.setArtifact(job.id, artifactId);
+      if (artifactId) {
+        await this.store.setArtifact(job.id, artifactId);
+        // H8：同 artifact 旧 active job 取消（跨面板/agent 互斥）
+        const rivals = await this.store.listActiveByArtifact(opts.projectId, artifactId);
+        for (const rival of rivals) {
+          if (rival.id !== job.id) this.cancelJob(rival.id);
+        }
+      }
       this.traces?.end(prepareSpan, {
         status: "ok",
         outputs: { artifact_id: artifactId },
@@ -249,12 +257,19 @@ export class AgentJobRunner {
     if (runId ?? updated.runId) this.traces?.completeJob(runId ?? updated.runId, jobId);
   }
 
-  /** 取消单 job（前端 stop 按钮 → 走 sessionRegistry.stop → cancelProject）。 */
+  /** 取消单 job。 */
   cancelJob(jobId: string) {
     this.controllers.get(jobId)?.abort();
   }
 
-  /** 取消该项目所有进行中 job（agent stop 时调用，先于 session.abort）。 */
+  /** Chat stop：仅当前 thread（不杀面板 thread_id=null 的 job）。 */
+  async cancelThread(projectId: string, threadId: string) {
+    const active = await this.store.listActiveByThread(projectId, threadId);
+    for (const job of active) this.cancelJob(job.id);
+    return active.length;
+  }
+
+  /** 取消该项目所有进行中 job（shutdown / 运维）。 */
   async cancelProject(projectId: string) {
     const active = await this.store.listActiveByProject(projectId);
     for (const job of active) this.cancelJob(job.id);

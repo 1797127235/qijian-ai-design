@@ -82,7 +82,7 @@ publish = chat.emit;
  *  - WS 只挂在 `/api/projects/:id/chat`，项目 ID 取自 URL；其他路径 destroy
  *  - 用 `noServer: true` 自己接管 upgrade，避免 ws 库创建第二个 http server
  */
-const app = createHttpApp({ config, artifacts, desks, files, chats, sessions, generate });
+const app = createHttpApp({ config, artifacts, desks, files, chats, sessions, generate, jobs });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`Qijian agent server listening on http://localhost:${info.port}`);
 });

@@ -79,7 +79,9 @@ describe("generate_from_desk (async job)", () => {
     const tool = createGenerateFromDeskTool(ctx);
     const result = await tool.execute("call-2", { prompt: " 改成暖色 " }, undefined, undefined, {} as never);
 
-    expect(run).toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ origin: "agent_chat", source_artifact_id: "img-1" }),
+    }));
     expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
       projectId: "p1",
       sourceArtifactId: "img-1",

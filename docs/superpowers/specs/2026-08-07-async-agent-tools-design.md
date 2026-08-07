@@ -32,7 +32,7 @@
 - 分布式队列 / 多 worker
 - 工具自动重试引擎
 - 第二个业务 async 工具实现（只留注册口）
-- 面板 HTTP 生图改异步（仍可同步 await；H8 后续统一）
+- ~~面板 HTTP 生图改异步~~ → 见 [H8](2026-08-07-h8-unified-generate-design.md)
 
 ## 3. 决策摘要
 

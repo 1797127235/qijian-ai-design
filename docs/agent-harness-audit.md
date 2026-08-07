@@ -115,8 +115,18 @@ ChatGateway (WS 协议 / run 起止)
 | **H5** | Skills 全关 | `noSkills: true` | 领域纪律只能塞 system，膨胀且难演进 |
 | **H6** | 无 Agent eval | 单元测试为主 | harness 改动靠手点，回归不可见 |
 | **H7** | 可观测不完整 | **实现中（2026-08-07）**：LangSmith 双写 + error_code + job trace 关联；本地账本仍为产品真相 | 开发者可在 Smith 看 run 树 |
-| **H8** | 双通道写桌 | 面板 HTTP 生图 vs agent 工具 | 幂等 / 历史 / 撤销语义不统一 |
+| **H8** | ~~双通道写桌~~ | **已解决（2026-08-07）**：面板接同一 Job 外壳 + history 同栈 | 见 §5.2.1 |
 | **H9** | 并发 run 记账 | 事件绑 `activeRunIds[0]` | 跟发时 tool 可能记到错误 run |
+
+#### 5.2.1 H8 落地说明
+
+| 项 | 内容 |
+|----|------|
+| **改前** | 面板同步 `generate()`；Agent 异步 job；history 仅面板 |
+| **改后** | `POST /generate-image` → `jobs.run` 秒级 `accepted+task_id`；`agent_jobs.thread_id` nullable；`input.origin` |
+| **History** | `recordGenerateOnce`：面板 accepted + Agent `object_changed` 去重同栈 |
+| **Stop** | `cancelThread`：不杀面板 `thread_id=null` job |
+| **规格** | [h8-unified-generate-design](superpowers/specs/2026-08-07-h8-unified-generate-design.md) |
 
 ### 5.3 P2 — 下一阶段
 
@@ -174,14 +184,14 @@ ChatGateway (WS 协议 / run 起止)
 - root 等本 run jobs 终态再 end；job span parent=root；`chat_runs.smith_run_id` + `agent_jobs.trace_*`  
 - 测试：map-error + Noop；生命周期手测  
 
-### 切片 B — 长工具不堵 loop ← **实现中 / 已接 Agent 路径**
+### 切片 B — 长工具不堵 loop ← **已完成（H3 + H8 面板）**
 
-- 设计：[async-agent-tools](superpowers/specs/2026-08-07-async-agent-tools-design.md)  
-- `agent_jobs` + `AgentJobRunner`：tool 秒级 `accepted + task_id`  
+- 设计：[async-agent-tools](superpowers/specs/2026-08-07-async-agent-tools-design.md)、[H8](superpowers/specs/2026-08-07-h8-unified-generate-design.md)  
+- `agent_jobs` + `AgentJobRunner`：tool 与面板秒级 `accepted + task_id`  
 - `generate_from_desk` 异步；`get_task`；状态栏 `[后台任务]`；`agent_job_updated`  
-- 面板 HTTP 生图仍同步  
+- 面板 `POST /generate-image` 同源 Job 外壳  
 
-**对应：** H3  
+**对应：** H3、H8  
 
 ### 切片 C — 模型上下文持久化 ← **已完成（H1）**
 

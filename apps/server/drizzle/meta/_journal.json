@@ -113,6 +113,13 @@
       "when": 1786300000000,
       "tag": "0015_agent_tracing",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786400000000,
+      "tag": "0016_agent_jobs_thread_nullable",
+      "breakpoints": true
     }
   ]
 }

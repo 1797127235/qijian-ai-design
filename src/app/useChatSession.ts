@@ -28,8 +28,12 @@ function finalizeProcessItem(items: ChatItem[], process: ProcessSnapshot): ChatI
 export function useChatSession(options: {
   activeProjectRef: MutableRefObject<string | undefined>;
   refreshDesk: (projectId: string) => Promise<DeskSnapshot>;
+  /** H8b：Agent 落桌 effect 进 history（与面板去重由调用方 gate） */
+  onDeskObjectChanged?: (projectId: string, artifactId: string | undefined, snap: DeskSnapshot) => void;
 }) {
   const { activeProjectRef, refreshDesk } = options;
+  const onDeskObjectChangedRef = useRef(options.onDeskObjectChanged);
+  onDeskObjectChangedRef.current = options.onDeskObjectChanged;
   const [chatItems, setChatItems] = useState<ChatItem[]>([]);
   const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
   const [activeChatThreadId, setActiveChatThreadId] = useState<string>();
@@ -302,8 +306,9 @@ export function useChatSession(options: {
       if (event.type === "object_changed") {
         // 先 refresh 再聚焦：否则 objects 里还没有新卡，Desk 聚焦 effect 会空转
         void refreshDesk(projectId)
-          .then(() => {
+          .then((snap) => {
             if (activeProjectRef.current !== projectId) return;
+            onDeskObjectChangedRef.current?.(projectId, event.artifactId, snap);
             if (event.artifactId) setFocusFromAgent({ id: event.artifactId, token: Date.now() });
           })
           .catch((e) => {

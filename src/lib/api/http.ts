@@ -63,10 +63,13 @@ export const api = {
     targetArtifactId?: string;
   }) =>
     request<{
+      status: "accepted";
+      async: true;
+      task_id: string;
       artifact: { id: string };
+      version?: { id: string; status: string };
+      object?: { artifact_id: string; kind: string; x: number; y: number; rot: number; w?: number };
       connection: { id: string; from: string; to: string };
-      status: "pending" | "succeeded" | "failed";
-      error?: string;
     }>(`/api/projects/${projectId}/generate-image`, json("POST", input)),
   createArtifact: (projectId: string, input: { artifactType: ArtifactSnapshot["artifactType"]; payload: Record<string, unknown>; inputRefs?: unknown[]; status?: "draft" | "confirmed"; artifactId?: string; clientOpId?: string; layout?: { kind: string; x: number; y: number; rot?: number; w?: number } }) =>
     request<{ artifact: { id: string }; version: { id: string }; object?: DeskLayoutObject }>(`/api/projects/${projectId}/artifacts`, json("POST", input)),

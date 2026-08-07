@@ -55,12 +55,8 @@
 - **Why:** 改图验收高频；用户 2026-08-06 确认先进 TODOS（先有大图查看再说）。
 - **Depends on / blocked by:** TODO 5（查看大图）优先。
 
-## 8. Agent stop 取消粒度（thread/run 级 jobs）
+## 8. Agent stop 取消粒度（thread/run 级 jobs） — DONE（H8）
 
-- **What:** `sessions.stop` / job cancel 从「整个 project 的 active jobs」收窄到当前 **thread**（或当前 run）相关的 `agent_jobs`，避免误杀其它对话/tab 的后台生图。
-- **Why:** H3 异步 job 落地后，stop 若按 project 广播 cancel，多 thread 或连点会串扰；H7 eng review（Codex outside voice 2026-08-07）指出该边界错误会污染 trace A1「等本 run jobs 终态」的语义。
-- **Pros:** 取消语义正确；与 chat busy/stop 按钮用户预期一致；观测 root end 更干净。
-- **Cons:** 改 `session-registry.stop` + job store 查询（by thread_id/run_id）+ 回归测试；需定义「无 run 的遗留 job」策略。
-- **Context:** 现状见 `apps/server/src/agent/session-registry.ts` stop 路径与 `async-job` cancelProject 类 API。H7 实现计划刻意不扩 scope（`h7-langsmith-eng-plan-20260807.md` NOT in scope）。
-- **Depends on / blocked by:** H3 `agent_jobs` 已合入；可与 H7 并行，不阻塞 LangSmith 双写。
+- **What:** ~~`sessions.stop` 收窄到 thread~~ → `cancelThread(projectId, threadId)`；面板 `thread_id=null` 不被 stop 杀掉。
+- **Done:** 2026-08-07 with H8 unified generate.
 

@@ -11,6 +11,7 @@ import { mapConnections, mapSnapshot } from "../desk/map";
 import type { DeskConnection, DeskObject } from "../desk/types";
 import type { Viewport } from "../desk/geometry";
 import { nextId } from "./ids";
+import { createGenerateHistoryGate } from "./recordGenerateOnce";
 import { useChatSession } from "./useChatSession";
 import { useDeskActions } from "./useDeskActions";
 import { useDeskGenerate } from "./useDeskGenerate";
@@ -55,7 +56,32 @@ export function App() {
     return snap;
   }, []);
 
-  const chat = useChatSession({ activeProjectRef, refreshDesk });
+  const generateGate = useMemo(() => createGenerateHistoryGate(), []);
+  const historyRecordRef = useRef<(op: import("./useDeskHistory").DeskHistoryOp) => void>(() => undefined);
+
+  const onDeskObjectChanged = useCallback((pid: string, artifactId: string | undefined, snap: DeskSnapshot) => {
+    if (!artifactId) return;
+    const art = snap.artifacts.find((a) => a.id === artifactId);
+    if (!art || art.artifactType !== "effect_image") return;
+    // 仅新建 pending/刚落桌时记 history；重试版本前进不记（gate 同 id 也会挡）
+    const object = snap.deskState.objects.find((o) => o.artifact_id === artifactId);
+    const connection = snap.deskState.connections.find((c) => c.to === artifactId);
+    if (!object || !connection) return;
+    generateGate.tryRecord(
+      artifactId,
+      (op) => historyRecordRef.current(op),
+      {
+        artifactId,
+        artifactType: "effect_image",
+        payload: art.payload,
+        inputRefs: art.inputRefs,
+        layout: { kind: object.kind, x: object.x, y: object.y, rot: object.rot, w: object.w },
+      },
+      connection,
+    );
+  }, [generateGate]);
+
+  const chat = useChatSession({ activeProjectRef, refreshDesk, onDeskObjectChanged });
   const projectId = view.mode === "desk" ? view.projectId : undefined;
   const [selectedId, setSelectedId] = useState<string>();
   const [selectedConnectionId, setSelectedConnectionId] = useState<string>();
@@ -76,6 +102,7 @@ export function App() {
     [chat.setChatItems],
   );
   const history = useDeskHistory({ projectId, enqueue: desk.enqueue, refreshDesk, onError: pushCanvasError });
+  historyRecordRef.current = history.record;
   const placement = useDeskPlacement({
     projectId,
     snapshot,
@@ -88,13 +115,14 @@ export function App() {
     onError: pushCanvasError,
     viewportRef,
   });
-  const gen = useDeskGenerate({ projectId, history, refreshDesk, onError: pushCanvasError });
+  const gen = useDeskGenerate({ projectId, history, refreshDesk, onError: pushCanvasError, generateGate });
 
   useEffect(() => {
     setSelectedId(undefined);
     setSelectedConnectionId(undefined);
+    generateGate.reset();
     gen.closePanel();
-  }, [projectId]);
+  }, [projectId, generateGate]);
 
   const createConnection = useCallback(
     (from: string, to: string) => {

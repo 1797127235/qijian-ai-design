@@ -77,7 +77,12 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
           runId: session.runId(),
           toolCallId,
           kind: "generate_from_desk",
-          input: { prompt, source_artifact_id: sourceId },
+          input: {
+            origin: "agent_chat",
+            prompt,
+            source_artifact_id: sourceId,
+            client_op_id: clientOpId,
+          },
           prepare: async () => {
             prepared = await ctx.deps.generate.prepare({
               projectId: ctx.projectId,
