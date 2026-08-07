@@ -1,6 +1,7 @@
 # 实现计划：中键漫游 + 框选多选 → Agent 生图
 
-**状态：** READY  
+**状态：** IMPLEMENTED  
+
 **日期：** 2026-08-07  
 **分支：** `codex/canvas-reliability`  
 **规格：** [2026-08-07-marquee-multiselect-agent-design.md](../specs/2026-08-07-marquee-multiselect-agent-design.md)  

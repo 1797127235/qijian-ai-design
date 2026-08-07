@@ -46,7 +46,7 @@ export function ChatComposer({
   hasContent,
   attachmentsReady,
   items,
-  selectedObject,
+  selectedObjects = [],
   onClearSelection,
   fileInputRef,
   inputRef,
@@ -65,8 +65,8 @@ export function ChatComposer({
   attachmentsReady: boolean;
   items: AttachmentDraftItem[];
   /** 画布选中引用（非上传附件）；一点选即显示 */
-  selectedObject?: DeskObject;
-  onClearSelection?: () => void;
+  selectedObjects?: DeskObject[];
+  onClearSelection?: (id?: string) => void;
   fileInputRef: React.RefObject<HTMLInputElement>;
   inputRef: React.RefObject<HTMLTextAreaElement>;
   onSubmit: () => void;
@@ -77,10 +77,9 @@ export function ChatComposer({
 }) {
   const placeholder = connection !== "connected"
     ? `${connectionLabels[connection]}，可先输入消息`
-    : selectedObject
+    : selectedObjects.length > 0
       ? "基于选中物件继续…"
       : "描述你想推进的设计工作…";
-  const previewUrl = selectedObject ? selectionPreview(selectedObject) : undefined;
 
   return (
     <div
@@ -95,29 +94,34 @@ export function ChatComposer({
       }}
     >
       {/* 画布选中即时 chip：一点选就显示，发送时才经 selectedArtifactIds 给 Agent */}
-      {selectedObject && (
+      {selectedObjects.length > 0 && (
         <div className="composer-selection" aria-label="当前选中的桌面物件">
-          <div className="composer-selection-chip">
-            <div className="composer-selection-preview" aria-hidden="true">
-              {previewUrl
-                ? <img src={previewUrl} alt="" />
-                : <StickyNote size={16} strokeWidth={1.6} />}
-            </div>
-            <div className="composer-selection-copy">
-              <span title={selectionLabel(selectedObject)}>{selectionLabel(selectedObject)}</span>
-              <small>已选中 · 发送时告诉助手</small>
-            </div>
-            <button
-              type="button"
-              className="composer-attachment-action"
-              aria-label="取消选中"
-              title="取消选中"
-              disabled={draftLocked}
-              onClick={() => onClearSelection?.()}
-            >
-              <X size={16} />
-            </button>
-          </div>
+          {selectedObjects.map((selectedObject) => {
+            const previewUrl = selectionPreview(selectedObject);
+            return (
+              <div key={selectedObject.id} className="composer-selection-chip">
+                <div className="composer-selection-preview" aria-hidden="true">
+                  {previewUrl
+                    ? <img src={previewUrl} alt="" />
+                    : <StickyNote size={16} strokeWidth={1.6} />}
+                </div>
+                <div className="composer-selection-copy">
+                  <span title={selectionLabel(selectedObject)}>{selectionLabel(selectedObject)}</span>
+                  <small>已选中 · 发送时告诉助手</small>
+                </div>
+                <button
+                  type="button"
+                  className="composer-attachment-action"
+                  aria-label="取消选中"
+                  title="取消选中"
+                  disabled={draftLocked}
+                  onClick={() => onClearSelection?.(selectedObject.id)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
       {items.length > 0 && (

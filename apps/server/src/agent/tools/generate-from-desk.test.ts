@@ -144,4 +144,55 @@ describe("generate_from_desk (async job)", () => {
     expect(textOf(result)).toContain("源物件不在桌面上");
     expect(result.details).toMatchObject({ ok: false });
   });
+
+  it("requires source when multi-selected without source_artifact_id", async () => {
+    const ctx = baseCtx({
+      selectedArtifactIds: () => ["img-1", "mat-1"],
+      deps: { generate: { prepare: vi.fn() }, jobs: { run: vi.fn() } } as never,
+    });
+    const tool = createGenerateFromDeskTool(ctx);
+    const result = await tool.execute("call-5", { prompt: "换地板" }, undefined, undefined, {} as never);
+    expect(textOf(result)).toContain("多选时请指定主图");
+    expect(ctx.deps.jobs?.run).not.toHaveBeenCalled();
+  });
+
+  it("passes reference ids from selection minus source", async () => {
+    const prepare = vi.fn().mockResolvedValue({
+      pending: {
+        artifact: { id: "fx-3" },
+        version: { id: "v3", status: "draft" },
+        object: { artifact_id: "fx-3", kind: "effect_image", x: 1, y: 2, rot: 0 },
+        connection: { id: "c3", from: "img-1", to: "fx-3" },
+        status: "pending",
+      },
+      composedPrompt: "换地板",
+      referenceFileIds: [],
+      origin: "agent_chat",
+      createdBy: "agent",
+      lockKey: "p1:img-1",
+    });
+    const run = vi.fn().mockImplementation(async (opts: { prepare: (id: string) => Promise<unknown> }) => {
+      await opts.prepare("job-3");
+      return {
+        text: "已开始",
+        details: { ok: true, async: true, status: "accepted", task_id: "job-3", kind: "generate_from_desk", artifact_id: "fx-3" },
+      };
+    });
+    const ctx = baseCtx({
+      selectedArtifactIds: () => ["img-1", "mat-1"],
+      deps: { generate: { prepare, complete: vi.fn() }, jobs: { run } } as never,
+    });
+    const tool = createGenerateFromDeskTool(ctx);
+    await tool.execute(
+      "call-6",
+      { prompt: "换地板", source_artifact_id: "img-1" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      sourceArtifactId: "img-1",
+      referenceArtifactIds: ["mat-1"],
+    }));
+  });
 });

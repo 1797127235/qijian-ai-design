@@ -62,14 +62,21 @@ describe("buildDeskStatusBlock", () => {
   it("lists selection and desk objects", () => {
     const block = buildDeskStatusBlock(snapshot(), ["img-1"]);
     expect(block).toContain("项目：静安两居");
-    expect(block).toContain("选中：canvas_image img-1");
-    expect(block).toContain("sticky_note note-1");
+    expect(block).toContain("选中（1）：");
     expect(block).toContain("canvas_image img-1");
+    expect(block).toContain("sticky_note note-1");
+  });
+
+  it("lists multiple selections", () => {
+    const block = buildDeskStatusBlock(snapshot(), ["img-1", "note-1"]);
+    expect(block).toContain("选中（2）：");
+    expect(block).toContain("canvas_image img-1");
+    expect(block).toContain("sticky_note note-1");
   });
 
   it("marks missing selection as invalid", () => {
     const block = buildDeskStatusBlock(snapshot(), ["missing"]);
-    expect(block).toContain("选中：无效（missing）");
+    expect(block).toContain("无效（missing）");
   });
 
   it("reports no selection", () => {

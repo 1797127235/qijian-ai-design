@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { History, LoaderCircle, MessageSquarePlus, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { ChatConnectionStatus, ChatThread } from "../lib/api";
+import { MAX_SELECTED_ARTIFACTS } from "../shared/selection-limits";
 import type { ChatItem, DeskObject } from "./types";
 import { useAttachmentDraft } from "./useAttachmentDraft";
 import { ChatComposer, connectionLabels } from "./chat/ChatComposer";
@@ -48,7 +49,7 @@ export function ChatPanel({
   onDeleteThread,
   onInitialFilesConsumed,
   onDraftStateChange,
-  selectedObject,
+  selectedObjects = [],
   onClearSelection,
 }: {
   projectId: string;
@@ -75,8 +76,9 @@ export function ChatPanel({
   onInitialFilesConsumed?: () => void;
   onDraftStateChange?: (hasDraft: boolean) => void;
   /** 画布当前选中；有则 composer 立刻显示 chip，发送时写入 selectedArtifactIds */
-  selectedObject?: DeskObject;
-  onClearSelection?: () => void;
+  selectedObjects?: DeskObject[];
+  /** 传 id 移除单项；不传清空全部 */
+  onClearSelection?: (id?: string) => void;
 }) {
   const [input, setInput] = useState("");
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("qijian.chat.collapsed") === "true");
@@ -177,11 +179,12 @@ export function ChatPanel({
       ? retry.clientMessageId
       : globalThis.crypto?.randomUUID?.() ?? `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     // 选中只在发送时带给后端；chip 本身是纯前端即时反馈
+    const selectedArtifactIds = selectedObjects.map((o) => o.id).slice(0, MAX_SELECTED_ARTIFACTS);
     if (!onSend({
       text,
       attachmentIds: ready.map((item) => item.stored!.id),
       clientMessageId,
-      ...(selectedObject ? { selectedArtifactIds: [selectedObject.id] } : {}),
+      ...(selectedArtifactIds.length > 0 ? { selectedArtifactIds } : {}),
     })) return;
     submittedRef.current = { clientMessageId, text, localIds };
     setPendingClientMessageId(clientMessageId);
@@ -354,7 +357,7 @@ export function ChatPanel({
             hasContent={hasContent}
             attachmentsReady={attachmentsReady}
             items={attachments.items}
-            selectedObject={selectedObject}
+            selectedObjects={selectedObjects}
             onClearSelection={onClearSelection}
             fileInputRef={fileInputRef}
             inputRef={inputRef}

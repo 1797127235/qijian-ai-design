@@ -39,6 +39,8 @@ export interface GenerateFromCanvasInput {
    * 省略则 createPlaced 新卡。
    */
   targetArtifactId?: string;
+  /** 额外参考物件（不含主源）；与主源入边合并去重 */
+  referenceArtifactIds?: string[];
   /** 默认 canvas_panel；Agent 工具传 agent_chat */
   source?: GenerateSource;
   createdBy?: GenerateCreatedBy;
@@ -104,16 +106,17 @@ export class CanvasGenerateService {
     if (!source || !sourceLayout) throw new HttpError(404, "源物件不在桌面上");
 
     const inbound = snapshot.deskState.connections.filter((c) => c.to === input.sourceArtifactId);
-    const { referenceFileIds, noteTexts } = this.collectReferences(snapshot, source, inbound);
+    const extraRefIds = [...new Set((input.referenceArtifactIds ?? []).filter((id) => id && id !== input.sourceArtifactId))];
+    const { referenceFileIds, noteTexts } = this.collectReferences(snapshot, source, inbound, extraRefIds);
     const composedPrompt = this.composePrompt(
       input.prompt,
       noteTexts,
-      referenceFileIds.length < this.expectedImageRefs(snapshot, source, inbound),
+      referenceFileIds.length < this.expectedImageRefs(snapshot, source, inbound, extraRefIds),
     );
 
     const preparedTarget = input.targetArtifactId
-      ? await this.prepareRetryTarget(input, snapshot, composedPrompt, referenceFileIds, origin, createdBy)
-      : await this.prepareNewTarget(input, sourceLayout, composedPrompt, referenceFileIds, origin, createdBy);
+      ? await this.prepareRetryTarget(input, snapshot, composedPrompt, referenceFileIds, origin, createdBy, extraRefIds)
+      : await this.prepareNewTarget(input, sourceLayout, composedPrompt, referenceFileIds, origin, createdBy, extraRefIds);
 
     const pending: GenerateFromCanvasResult = {
       artifact: { id: preparedTarget.artifactId },
@@ -240,6 +243,7 @@ export class CanvasGenerateService {
     referenceFileIds: string[],
     origin: GenerateSource,
     createdBy: GenerateCreatedBy,
+    extraRefIds: string[] = [],
   ) {
     const layout: Omit<DeskLayoutObject, "artifact_id"> = {
       kind: "effect_image",
@@ -260,11 +264,12 @@ export class CanvasGenerateService {
       layout,
       input.clientOpId,
     );
-    const connection = await this.desks.createConnection(
+    const connection = await this.linkInputsToEffect(
       input.projectId,
-      input.sourceArtifactId,
       placed.artifact.id,
-      `${input.clientOpId}:conn`,
+      input.sourceArtifactId,
+      extraRefIds,
+      input.clientOpId,
     );
     return {
       artifactId: placed.artifact.id,
@@ -282,6 +287,7 @@ export class CanvasGenerateService {
     referenceFileIds: string[],
     origin: GenerateSource,
     createdBy: GenerateCreatedBy,
+    extraRefIds: string[] = [],
   ) {
     const targetId = input.targetArtifactId!;
     const target = snapshot.artifacts.find((a) => a.id === targetId);
@@ -289,16 +295,13 @@ export class CanvasGenerateService {
     if (!target || !targetLayout) throw new HttpError(404, "重试目标不在桌面上");
     if (target.artifactType !== "effect_image") throw new HttpError(422, "只能在效果图上重试生成");
 
-    let connection = snapshot.deskState.connections.find((c) => c.to === targetId && c.from === input.sourceArtifactId)
-      ?? snapshot.deskState.connections.find((c) => c.to === targetId);
-    if (!connection) {
-      connection = await this.desks.createConnection(
-        input.projectId,
-        input.sourceArtifactId,
-        targetId,
-        `${input.clientOpId}:conn`,
-      );
-    }
+    const connection = await this.linkInputsToEffect(
+      input.projectId,
+      targetId,
+      input.sourceArtifactId,
+      extraRefIds,
+      input.clientOpId,
+    );
 
     const version = await this.artifacts.append(targetId, {
       payload: { pending: true, prompt: composedPrompt, source: origin },
@@ -316,11 +319,37 @@ export class CanvasGenerateService {
     };
   }
 
-  /** 期望纳入 prompt 的图片参考数：源 + 所有入边。若实际收集到的 < 期望，prompt 末尾加缺图提示。 */
+  /** 主源 + 每个参考 → 效果图各一条连线；返回主源连线（供 history 单条记录）。 */
+  private async linkInputsToEffect(
+    projectId: string,
+    effectId: string,
+    sourceArtifactId: string,
+    extraRefIds: string[],
+    clientOpId: string,
+  ) {
+    const fromIds = [sourceArtifactId, ...extraRefIds.filter((id) => id !== sourceArtifactId)];
+    let primary: DeskConnection | undefined;
+    for (let i = 0; i < fromIds.length; i++) {
+      const from = fromIds[i];
+      const connection = await this.desks.createConnection(
+        projectId,
+        from,
+        effectId,
+        `${clientOpId}:conn:${i}`,
+      );
+      if (from === sourceArtifactId) primary = connection;
+      else if (!primary) primary = connection;
+    }
+    if (!primary) throw new HttpError(500, "连线创建失败");
+    return primary;
+  }
+
+  /** 期望纳入 prompt 的图片参考数：源 + 入边 + 显式参考。 */
   private expectedImageRefs(
     snapshot: Awaited<ReturnType<DeskStateService["snapshot"]>>,
     source: { id: string; artifactType: ArtifactType; payload: Record<string, unknown> },
     inbound: DeskConnection[],
+    extraRefIds: string[] = [],
   ) {
     let n = 0;
     if ((source.artifactType === "canvas_image" || source.artifactType === "effect_image") && typeof source.payload.file_id === "string") n += 1;
@@ -328,14 +357,19 @@ export class CanvasGenerateService {
       const art = snapshot.artifacts.find((a) => a.id === edge.from);
       if (art && (art.artifactType === "canvas_image" || art.artifactType === "effect_image") && typeof art.payload.file_id === "string") n += 1;
     }
+    for (const id of extraRefIds) {
+      const art = snapshot.artifacts.find((a) => a.id === id);
+      if (art && (art.artifactType === "canvas_image" || art.artifactType === "effect_image") && typeof art.payload.file_id === "string") n += 1;
+    }
     return n;
   }
 
-  /** 收集参考：源 + 所有入边。图片入 referenceFileIds，便签文本入 noteTexts（拼进 prompt）。 */
+  /** 收集参考：源 + 入边 + 显式参考 id。图片入 referenceFileIds，便签文本入 noteTexts。 */
   private collectReferences(
     snapshot: Awaited<ReturnType<DeskStateService["snapshot"]>>,
     source: { id: string; artifactType: ArtifactType; payload: Record<string, unknown> },
     inbound: DeskConnection[],
+    extraRefIds: string[] = [],
   ) {
     const referenceFileIds: string[] = [];
     const noteTexts: string[] = [];
@@ -343,17 +377,19 @@ export class CanvasGenerateService {
       const id = payload.file_id;
       if (typeof id === "string" && id && !referenceFileIds.includes(id)) referenceFileIds.push(id);
     };
-    if (source.artifactType === "canvas_image" || source.artifactType === "effect_image") pushFile(source.payload);
-    if (source.artifactType === "sticky_note" && typeof source.payload.text === "string" && source.payload.text.trim()) {
-      noteTexts.push(source.payload.text.trim());
-    }
-    for (const edge of inbound) {
-      const art = snapshot.artifacts.find((a) => a.id === edge.from);
-      if (!art) continue;
+    const pushArtifact = (art: { artifactType: ArtifactType; payload: Record<string, unknown> } | undefined) => {
+      if (!art) return;
       if (art.artifactType === "canvas_image" || art.artifactType === "effect_image") pushFile(art.payload);
       if (art.artifactType === "sticky_note" && typeof art.payload.text === "string" && art.payload.text.trim()) {
         noteTexts.push(art.payload.text.trim());
       }
+    };
+    pushArtifact(source);
+    for (const edge of inbound) {
+      pushArtifact(snapshot.artifacts.find((a) => a.id === edge.from));
+    }
+    for (const id of extraRefIds) {
+      pushArtifact(snapshot.artifacts.find((a) => a.id === id));
     }
     return { referenceFileIds, noteTexts };
   }

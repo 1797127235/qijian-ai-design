@@ -9,6 +9,7 @@
 import type { WebSocket } from "ws";
 import { z } from "zod";
 import { MAX_ATTACHMENTS_PER_MESSAGE } from "../domain/attachment-limits.js";
+import { MAX_SELECTED_ARTIFACTS } from "../domain/selection-limits.js";
 import { AppError } from "../lib/errors.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { EventSink, ServerEvent } from "./events.js";
@@ -24,8 +25,8 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     threadId: z.string().min(1).optional(),
     clientMessageId: z.string().min(1).max(200).optional(),
     attachmentIds: z.array(z.string().min(1)).max(MAX_ATTACHMENTS_PER_MESSAGE).default([]),
-    // 方案 1：选中随本条 prompt 携带，不单独推 selection 事件；max 1 对齐画布单选
-    selectedArtifactIds: z.array(z.string().min(1)).max(1).default([]),
+    // 方案 1：选中随本条 prompt 携带；max 对齐框选多选上限
+    selectedArtifactIds: z.array(z.string().min(1)).max(MAX_SELECTED_ARTIFACTS).default([]),
   }).refine((message) => message.text.trim().length > 0 || message.attachmentIds.length > 0, {
     // 仅选中不算可发送内容，避免空聊；有字或附件才进模型
     message: "消息或附件至少需要一项",

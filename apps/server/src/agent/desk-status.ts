@@ -35,7 +35,7 @@ function formatObjectLine(artifact: ArtifactSnapshot): string {
 
 /**
  * 构造 `[桌面状态]` 块：项目名 + 当前选中 + 桌上物件列表。
- *  - selectedArtifactIds 仅取第一项（与前端单选一致）
+ *  - selectedArtifactIds 列出全部（框选多选）
  *  - 脏/已删 id 标为无效（让 Agent 知道这个 id 不可用）
  *  - 只列 desk_state.objects 里出现的 artifact，未放置的隐藏（避免噪声）
  */
@@ -53,16 +53,19 @@ export function buildDeskStatusBlock(
     .map((object) => byId.get(object.artifact_id))
     .filter((artifact): artifact is ArtifactSnapshot => Boolean(artifact));
 
-  // Phase 0 单选：协议允许数组，语义只用 [0]
-  const selectedId = selectedArtifactIds[0];
-  let selectedLine = "选中：无";
-  if (selectedId) {
-    const selected = byId.get(selectedId);
-    const placed = snapshot.deskState.objects.some((object) => object.artifact_id === selectedId);
-    if (!selected || !placed) {
-      selectedLine = `选中：无效（${selectedId}）`;
-    } else {
-      selectedLine = `选中：${selected.artifactType} ${selected.id}「${shortLabel(selected)}」`;
+  const selectedLines: string[] = [];
+  if (selectedArtifactIds.length === 0) {
+    selectedLines.push("选中：无");
+  } else {
+    selectedLines.push(`选中（${selectedArtifactIds.length}）：`);
+    for (const selectedId of selectedArtifactIds) {
+      const selected = byId.get(selectedId);
+      const placed = snapshot.deskState.objects.some((object) => object.artifact_id === selectedId);
+      if (!selected || !placed) {
+        selectedLines.push(`- 无效（${selectedId}）`);
+      } else {
+        selectedLines.push(`- ${selected.artifactType} ${selected.id}「${shortLabel(selected)}」`);
+      }
     }
   }
 
@@ -77,7 +80,7 @@ export function buildDeskStatusBlock(
   return [
     "[桌面状态]",
     `项目：${snapshot.project.name}`,
-    selectedLine,
+    ...selectedLines,
     "桌上物件：",
     ...objectLines,
   ].join("\n");

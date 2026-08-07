@@ -10,15 +10,15 @@ export function useDeskPlacement(options: {
   projectId?: string;
   snapshot?: DeskSnapshot;
   objects: DeskObject[];
-  selectedId?: string;
-  setSelectedId: Dispatch<SetStateAction<string | undefined>>;
+  selectedIds: string[];
+  setSelectedIds: Dispatch<SetStateAction<string[]>>;
   enqueue: <T>(task: () => Promise<T>) => Promise<T>;
   history: DeskHistory;
   refreshDesk: (projectId: string) => Promise<DeskSnapshot>;
   onError: (message: string) => void;
   viewportRef: MutableRefObject<Viewport>;
 }) {
-  const { projectId, snapshot, objects, selectedId, setSelectedId, enqueue, history, refreshDesk, onError, viewportRef } = options;
+  const { projectId, snapshot, objects, selectedIds, setSelectedIds, enqueue, history, refreshDesk, onError, viewportRef } = options;
   const [editingId, setEditingId] = useState<string>();
   const cascadeRef = useRef(0);
 
@@ -46,14 +46,14 @@ export function useDeskPlacement(options: {
           type: "place",
           entry: { artifactId: result.artifact.id, artifactType: "sticky_note", payload: { text: "" }, layout: { kind: "sticky_note", x, y, rot: 0 } },
         });
-        setSelectedId(result.artifact.id);
+        setSelectedIds([result.artifact.id]);
         setEditingId(result.artifact.id);
       } catch (error) {
         onError(`创建便签失败：${error instanceof Error ? error.message : "未知错误"}`);
       }
       await refreshDesk(projectId).catch(() => undefined);
     });
-  }, [projectId, enqueue, history, nextPlacement, onError, refreshDesk, setSelectedId]);
+  }, [projectId, enqueue, history, nextPlacement, onError, refreshDesk, setSelectedIds]);
 
   const addImageFiles = useCallback(
     (files: File[]) => {
@@ -127,7 +127,7 @@ export function useDeskPlacement(options: {
         try {
           await api.deleteObject(projectId, artifactId);
           if (entry) history.record({ type: "remove", entry });
-          setSelectedId((cur) => (cur === artifactId ? undefined : cur));
+          setSelectedIds((cur) => cur.filter((id) => id !== artifactId));
           setEditingId((cur) => (cur === artifactId ? undefined : cur));
         } catch (error) {
           onError(`删除失败：${error instanceof Error ? error.message : "未知错误"}`);
@@ -135,12 +135,12 @@ export function useDeskPlacement(options: {
         await refreshDesk(projectId).catch(() => undefined);
       });
     },
-    [projectId, enqueue, entryFor, history, onError, refreshDesk, setSelectedId],
+    [projectId, enqueue, entryFor, history, onError, refreshDesk, setSelectedIds],
   );
 
   const deleteSelected = useCallback(() => {
-    if (selectedId) deleteObject(selectedId);
-  }, [selectedId, deleteObject]);
+    for (const id of selectedIds) deleteObject(id);
+  }, [selectedIds, deleteObject]);
 
   const commitText = useCallback(
     (artifactId: string, text: string) => {

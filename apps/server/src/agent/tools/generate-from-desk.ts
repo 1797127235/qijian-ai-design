@@ -2,11 +2,11 @@
  * Agent 写桌：generate_from_desk 工具。
  *
  * 流程：
- *  1. 校验 prompt / source（默认用本轮选中）
+ *  1. 校验 prompt / 主源（多选时必须 source_artifact_id 或恰好单选）
  *  2. ownedCurrent 校验源属于当前项目
- *  3. jobs.run 异步：prepare 落 pending 卡 + 连线 → 后台 work 出图
+ *  3. jobs.run 异步：prepare 落 pending 卡 + 多 from 连线 → 后台 work 出图
  *  4. 立即返回 accepted 工具结果，不 await work
- *  5. 失败/取消时 fail() 返结构化错误，前端在状态栏能看到
+ *  5. 失败/取消时 fail() 返结构化错误
  */
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
@@ -16,11 +16,14 @@ import { fail, ok, type ToolContext } from "./shared.js";
 
 const parameters = Type.Object({
   prompt: Type.String({
-    description: "生成意图，例如「改成日式暖色木质客厅，保留现有布局」",
+    description: "生成意图，例如「把地板换成这张材质图的样式，保留布局」",
     minLength: 1,
   }),
   source_artifact_id: Type.Optional(Type.String({
-    description: "源物件 artifact id。省略时使用本轮对话选中的桌面物件。",
+    description: "主源（要改的那张场景）artifact id。多选时必须填写；单选时可省略。",
+  })),
+  reference_artifact_ids: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
+    description: "参考物件 id 列表（材质/风格参考等，不含主源）。省略时用本轮选中减去主源。",
   })),
 });
 
@@ -29,14 +32,16 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
     name: "generate_from_desk",
     label: "桌面生图",
     description:
-      "根据桌面源物件生成新效果图并落在源图右侧（自动连线）。"
+      "根据桌面源物件生成新效果图并落在主源右侧（自动连线）。"
       + "用户说改材质/风格/效果时调用。"
-      + "source_artifact_id 可省略，默认用当前选中；无选中且未传 id 时不要猜测，应请用户点选。"
+      + "多选时：必须传 source_artifact_id 指定主图（场景），其余为参考；"
+      + "单选时可省略 source，默认当前选中。"
       + "工具立即返回 accepted+task_id（已开始），最终结果看桌面与 get_task，不要在 accepted 时声称已生成完成。",
-    promptSnippet: "generate_from_desk — 从桌面源物件异步生成效果图并落桌",
+    promptSnippet: "generate_from_desk — 从桌面源物件异步生成效果图并落桌（支持多参考）",
     promptGuidelines: [
       "改图/出效果时调用 generate_from_desk。",
-      "优先依赖本轮选中；仅当用户明确指定另一物件 id 时再传 source_artifact_id。",
+      "多选改图时必须传 source_artifact_id（要改的那张场景）；reference_artifact_ids 为材质等参考。",
+      "仅单选时可省略 source_artifact_id，默认用选中。",
       "返回 status=accepted 只表示已开始：告知用户看桌面进度，禁止说「已生成完成」。",
       "返回 status=failed 时如实说明同步失败原因。",
       "需要查进度时用 get_task(task_id)。",
@@ -47,14 +52,31 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
       const prompt = params.prompt.trim();
       if (!prompt) return fail("prompt 不能为空");
 
-      const selected = ctx.selectedArtifactIds()[0];
-      const sourceId = (params.source_artifact_id?.trim() || selected || "").trim();
+      const selected = ctx.selectedArtifactIds().filter(Boolean);
+      const explicitSource = params.source_artifact_id?.trim() || "";
+      let sourceId = explicitSource;
+      if (!sourceId) {
+        if (selected.length === 1) sourceId = selected[0];
+        else if (selected.length > 1) {
+          return fail("多选时请指定主图 source_artifact_id（要改的那张场景图）。");
+        }
+      }
       if (!sourceId) {
         return fail("未指定源物件：请用户先在画布上点选一张图，或传入 source_artifact_id。");
       }
 
+      const refsFromParams = (params.reference_artifact_ids ?? [])
+        .map((id) => id.trim())
+        .filter(Boolean);
+      const refsFromSelection = selected.filter((id) => id !== sourceId);
+      const referenceArtifactIds = [...new Set([...refsFromParams, ...refsFromSelection])]
+        .filter((id) => id !== sourceId);
+
       try {
         await ctx.ownedCurrent(sourceId);
+        for (const refId of referenceArtifactIds) {
+          await ctx.ownedCurrent(refId);
+        }
       } catch (error) {
         return fail(error instanceof Error ? error.message : "源物件无效");
       }
@@ -81,6 +103,7 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
             origin: "agent_chat",
             prompt,
             source_artifact_id: sourceId,
+            reference_artifact_ids: referenceArtifactIds,
             client_op_id: clientOpId,
           },
           prepare: async () => {
@@ -89,6 +112,7 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
               sourceArtifactId: sourceId,
               prompt,
               clientOpId,
+              referenceArtifactIds,
               source: "agent_chat",
               createdBy: "agent",
             });
@@ -102,7 +126,6 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
               (err as Error & { name: string }).name = /取消|超时/.test(result.error ?? "")
                 ? "AbortError"
                 : "GenerateFailed";
-              // failed 卡已写入；用 throw 让 runner 记 failed/cancelled
               throw err;
             }
             return {
@@ -120,7 +143,6 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
         if (error instanceof Error && (error.name === "AbortError" || signal?.aborted)) {
           return fail("已停止生成", { source_artifact_id: sourceId, status: "failed" });
         }
-        // prepare 失败会进这里；work 失败不进 execute（已 return accepted）
         const message = error instanceof Error ? error.message : "生成失败";
         return fail(message, { source_artifact_id: sourceId });
       }

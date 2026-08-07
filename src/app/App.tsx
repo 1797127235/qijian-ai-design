@@ -83,7 +83,7 @@ export function App() {
 
   const chat = useChatSession({ activeProjectRef, refreshDesk, onDeskObjectChanged });
   const projectId = view.mode === "desk" ? view.projectId : undefined;
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string>();
   const viewportRef = useRef<Viewport>({ x: 40, y: 20, zoom: 0.62 });
   const imagePickerRef = useRef<HTMLInputElement>(null);
@@ -107,8 +107,8 @@ export function App() {
     projectId,
     snapshot,
     objects,
-    selectedId,
-    setSelectedId,
+    selectedIds,
+    setSelectedIds,
     enqueue: desk.enqueue,
     history,
     refreshDesk,
@@ -118,7 +118,7 @@ export function App() {
   const gen = useDeskGenerate({ projectId, history, refreshDesk, onError: pushCanvasError, generateGate });
 
   useEffect(() => {
-    setSelectedId(undefined);
+    setSelectedIds([]);
     setSelectedConnectionId(undefined);
     generateGate.reset();
     gen.closePanel();
@@ -273,8 +273,11 @@ export function App() {
   const connectionIds = useMemo(() => new Set(connections.map((c) => c.id)), [connections]);
 
   useEffect(() => {
-    if (selectedId && !objectIds.has(selectedId)) setSelectedId(undefined);
-  }, [objectIds, selectedId]);
+    setSelectedIds((cur) => {
+      const next = cur.filter((id) => objectIds.has(id));
+      return next.length === cur.length ? cur : next;
+    });
+  }, [objectIds]);
 
   useEffect(() => {
     if (selectedConnectionId && !connectionIds.has(selectedConnectionId)) setSelectedConnectionId(undefined);
@@ -444,22 +447,35 @@ export function App() {
           onMoveEnd={onMoveEnd}
           onViewportChange={onViewportChange}
           focusRequest={desk.focusRequest}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
           selectedConnectionId={selectedConnectionId}
           onSelect={(id, opts) => {
-            setSelectedId(id);
             setSelectedConnectionId(undefined);
+            if (!id) {
+              setSelectedIds([]);
+              gen.closePanel();
+              return;
+            }
+            if (opts?.toggle) {
+              setSelectedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+              gen.closePanel();
+              return;
+            }
+            setSelectedIds([id]);
             const openPanel = opts?.panel !== false;
-            if (id && openPanel) gen.openPanel(id);
-            else if (!id) gen.closePanel();
-            // 右键 panel:false：保持当前面板状态（若点的是别的物件则关掉旧面板）
-            else if (id && !openPanel && gen.panelSourceId && gen.panelSourceId !== id) gen.closePanel();
+            if (openPanel) gen.openPanel(id);
+            else if (gen.panelSourceId && gen.panelSourceId !== id) gen.closePanel();
+          }}
+          onMarqueeSelect={(ids) => {
+            setSelectedConnectionId(undefined);
+            setSelectedIds(ids);
+            gen.closePanel();
           }}
           onSelectConnection={(id) => {
             setSelectedConnectionId(id);
             // 仅在选中某条连线时清掉物件选中；id 为空表示“取消连线选中”，勿动物件选中
             if (id) {
-              setSelectedId(undefined);
+              setSelectedIds([]);
               gen.closePanel();
             }
           }}
@@ -472,7 +488,7 @@ export function App() {
               canUndo={history.canUndo}
               canRedo={history.canRedo}
               onHand={() => {
-                setSelectedId(undefined);
+                setSelectedIds([]);
                 setSelectedConnectionId(undefined);
                 gen.closePanel();
               }}
@@ -536,10 +552,17 @@ export function App() {
           initialText={composerHandoff?.text}
           initialFiles={composerHandoff?.files}
           submissionOutcome={chat.submissionOutcome}
-          // 画布 selectedId → 对话 chip；× 清除选中并关掉生图面板
-          selectedObject={selectedId ? objects.find((item) => item.id === selectedId) : undefined}
-          onClearSelection={() => {
-            setSelectedId(undefined);
+          // 画布 selectedIds → 对话多 chip；× 可清单项或全部
+          selectedObjects={selectedIds
+            .map((id) => objects.find((item) => item.id === id))
+            .filter((item): item is NonNullable<typeof item> => Boolean(item))}
+          onClearSelection={(id) => {
+            if (id) {
+              setSelectedIds((cur) => cur.filter((x) => x !== id));
+              if (gen.panelSourceId === id) gen.closePanel();
+              return;
+            }
+            setSelectedIds([]);
             gen.closePanel();
           }}
           onSend={chat.sendChat}

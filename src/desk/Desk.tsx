@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConnectionsLayer } from "./Connections";
-import { nodeSize, sourceAnchor, targetAnchor } from "./connection-geometry";
+import { nodeSize, sourceAnchor } from "./connection-geometry";
 import { positionFromPointer, screenToWorld, zoomAtPoint, type Viewport } from "./geometry";
 import type { DeskConnection, DeskObject } from "./types";
 
-// 缩放范围：与 infinite-canvas 主画布对齐（看全图到看细节）
 const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 5;
+
+export type SelectOpts = { panel?: boolean; toggle?: boolean };
+
+function aabbIntersects(
+  a: { x1: number; y1: number; x2: number; y2: number },
+  b: { x: number; y: number; w: number; h: number },
+) {
+  const left = Math.min(a.x1, a.x2);
+  const right = Math.max(a.x1, a.x2);
+  const top = Math.min(a.y1, a.y2);
+  const bottom = Math.max(a.y1, a.y2);
+  return !(b.x + b.w < left || b.x > right || b.y + b.h < top || b.y > bottom);
+}
 
 export function Desk({
   objects,
@@ -16,9 +28,10 @@ export function Desk({
   initialViewport,
   onViewportChange,
   focusRequest,
-  selectedId,
+  selectedIds = [],
   selectedConnectionId,
   onSelect,
+  onMarqueeSelect,
   onSelectConnection,
   onDropFiles,
   onDeleteObject,
@@ -35,10 +48,10 @@ export function Desk({
   initialViewport?: Viewport;
   onViewportChange?: (viewport: Viewport) => void;
   focusRequest?: { id: string; token: number };
-  selectedId?: string;
+  selectedIds?: string[];
   selectedConnectionId?: string;
-  /** panel:false 时只选中不打开提示词面板（右键删除用） */
-  onSelect?: (id?: string, opts?: { panel?: boolean }) => void;
+  onSelect?: (id?: string, opts?: SelectOpts) => void;
+  onMarqueeSelect?: (ids: string[]) => void;
   onSelectConnection?: (id?: string) => void;
   onDropFiles?: (files: File[]) => void;
   onDeleteObject?: (id: string) => void;
@@ -50,16 +63,19 @@ export function Desk({
 }) {
   const [view, setView] = useState<Viewport>(initialViewport ?? { x: 40, y: 20, zoom: 0.62 });
   const [panning, setPanning] = useState(false);
+  const [marqueeScreen, setMarqueeScreen] = useState<{ x1: number; y1: number; x2: number; y2: number }>();
   const pan = useRef<{ sx: number; sy: number; vx: number; vy: number }>();
+  const marquee = useRef<{ sx: number; sy: number; wx: number; wy: number }>();
   const drag = useRef<{ id: string; ox: number; oy: number }>();
   const dragStart = useRef<{ id: string; x: number; y: number }>();
   const lastDragPos = useRef<{ id: string; x: number; y: number }>();
   const connect = useRef<{ fromId: string; x: number; y: number }>();
-  const pendingClick = useRef<{ id: string; x: number; y: number }>();
+  const pendingClick = useRef<{ id: string; x: number; y: number; shift: boolean }>();
   const [preview, setPreview] = useState<{ x1: number; y1: number; x2: number; y2: number }>();
   const vpRef = useRef<HTMLDivElement>(null);
   const handledFocusToken = useRef<number>();
   const [menu, setMenu] = useState<{ kind: "object" | "connection"; id: string; x: number; y: number }>();
+  const spaceHeld = useRef(false);
 
   useEffect(() => {
     if (initialViewport) {
@@ -69,12 +85,37 @@ export function Desk({
     }
   }, [initialViewport?.x, initialViewport?.y, initialViewport?.zoom]);
 
-  // 视口变化通过事件调用即时上报（不再用 effect 触发避免 dep 抖动）
   const reportViewport = useCallback((next: Viewport) => {
     onViewportChange?.(next);
   }, [onViewportChange]);
 
   const clampZoom = (zoom: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
+
+  useEffect(() => {
+    const isTypingTarget = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      return Boolean(el.closest("input, textarea, select, [contenteditable=true]"));
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && !e.repeat && !isTypingTarget(e.target)) {
+        spaceHeld.current = true;
+        e.preventDefault();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") spaceHeld.current = false;
+    };
+    const onBlur = () => { spaceHeld.current = false; };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   useEffect(() => {
     if (!focusRequest) return;
@@ -96,14 +137,28 @@ export function Desk({
     return screenToWorld({ x: e.clientX, y: e.clientY }, { x: rect.left, y: rect.top }, view);
   };
 
-  const startPan = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle, .desk-prompt-panel")) return;
+  const beginPan = (e: React.PointerEvent) => {
     setMenu(undefined);
-    onSelect?.(undefined);
-    onSelectConnection?.(undefined);
     pan.current = { sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
     setPanning(true);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onViewportPointerDown = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle, .desk-prompt-panel")) return;
+
+    if (e.button === 1 || (e.button === 0 && spaceHeld.current)) {
+      e.preventDefault();
+      beginPan(e);
+      return;
+    }
+
+    if (e.button !== 0) return;
+    setMenu(undefined);
+    onSelectConnection?.(undefined);
+    const world = worldFromEvent(e);
+    marquee.current = { sx: e.clientX, sy: e.clientY, wx: world.x, wy: world.y };
+    setMarqueeScreen({ x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -113,14 +168,23 @@ export function Desk({
       setPreview({ x1: connect.current.x, y1: connect.current.y, x2: p.x, y2: p.y });
       return;
     }
-    // 点击阈值：移动超过 4px 才进入拖动物件
+
+    if (marquee.current) {
+      setMarqueeScreen({
+        x1: marquee.current.sx,
+        y1: marquee.current.sy,
+        x2: e.clientX,
+        y2: e.clientY,
+      });
+      return;
+    }
+
     if (pendingClick.current && !drag.current) {
       const dx = e.clientX - pendingClick.current.x;
       const dy = e.clientY - pendingClick.current.y;
       if (dx * dx + dy * dy > 16) {
         const obj = objects.find((item) => item.id === pendingClick.current!.id);
-        if (obj) {
-          // 进入拖动后收起面板，只保留选中
+        if (obj && !pendingClick.current.shift) {
           onSelect?.(obj.id, { panel: false });
           onSelectConnection?.(undefined);
           const pointer = worldFromEvent(e);
@@ -143,7 +207,6 @@ export function Desk({
       onMove(id, x, y);
       return;
     }
-    // 先拍快照：endPointer 可能在 setView 更新器执行前清空 pan.current（会白屏）
     const panningState = pan.current;
     if (!panningState) return;
     setView((v) => {
@@ -157,7 +220,36 @@ export function Desk({
     });
   };
 
+  const finishMarquee = (e: React.PointerEvent) => {
+    const m = marquee.current;
+    marquee.current = undefined;
+    setMarqueeScreen(undefined);
+    if (!m) return;
+    const dx = e.clientX - m.sx;
+    const dy = e.clientY - m.sy;
+    if (dx * dx + dy * dy <= 16) {
+      onSelect?.(undefined);
+      return;
+    }
+    const end = worldFromEvent(e);
+    const box = { x1: m.wx, y1: m.wy, x2: end.x, y2: end.y };
+    const hits = objects
+      .filter((obj) => {
+        const size = nodeSize(obj);
+        return aabbIntersects(box, { x: obj.x, y: obj.y, w: size.w, h: size.h });
+      })
+      .map((obj) => obj.id);
+    onMarqueeSelect?.(hits);
+  };
+
   const endPointer = (e?: React.PointerEvent) => {
+    if (marquee.current && e) {
+      finishMarquee(e);
+    } else {
+      marquee.current = undefined;
+      setMarqueeScreen(undefined);
+    }
+
     if (connect.current && e) {
       const p = worldFromEvent(e);
       const target = objects.find((obj) => {
@@ -169,7 +261,6 @@ export function Desk({
       connect.current = undefined;
       setPreview(undefined);
     }
-    // 纯点击：panel 已在 pointerdown 打开；这里只清状态
     pendingClick.current = undefined;
     pan.current = undefined;
     if (drag.current && lastDragPos.current && dragStart.current) {
@@ -186,7 +277,6 @@ export function Desk({
     setPanning(false);
   };
 
-  // wheel 必须非 passive 才能 preventDefault；React onWheel 默认 passive 会刷红
   useEffect(() => {
     const el = vpRef.current;
     if (!el) return;
@@ -201,13 +291,20 @@ export function Desk({
         return next;
       });
     };
+    const onAuxClick = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault();
+    };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
+    el.addEventListener("auxclick", onAuxClick);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("auxclick", onAuxClick);
+    };
   }, [reportViewport]);
 
-  const selectObject = (obj: DeskObject, panel: boolean) => {
+  const selectObject = (obj: DeskObject, opts: SelectOpts) => {
     setMenu(undefined);
-    onSelect?.(obj.id, { panel });
+    onSelect?.(obj.id, opts);
     onSelectConnection?.(undefined);
   };
 
@@ -215,18 +312,17 @@ export function Desk({
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
     e.stopPropagation();
-    // 立刻选中 + 打开面板（不依赖 pointerup，避免 capture/原生拖图吞事件）
-    selectObject(obj, true);
-    pendingClick.current = { id: obj.id, x: e.clientX, y: e.clientY };
-    // 不在 pointerdown 时 setPointerCapture：部分浏览器会把后续 click 吃掉
+    const toggle = e.shiftKey;
+    selectObject(obj, { panel: !toggle, toggle });
+    pendingClick.current = { id: obj.id, x: e.clientX, y: e.clientY, shift: toggle };
   };
 
   const onObjectClick = (e: React.MouseEvent, obj: DeskObject) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
     e.stopPropagation();
-    // 兜底：部分环境下 pointer 路径不可靠，click 再保证一次
-    selectObject(obj, true);
+    const toggle = e.shiftKey;
+    selectObject(obj, { panel: !toggle, toggle });
   };
 
   const startConnect = (e: React.PointerEvent, obj: DeskObject) => {
@@ -243,7 +339,6 @@ export function Desk({
     if (!onDeleteObject) return;
     e.preventDefault();
     e.stopPropagation();
-    // 右键：只选中 + 删除菜单，不打开提示词面板
     onSelect?.(obj.id, { panel: false });
     onSelectConnection?.(undefined);
     const rect = vpRef.current?.getBoundingClientRect();
@@ -265,11 +360,21 @@ export function Desk({
     onDropFiles(Array.from(e.dataTransfer.files));
   };
 
+  const selectedSet = new Set(selectedIds);
+  const marqueeStyle = marqueeScreen
+    ? {
+      left: Math.min(marqueeScreen.x1, marqueeScreen.x2),
+      top: Math.min(marqueeScreen.y1, marqueeScreen.y2),
+      width: Math.abs(marqueeScreen.x2 - marqueeScreen.x1),
+      height: Math.abs(marqueeScreen.y2 - marqueeScreen.y1),
+    }
+    : undefined;
+
   return (
     <div
       ref={vpRef}
       className={`desk ${panning ? "panning" : ""}`}
-      onPointerDown={startPan}
+      onPointerDown={onViewportPointerDown}
       onPointerMove={movePointer}
       onPointerUp={(e) => endPointer(e)}
       onPointerCancel={() => endPointer()}
@@ -292,11 +397,12 @@ export function Desk({
         />
         {objects.map((obj) => {
           const size = nodeSize(obj);
-          const showHandles = selectedId === obj.id || Boolean(connect.current);
+          const isSelected = selectedSet.has(obj.id);
+          const showHandles = isSelected || Boolean(connect.current);
           return (
             <div
               key={`${obj.id}-${focusRequest?.id === obj.id ? focusRequest.token : "idle"}`}
-              className={`obj obj-${obj.kind} ${focusRequest?.id === obj.id ? "obj-focused" : ""} ${selectedId === obj.id ? "obj-selected" : ""}`}
+              className={`obj obj-${obj.kind} ${focusRequest?.id === obj.id ? "obj-focused" : ""} ${isSelected ? "obj-selected" : ""}`}
               style={{ left: obj.x, top: obj.y, transform: `rotate(${obj.rot}deg)` }}
               onPointerDown={(e) => startNodeDrag(e, obj)}
               onClick={(e) => onObjectClick(e, obj)}
@@ -320,6 +426,9 @@ export function Desk({
         })}
         {children}
       </div>
+      {marqueeStyle && (
+        <div className="desk-marquee" style={marqueeStyle} aria-hidden="true" />
+      )}
       <div className="desk-tools">
         <button
           type="button"
