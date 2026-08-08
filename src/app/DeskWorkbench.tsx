@@ -1,5 +1,5 @@
 /**
- * 桌面工作台（P0 从 App 抽出）：
+ * 桌面工作台：
  *  - useChatSession：WS + 线程 + 过程时间线
  *  - 画布选中 / 连线 / 放置 / 撤销 / 面板生图 / 局部重绘 / 大图
  *
@@ -336,7 +336,7 @@ export function DeskWorkbench({
     <div className="app-shell">
       <header className="topbar">
         <img className="brand-mark" src="/brand-mark.svg" alt="Qijian" width={30} height={30} />
-        <div className="brand">砌间<small>QIJIAN AI DESIGN</small></div>
+        <div className="brand">砌间</div>
         <button type="button" className="back-btn" onClick={onLeave}>← 项目列表</button>
         {topbarRenaming && deskSnapshot ? (
           <input
@@ -404,8 +404,10 @@ export function DeskWorkbench({
               gen.closePanel();
             }
           }}
+          onDeleteConnection={deleteConnection}
           onDropFiles={placement.addImageFiles}
           onCreateConnection={createConnection}
+          onConnectStart={gen.closePanel}
           onObjectDoubleClick={(obj) => {
             if ((obj.kind === "canvas_image" || obj.kind === "effect_image") && obj.url) {
               setLightboxUrl(obj.url);

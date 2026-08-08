@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConnectionsLayer } from "./Connections";
 import { Minimap } from "./Minimap";
-import { nodeAabb, nodeSize, sourceAnchor } from "./connection-geometry";
+import {
+  edgeAnchor,
+  handleStyle,
+  nodeAabb,
+  nodeSize,
+  pickRoute,
+  type ConnSide,
+} from "./connection-geometry";
 import { positionFromPointer, screenToWorld, zoomAtPoint, type Viewport } from "./geometry";
 import type { DeskConnection, DeskObject } from "./types";
 import { useExitTransition } from "./useExitTransition";
@@ -35,8 +42,10 @@ export function Desk({
   onSelect,
   onMarqueeSelect,
   onSelectConnection,
+  onDeleteConnection,
   onDropFiles,
   onCreateConnection,
+  onConnectStart,
   onObjectDoubleClick,
   renderObject,
   renderNodeToolbar,
@@ -55,8 +64,11 @@ export function Desk({
   onSelect?: (id?: string, opts?: SelectOpts) => void;
   onMarqueeSelect?: (ids: string[]) => void;
   onSelectConnection?: (id?: string) => void;
+  onDeleteConnection?: (id: string) => void;
   onDropFiles?: (files: File[]) => void;
   onCreateConnection?: (from: string, to: string) => void;
+  /** 开始从把手拖连线（用于收起生图面板等） */
+  onConnectStart?: () => void;
   /** 物件双击（画布拖拽会吞原生 dblclick，这里用点击间隔识别） */
   onObjectDoubleClick?: (obj: DeskObject) => void;
   renderObject: (obj: DeskObject) => ReactNode;
@@ -73,10 +85,17 @@ export function Desk({
   const drag = useRef<{ id: string; ox: number; oy: number }>();
   const dragStart = useRef<{ id: string; x: number; y: number }>();
   const lastDragPos = useRef<{ id: string; x: number; y: number }>();
-  const connect = useRef<{ fromId: string; x: number; y: number }>();
+  const connect = useRef<{ fromId: string; side: ConnSide; x: number; y: number }>();
   const pendingClick = useRef<{ id: string; x: number; y: number; shift: boolean }>();
   const lastTap = useRef<{ id: string; at: number }>();
-  const [preview, setPreview] = useState<{ x1: number; y1: number; x2: number; y2: number }>();
+  const [preview, setPreview] = useState<{
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    fromSide?: ConnSide;
+    toSide?: ConnSide;
+  }>();
   const vpRef = useRef<HTMLDivElement>(null);
   const handledFocusToken = useRef<number>();
   const spaceHeld = useRef(false);
@@ -166,7 +185,7 @@ export function Desk({
   };
 
   const onViewportPointerDown = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle, .desk-prompt-panel")) return;
+    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle, .conn-hit, .desk-prompt-panel")) return;
 
     if (e.button === 1 || (e.button === 0 && spaceHeld.current)) {
       e.preventDefault();
@@ -186,7 +205,34 @@ export function Desk({
   const movePointer = (e: React.PointerEvent) => {
     if (connect.current) {
       const p = worldFromEvent(e);
-      setPreview({ x1: connect.current.x, y1: connect.current.y, x2: p.x, y2: p.y });
+      const fromObj = objects.find((o) => o.id === connect.current!.fromId);
+      let fromSide = connect.current.side;
+      let start = { x: connect.current.x, y: connect.current.y };
+      let toSide: ConnSide = "left";
+      let end = p;
+      if (fromObj) {
+        const hover = objects.find((obj) => {
+          if (obj.id === connect.current!.fromId) return false;
+          const box = nodeAabb(obj);
+          return p.x >= box.x - 12 && p.x <= box.x + box.w + 12 && p.y >= box.y - 12 && p.y <= box.y + box.h + 12;
+        });
+        if (hover) {
+          // 悬停目标时预览与落线一致：按相对位置自动选边
+          const route = pickRoute(fromObj, hover);
+          fromSide = route.fromSide;
+          toSide = route.toSide;
+          start = edgeAnchor(fromObj, fromSide);
+          end = edgeAnchor(hover, toSide);
+        }
+      }
+      setPreview({
+        x1: start.x,
+        y1: start.y,
+        x2: end.x,
+        y2: end.y,
+        fromSide,
+        toSide,
+      });
       return;
     }
 
@@ -352,13 +398,14 @@ export function Desk({
     }
   };
 
-  const startConnect = (e: React.PointerEvent, obj: DeskObject) => {
+  const startConnect = (e: React.PointerEvent, obj: DeskObject, side: ConnSide) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
-    const a = sourceAnchor(obj);
-    connect.current = { fromId: obj.id, x: a.x, y: a.y };
-    setPreview({ x1: a.x, y1: a.y, x2: a.x, y2: a.y });
+    onConnectStart?.();
+    const a = edgeAnchor(obj, side);
+    connect.current = { fromId: obj.id, side, x: a.x, y: a.y };
+    setPreview({ x1: a.x, y1: a.y, x2: a.x, y2: a.y, fromSide: side, toSide: "left" });
     (vpRef.current as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -402,9 +449,10 @@ export function Desk({
           selectedId={selectedConnectionId}
           preview={preview}
           onSelect={(id) => {
+            // 勿再调 onSelect(undefined)：Workbench 的 onSelect 会清掉 selectedConnectionId
             onSelectConnection?.(id);
-            onSelect?.(undefined);
           }}
+          onDelete={onDeleteConnection}
         />
         {objects.map((obj) => {
           const size = nodeSize(obj);
@@ -425,13 +473,18 @@ export function Desk({
               {renderObject(obj)}
               {showHandles && onCreateConnection && (
                 <>
-                  <span className="conn-handle conn-handle-target" style={{ left: -5, top: size.h / 2 - 5 }} title="连入" />
-                  <span
-                    className="conn-handle conn-handle-source"
-                    style={{ left: size.w - 5, top: size.h / 2 - 5 }}
-                    title="拖出连线"
-                    onPointerDown={(e) => startConnect(e, obj)}
-                  />
+                  {(["left", "right", "top", "bottom"] as const).map((side) => {
+                    const pos = handleStyle(side, size);
+                    return (
+                      <span
+                        key={side}
+                        className="conn-handle conn-handle-source"
+                        style={{ left: pos.left, top: pos.top }}
+                        title={`从${side === "left" ? "左" : side === "right" ? "右" : side === "top" ? "上" : "下"}拖出连线`}
+                        onPointerDown={(e) => startConnect(e, obj, side)}
+                      />
+                    );
+                  })}
                 </>
               )}
             </div>

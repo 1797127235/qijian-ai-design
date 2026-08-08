@@ -132,6 +132,7 @@
 /* 连线默认不抢点击；仅选中/可点时 path 自己开 pointer-events */
 .desk-connections { z-index: 0; pointer-events: none; }
 .desk-connections path.conn-hit { pointer-events: stroke; }
+.desk-connections .conn-delete { pointer-events: all; }
 
 .effect-pending, .effect-error {
   display: grid; place-items: center; gap: 8px;
@@ -460,7 +461,6 @@
 
 @media (max-width: 720px) {
   .proj-name, .top-right .pill, .top-right .icon-command span { display: none; }
-  .brand small { display: none; }
   .topbar { gap: 8px; padding: 0 10px; }
   .back-btn { padding-inline: 6px; }
   .chat { width: 100%; }

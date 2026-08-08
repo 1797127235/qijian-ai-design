@@ -34,7 +34,6 @@ button { font-family: inherit; }
   /* 让 SVG 的描边颜色与 accent token 联动（无障碍主题/暗色模式可换 url(#...)） */
 }
 .brand { font-family: var(--font-display); font-size: 16px; line-height: 1.1; }
-.brand small { display: block; font-family: var(--font-outlier); font-size: 8.5px; letter-spacing: .18em; color: var(--color-mute-soft); }
 .proj-name { font-size: 13px; color: var(--color-ink-soft); border-left: 1px solid var(--color-hairline-strong); padding-left: 14px; }
 .proj-name-editable { cursor: text; border-radius: 4px; }
 @media (hover: hover) and (pointer: fine) {
