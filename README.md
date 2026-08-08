@@ -50,15 +50,31 @@ npm run dev
 
 文本模型由 pi 的 `ModelRuntime` 读 `~/.pi/agent/models.json`。默认 `codex2api/grok-4.5-latest`，可用 `AGENT_PROVIDER` / `AGENT_MODEL` 覆盖。
 
-图像生成（可选）：
+图像生成（可选，支持多网关）：
 
 ```bash
+# 主站（例如 Grok / codex2api）
 export IMAGE_API_URL=https://example.com/v1/images/generations
 export IMAGE_API_KEY=your-key
+export IMAGE_MODEL=grok-imagine-image-quality
+export IMAGE_PROVIDER_LABEL=Grok
+
+# 附加网关（面板选 model 时自动路由到对应 URL/Key）
+# export IMAGE_PROVIDER_2_URL=http://openai2api.com:3000/v1
+# export IMAGE_PROVIDER_2_KEY=your-key-2
+# export IMAGE_PROVIDER_2_MODELS=gpt-image-2
+# export IMAGE_PROVIDER_2_LABEL=OpenAI2API
+
 # 可选：结果图 URL 下载代理（x.ai 等图床）；生成 API 本身默认直连
 # export IMAGE_FETCH_PROXY=http://127.0.0.1:7897
 npm run dev:server
 ```
+
+约定：
+
+- **model id 全局唯一**；跨网关重复时先注册的网关生效，启动会 `console.warn`。
+- 面板选定 model 后，文生图与 edits 使用同一 model id。
+- **Agent** `generate_from_desk` 不传 model，始终走主站默认（`IMAGE_MODEL` / 主站 `models[0]`）。
 
 工具白名单：`generate_from_desk`、`get_task`、`look_at_desk`（`AGENT_DEBUG_IMAGE_TOOL=1` 时另有调试图工具）。
 
@@ -73,10 +89,16 @@ npm run dev:server
 | `PUBLIC_BASE_URL` | `http://localhost:8787` | 文件 URL 基址 |
 | `AGENT_PROVIDER` | `codex2api` | pi provider |
 | `AGENT_MODEL` | `grok-4.5-latest` | 对话模型名 |
-| `IMAGE_API_URL` | 空 | 图像生成端点（`/images/generations`） |
-| `IMAGE_API_KEY` | 空 | 图像密钥 |
-| `IMAGE_MODEL` | `grok-imagine-image-quality` | 文生图 model |
-| `IMAGE_EDIT_MODEL` | 同 `IMAGE_MODEL` | 有参考图 / edits model |
+| `IMAGE_API_URL` | 空 | **主**生图网关（`/images/generations`） |
+| `IMAGE_API_KEY` | 空 | 主网关密钥 |
+| `IMAGE_MODEL` | `grok-imagine-image-quality` | 主站默认 model |
+| `IMAGE_EDIT_MODEL` | 同 `IMAGE_MODEL` | 主站 edits 默认 model |
+| `IMAGE_MODEL_OPTIONS` | 内置 grok 集 | 主站模型列表（逗号分隔） |
+| `IMAGE_PROVIDER_2_URL`…`_5` | 空 | 附加网关 base 或 generations URL |
+| `IMAGE_PROVIDER_2_KEY`… | 空 | 附加网关密钥 |
+| `IMAGE_PROVIDER_2_MODELS`… | 空 | 该网关模型列表（逗号分隔） |
+| `IMAGE_PROVIDER_2_LABEL`… | provider id | 面板展示名 |
+| `IMAGE_SIZE` | 空 | 默认尺寸偏好（`1:1` / `WxH`）；空=不传 |
 | `IMAGE_FETCH_PROXY` | 空（或 `HTTPS_PROXY`） | 结果图下载代理 |
 | `TEXT_API_URL` | 由 `IMAGE_API_URL` 推导 chat | 起名 / caption 等 |
 | `TEXT_API_KEY` | 回退 `IMAGE_API_KEY` | 文本密钥 |
@@ -114,6 +136,7 @@ npm run db:migrate     # 执行迁移
 | `POST` | `/api/artifacts/:id/rollback` | 回滚版本指针 |
 | `POST / GET` | `/api/projects/:id/files`、`/api/files/:id` | 上传/读文件 |
 | `WS` | `/api/projects/:id/chat` | 对话、过程事件与桌面变更 |
+| `GET` | `/api/public-config` | 公开配置（生图模型列表等，无密钥） |
 
 ## 文档
 

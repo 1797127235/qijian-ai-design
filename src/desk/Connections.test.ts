@@ -5,8 +5,8 @@ import { ConnectionsLayer } from "./Connections";
 import type { DeskConnection, DeskObject } from "./types";
 
 const objects: DeskObject[] = [
-  { id: "a", kind: "canvas_image", x: 0, y: 0, rot: 0, url: "/a.png" },
-  { id: "b", kind: "effect_image", x: 300, y: 0, rot: 0 },
+  { id: "a", kind: "canvas_image", x: 0, y: 0, rot: 0, status: "confirmed", url: "/a.png" },
+  { id: "b", kind: "effect_image", x: 300, y: 0, rot: 0, status: "draft" },
 ];
 
 const connections: DeskConnection[] = [{ id: "c1", from: "a", to: "b" }];

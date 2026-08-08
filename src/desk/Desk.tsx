@@ -10,6 +10,15 @@ import {
   type ConnSide,
 } from "./connection-geometry";
 import { positionFromPointer, screenToWorld, zoomAtPoint, type Viewport } from "./geometry";
+import {
+  objectAspect,
+  RESIZE_HANDLES,
+  resizeFromHandle,
+  resizeHandleCursor,
+  resizeHandleStyle,
+  startSizeOf,
+  type ResizeHandle,
+} from "./resize-geometry";
 import type { DeskConnection, DeskObject } from "./types";
 import { useExitTransition } from "./useExitTransition";
 
@@ -34,6 +43,8 @@ export function Desk({
   connections = [],
   onMove,
   onMoveEnd,
+  onResize,
+  onResizeEnd,
   initialViewport,
   onViewportChange,
   focusRequest,
@@ -56,6 +67,13 @@ export function Desk({
   connections?: DeskConnection[];
   onMove: (id: string, x: number, y: number) => void;
   onMoveEnd?: (id: string, from: { x: number; y: number }, to: { x: number; y: number }) => void;
+  /** 选中框边/角拖动：等比改 w，并可能平移 x/y 固定对边 */
+  onResize?: (id: string, next: { x: number; y: number; w: number }) => void;
+  onResizeEnd?: (
+    id: string,
+    from: { x: number; y: number; w: number },
+    to: { x: number; y: number; w: number },
+  ) => void;
   initialViewport?: Viewport;
   onViewportChange?: (viewport: Viewport) => void;
   focusRequest?: { id: string; token: number };
@@ -85,6 +103,13 @@ export function Desk({
   const drag = useRef<{ id: string; ox: number; oy: number }>();
   const dragStart = useRef<{ id: string; x: number; y: number }>();
   const lastDragPos = useRef<{ id: string; x: number; y: number }>();
+  const resize = useRef<{
+    id: string;
+    handle: ResizeHandle;
+    start: { x: number; y: number; w: number; h: number };
+    aspect: number;
+  }>();
+  const lastResize = useRef<{ id: string; x: number; y: number; w: number }>();
   const connect = useRef<{ fromId: string; side: ConnSide; x: number; y: number }>();
   const pendingClick = useRef<{ id: string; x: number; y: number; shift: boolean }>();
   const lastTap = useRef<{ id: string; at: number }>();
@@ -185,7 +210,7 @@ export function Desk({
   };
 
   const onViewportPointerDown = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle, .conn-hit, .desk-prompt-panel")) return;
+    if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle, .resize-handle, .conn-hit, .desk-prompt-panel")) return;
 
     if (e.button === 1 || (e.button === 0 && spaceHeld.current)) {
       e.preventDefault();
@@ -203,6 +228,14 @@ export function Desk({
   };
 
   const movePointer = (e: React.PointerEvent) => {
+    if (resize.current && onResize) {
+      const r = resize.current;
+      const next = resizeFromHandle(r.start, r.handle, worldFromEvent(e), r.aspect);
+      lastResize.current = { id: r.id, ...next };
+      onResize(r.id, next);
+      return;
+    }
+
     if (connect.current) {
       const p = worldFromEvent(e);
       const fromObj = objects.find((o) => o.id === connect.current!.fromId);
@@ -324,6 +357,19 @@ export function Desk({
     }
     pendingClick.current = undefined;
     pan.current = undefined;
+    if (resize.current && lastResize.current) {
+      const start = resize.current.start;
+      const to = lastResize.current;
+      const changed =
+        Math.round(start.x) !== Math.round(to.x)
+        || Math.round(start.y) !== Math.round(to.y)
+        || Math.round(start.w) !== Math.round(to.w);
+      if (changed) {
+        onResizeEnd?.(to.id, { x: start.x, y: start.y, w: start.w }, { x: to.x, y: to.y, w: to.w });
+      }
+    }
+    resize.current = undefined;
+    lastResize.current = undefined;
     if (drag.current && lastDragPos.current && dragStart.current) {
       const moved =
         Math.round(lastDragPos.current.x) !== Math.round(dragStart.current.x)
@@ -336,6 +382,26 @@ export function Desk({
     dragStart.current = undefined;
     lastDragPos.current = undefined;
     setPanning(false);
+  };
+
+  const startResize = (e: React.PointerEvent, obj: DeskObject, handle: ResizeHandle) => {
+    if (e.button !== 0 || !onResize) return;
+    e.stopPropagation();
+    e.preventDefault();
+    pendingClick.current = undefined;
+    lastTap.current = undefined;
+    drag.current = undefined;
+    dragStart.current = undefined;
+    onSelect?.(obj.id, { panel: false });
+    onSelectConnection?.(undefined);
+    const start = startSizeOf(obj);
+    resize.current = { id: obj.id, handle, start, aspect: objectAspect(obj) };
+    lastResize.current = { id: obj.id, x: start.x, y: start.y, w: start.w };
+    try {
+      vpRef.current?.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
   };
 
   useEffect(() => {
@@ -370,7 +436,7 @@ export function Desk({
 
   const startNodeDrag = (e: React.PointerEvent, obj: DeskObject) => {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
+    if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle, .resize-handle")) return;
     e.stopPropagation();
     const toggle = e.shiftKey;
     const now = performance.now();
@@ -389,7 +455,7 @@ export function Desk({
 
   const onObjectClick = (e: React.MouseEvent, obj: DeskObject) => {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
+    if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle, .resize-handle")) return;
     e.stopPropagation();
     // 选中已在 pointerdown 完成；此处仅兜底（如无 pointer 路径）
     if (!lastTap.current || lastTap.current.id !== obj.id) {
@@ -482,6 +548,29 @@ export function Desk({
                         style={{ left: pos.left, top: pos.top }}
                         title={`从${side === "left" ? "左" : side === "right" ? "右" : side === "top" ? "上" : "下"}拖出连线`}
                         onPointerDown={(e) => startConnect(e, obj, side)}
+                      />
+                    );
+                  })}
+                </>
+              )}
+              {isSelected && selectedIds.length === 1 && onResize && (
+                <>
+                  {RESIZE_HANDLES.map((handle) => {
+                    const pos = resizeHandleStyle(handle, size);
+                    const isEdge = handle === "n" || handle === "s" || handle === "e" || handle === "w";
+                    return (
+                      <span
+                        key={handle}
+                        className={`resize-handle resize-handle-${handle}${isEdge ? " resize-handle-edge" : " resize-handle-corner"}`}
+                        style={{
+                          left: pos.left,
+                          top: pos.top,
+                          width: pos.width,
+                          height: pos.height,
+                          cursor: resizeHandleCursor(handle),
+                        }}
+                        title="拖动缩放"
+                        onPointerDown={(e) => startResize(e, obj, handle)}
                       />
                     );
                   })}

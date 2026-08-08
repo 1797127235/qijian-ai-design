@@ -25,6 +25,7 @@ import { CanvasGenerateService } from "./services/canvas-generate-service.js";
 import { DeskStateService } from "./services/desk-state-service.js";
 import { FileStorage } from "./services/file-storage.js";
 import { HttpImageGenerator } from "./services/image-generator.js";
+import { warnDuplicateImageModels } from "./services/image-providers.js";
 import { ImageCaptionStore } from "./services/image-caption-store.js";
 import { ImageCaptionService } from "./services/image-caption-service.js";
 import { ChatService } from "./services/chat-service.js";
@@ -36,6 +37,8 @@ import { projects } from "./db/schema.js";
 
 // —— 基础设施 ——
 const config = loadConfig();
+// 多网关 model id 冲突：先注册者生效（见 image-providers 约定）
+warnDuplicateImageModels(config.imageProviders);
 const { db, pool } = createDatabase(config);
 
 // —— 领域服务（单实体）——

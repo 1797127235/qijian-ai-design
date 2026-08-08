@@ -234,6 +234,20 @@ export function DeskWorkbench({
     [desk.onMoveEnd, history.record],
   );
 
+  const onResizeEnd = useCallback(
+    (id: string, from: { x: number; y: number; w: number }, to: { x: number; y: number; w: number }) => {
+      desk.onResizeEnd(id, from, to);
+      if (
+        Math.round(from.x) !== Math.round(to.x)
+        || Math.round(from.y) !== Math.round(to.y)
+        || Math.round(from.w) !== Math.round(to.w)
+      ) {
+        history.record({ type: "resize", artifactId: id, from, to });
+      }
+    },
+    [desk.onResizeEnd, history.record],
+  );
+
   const onViewportChange = useCallback(
     (viewport: Viewport) => {
       viewportRef.current = viewport;
@@ -367,6 +381,8 @@ export function DeskWorkbench({
           initialViewport={deskSnapshot?.deskState.viewport}
           onMove={desk.onMove}
           onMoveEnd={onMoveEnd}
+          onResize={desk.onResize}
+          onResizeEnd={onResizeEnd}
           onViewportChange={onViewportChange}
           focusRequest={desk.focusRequest}
           selectedIds={selectedIds}
@@ -482,7 +498,7 @@ export function DeskWorkbench({
               source={panelSource}
               references={panelRefs}
               busy={gen.busySourceId === panelSource.id}
-              onGenerate={(prompt) => {
+              onGenerate={(prompt, opts) => {
                 const fillBack = panelSource.kind === "canvas_image" && !panelSource.url;
                 const prev = fillBack
                   ? deskSnapshot?.artifacts.find((a) => a.id === panelSource.id)
@@ -490,6 +506,8 @@ export function DeskWorkbench({
                 void gen.generate({
                   sourceArtifactId: panelSource.id,
                   prompt,
+                  size: opts?.size,
+                  model: opts?.model,
                   ...(fillBack
                     ? {
                       targetArtifactId: panelSource.id,

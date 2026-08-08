@@ -5,10 +5,27 @@ export const NODE_SIZE: Record<DeskObject["kind"], { w: number; h: number }> = {
   effect_image: { w: 220, h: 160 },
 };
 
+export const NODE_W_MIN = 80;
+export const NODE_W_MAX = 960;
+
 export type ConnSide = "left" | "right" | "top" | "bottom";
 
+export function defaultAspect(kind: DeskObject["kind"]) {
+  const base = NODE_SIZE[kind];
+  return base.h / base.w;
+}
+
+export function clampNodeWidth(w: number) {
+  if (!Number.isFinite(w)) return NODE_SIZE.canvas_image.w;
+  return Math.min(NODE_W_MAX, Math.max(NODE_W_MIN, Math.round(w)));
+}
+
+/** 有 layout.w 时按默认比例推 h，保证连线/框选/选框一致。 */
 export function nodeSize(obj: DeskObject) {
-  return NODE_SIZE[obj.kind];
+  const base = NODE_SIZE[obj.kind];
+  const w = obj.w && obj.w > 0 ? clampNodeWidth(obj.w) : base.w;
+  const h = Math.round(base.h * (w / base.w));
+  return { w, h };
 }
 
 /** CSS rotate 为正角顺时针（Y 向下）；局部点相对中心。 */

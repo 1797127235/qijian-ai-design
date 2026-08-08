@@ -13,7 +13,20 @@ describe("server config", () => {
     expect(config.agentProvider).toBe("internal");
     expect(config.agentModel).toBe("model-one");
   });
-});
+
+  it("builds image model options including the default model", () => {
+    const config = loadConfig({ IMAGE_MODEL: "grok-imagine-image-quality" });
+    expect(config.imageModelOptions[0]).toBe("grok-imagine-image-quality");
+    expect(config.imageModelOptions).toContain("grok-imagine-image-pro");
+  });
+
+  it("parses IMAGE_MODEL_OPTIONS and keeps default first", () => {
+    const config = loadConfig({
+      IMAGE_MODEL: "alpha",
+      IMAGE_MODEL_OPTIONS: "beta, alpha, gamma",
+    });
+    expect(config.imageModelOptions).toEqual(["alpha", "beta", "gamma"]);
+  });
 
   it("defaults langsmith tracing off", () => {
     const config = loadConfig({});
@@ -30,4 +43,4 @@ describe("server config", () => {
     expect(config.langsmithTracing).toBe(true);
     expect(config.langsmithApiKey).toBe("lsv2_test");
   });
-
+});

@@ -2,9 +2,11 @@ import { ProxyAgent, fetch as undiciFetch, type RequestInit as UndiciRequestInit
 import type { ServerConfig } from "../config.js";
 import { HttpError } from "../lib/errors.js";
 import type { FileStorage } from "./file-storage.js";
+import { editsEndpointFrom, resolveImageRoute, type ImageProviderConfig } from "./image-providers.js";
+import { resolveRequestSize } from "./image-size.js";
 
 /**
- * 图像生成适配器：对接外部文生图/图编辑 API（默认 codex2api/grok-imagine-*）。
+ * 图像生成适配器：OpenAI 兼容文生图/图编辑；支持多网关（按 model 路由）。
  *
  *  - 两条请求路径：text-only（POST /images/generations）+ with-refs（POST /images/edits）
  *  - 优先 b64_json 响应：避免再访问被墙的结果图床
@@ -56,6 +58,10 @@ export interface GenerateImageInput {
   intent?: string;
   context: string;
   referenceFiles?: ReferenceFile[];
+  /** UI/env 偏好：比例或 "WxH"；解析失败或 auto 则不传上游 size */
+  size?: string;
+  /** 单次请求 model；须在 allowlist 内，否则回落 config */
+  model?: string;
 }
 
 export interface GeneratedImage {
@@ -73,15 +79,25 @@ export class HttpImageGenerator implements ImageGenerator {
   private readonly config: ServerConfig;
   private readonly files: FileStorage;
   private readonly fetcher: typeof fetch;
-  /** 仅结果图下载走代理：x.ai 图床被墙，而生成 API（codex2api）直连可达 */
+  /** 仅结果图下载优先走代理：x.ai 图床被墙，而生成 API（codex2api）直连可达 */
   private readonly downloadFetcher: typeof fetch;
+  /** downloadFetcher 与 fetcher 不同时，代理失败会直连重试 */
+  private readonly canFallbackDirect: boolean;
 
-  constructor(config: ServerConfig, files: FileStorage, fetcher?: typeof fetch) {
+  constructor(
+    config: ServerConfig,
+    files: FileStorage,
+    fetcher?: typeof fetch,
+    /** 测试可注入独立下载 fetcher；生产由 IMAGE_FETCH_PROXY 构造 */
+    downloadFetcher?: typeof fetch,
+  ) {
     this.config = config;
     this.files = files;
     this.fetcher = fetcher ?? fetch;
     const proxy = config.imageFetchProxy?.trim();
-    if (!fetcher && proxy) {
+    if (downloadFetcher) {
+      this.downloadFetcher = downloadFetcher;
+    } else if (!fetcher && proxy) {
       // 注意：只对 GET 下载用 undici@8 fetch；其 multipart 序列化会让上游丢字段
       const dispatcher = new ProxyAgent(proxy);
       this.downloadFetcher = ((url: string | URL | Request, init?: RequestInit) =>
@@ -89,6 +105,7 @@ export class HttpImageGenerator implements ImageGenerator {
     } else {
       this.downloadFetcher = this.fetcher;
     }
+    this.canFallbackDirect = this.downloadFetcher !== this.fetcher;
   }
 
   /** 包一层：undici 的「fetch failed」裸消息没营养，带上 cause（UND_ERR_CONNECT_TIMEOUT 等） */
@@ -107,15 +124,27 @@ export class HttpImageGenerator implements ImageGenerator {
    * 异常时一律抛 HttpError 503（网络/上游问题，retryable=true 让前端可重试）。
    */
   async generate(input: GenerateImageInput, signal?: AbortSignal): Promise<GeneratedImage> {
-    if (!this.config.imageEndpoint || !this.config.imageApiKey) {
+    const route = this.resolveRoute(input);
+    if (!route.ok) {
+      if (route.reason === "unknown_model") {
+        throw new HttpError(400, `未知生图 model：${route.model}`);
+      }
       throw new HttpError(503, "尚未配置 IMAGE_API_URL 和 IMAGE_API_KEY，无法生成效果图");
     }
+    const { provider, model } = route;
     const prompt = `${input.context}\n补充意图：${input.intent ?? "无"}`;
     // xAI grok-imagine edit 只接受单张参考图，多图必 400；取第一张（源图），其余靠 prompt 描述
     const refs = (input.referenceFiles ?? []).slice(0, 1);
-    const response = refs.length > 0
-      ? await this.requestWithReferences(prompt, refs, signal)
-      : await this.requestTextOnly(prompt, signal);
+    const size = resolveRequestSize(input.size ?? this.config.imageSize);
+    const call = (resolvedSize?: string) =>
+      refs.length > 0
+        ? this.requestWithReferences(provider, prompt, refs, signal, resolvedSize, model)
+        : this.requestTextOnly(provider, prompt, signal, resolvedSize, model);
+    let response = await call(size);
+    // 上游若因 size 400，omit 后重试一次（契约：size 不得硬杀生图）
+    if (!response.ok && size && response.status === 400) {
+      response = await call(undefined);
+    }
     if (!response.ok) throw new HttpError(503, `图像服务调用失败：${response.status}${await errorDetail(response)}`);
     let body: {
       data?: Array<{ url?: string; b64_json?: string; id?: string }>;
@@ -170,50 +199,81 @@ export class HttpImageGenerator implements ImageGenerator {
     return { url: stored.url, fileId: stored.id, sourceUrl: auditUrl, providerId };
   }
 
+  /** 优先 imageProviders 路由；测试/旧配置仅有 imageEndpoint 时回落拼主站。 */
+  private resolveRoute(input: GenerateImageInput) {
+    const forEdit = (input.referenceFiles?.length ?? 0) > 0;
+    const providers = this.config.imageProviders ?? [];
+    if (providers.length > 0) {
+      return resolveImageRoute(providers, input.model, forEdit);
+    }
+    if (!this.config.imageEndpoint || !this.config.imageApiKey) {
+      return { ok: false as const, reason: "no_providers" as const };
+    }
+    const models = this.config.imageModelOptions?.length
+      ? this.config.imageModelOptions
+      : [this.config.imageModel ?? "default"];
+    const provider = {
+      id: "primary",
+      label: "Primary",
+      endpoint: this.config.imageEndpoint,
+      apiKey: this.config.imageApiKey,
+      models,
+      editModel: this.config.imageEditModel,
+    } satisfies ImageProviderConfig;
+    return resolveImageRoute([provider], input.model, forEdit);
+  }
+
   /** 无参考图：直接 POST /images/generations，response_format=b64_json 省一次下载。 */
-  private async requestTextOnly(prompt: string, signal?: AbortSignal) {
-    // b64_json 直出图数据，免去访问被墙的结果图床
+  private async requestTextOnly(
+    provider: ImageProviderConfig,
+    prompt: string,
+    signal?: AbortSignal,
+    size?: string,
+    model?: string,
+  ) {
     const body: Record<string, unknown> = { prompt, n: 1, response_format: "b64_json" };
-    if (this.config.imageModel) body.model = this.config.imageModel;
-    return this.send(this.fetcher, this.config.imageEndpoint!, {
+    if (model) body.model = model;
+    if (size) body.size = size;
+    return this.send(this.fetcher, provider.endpoint, {
       method: "POST",
-      headers: { authorization: `Bearer ${this.config.imageApiKey}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${provider.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify(body),
       signal,
     });
   }
 
-  /** 有参考图：multipart /images/edits，model 用 imageEditModel。xAI grok-imagine edit 只接受单张参考图（调用方已截断）。 */
-  private async requestWithReferences(prompt: string, refs: ReferenceFile[], signal?: AbortSignal) {
-    const endpoint = this.editsEndpoint();
+  /** 有参考图：multipart /images/edits。xAI grok-imagine edit 只接受单张参考图（调用方已截断）。 */
+  private async requestWithReferences(
+    provider: ImageProviderConfig,
+    prompt: string,
+    refs: ReferenceFile[],
+    signal?: AbortSignal,
+    size?: string,
+    model?: string,
+  ) {
+    const endpoint = editsEndpointFrom(provider.endpoint);
     const form = new FormData();
     form.append("prompt", prompt);
     form.append("n", "1");
     form.append("response_format", "b64_json");
-    if (this.config.imageEditModel) form.append("model", this.config.imageEditModel);
+    if (model) form.append("model", model);
+    if (size) form.append("size", size);
     for (const [index, ref] of refs.entries()) {
       const name = ref.filename ?? `ref-${index}${imageExtensions.get(ref.mediaType) ?? ".png"}`;
       form.append("image", new Blob([Buffer.from(ref.bytes)], { type: ref.mediaType }), name);
     }
     return this.send(this.fetcher, endpoint, {
       method: "POST",
-      headers: { authorization: `Bearer ${this.config.imageApiKey}` },
+      headers: { authorization: `Bearer ${provider.apiKey}` },
       body: form,
       signal,
     });
   }
 
-  /** 把 imageEndpoint 从 generations 推断到 edits；已经显式指明则透传。 */
-  private editsEndpoint() {
-    const base = this.config.imageEndpoint!;
-    if (base.includes("/images/edits")) return base;
-    if (base.includes("/images/generations")) return base.replace("/images/generations", "/images/edits");
-    return base.endsWith("/") ? `${base}images/edits` : `${base}/images/edits`;
-  }
-
   /**
    * 下载上游图床结果：protocol/host 白名单 → content-type → 有界流式读 body → magic 校验。
    * 禁止默认 redirect，降低 SSRF；body 超限立即中止。
+   * 配置了代理时：先代理，失败再直连（代理关/超时仍可能直连拿到图）。
    */
   private async download(sourceUrl: string, signal?: AbortSignal) {
     let parsed: URL;
@@ -223,7 +283,16 @@ export class HttpImageGenerator implements ImageGenerator {
       throw new HttpError(503, "图像服务返回了无效的图片 URL");
     }
     assertSafeImageUrl(parsed);
-    const response = await this.send(this.downloadFetcher, parsed, { signal, redirect: "error" });
+    try {
+      return await this.downloadOnce(this.downloadFetcher, parsed, signal);
+    } catch (error) {
+      if (!this.canFallbackDirect || signal?.aborted) throw error;
+      return this.downloadOnce(this.fetcher, parsed, signal);
+    }
+  }
+
+  private async downloadOnce(fetcher: typeof fetch, parsed: URL, signal?: AbortSignal) {
+    const response = await this.send(fetcher, parsed, { signal, redirect: "error" });
     if (!response.ok) throw new HttpError(503, `效果图归档下载失败：${response.status}`);
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() ?? "";
     if (!imageExtensions.has(mediaType)) throw new HttpError(503, "效果图归档仅支持 JPG、PNG 和 WebP");

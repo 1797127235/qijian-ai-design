@@ -21,6 +21,10 @@ const image: DeskObject = {
 };
 
 describe("connection geometry", () => {
+  it("honors layout width when present", () => {
+    expect(nodeSize({ ...image, w: 440 })).toEqual({ w: 440, h: 320 });
+  });
+
   it("places default source on the right edge center", () => {
     const size = nodeSize(image);
     expect(sourceAnchor(image)).toEqual({ x: 100 + size.w, y: 50 + size.h / 2 });

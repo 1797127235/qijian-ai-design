@@ -174,20 +174,15 @@ export function InpaintDialog({
             <ImagePlus size={14} strokeWidth={1.7} />
             {uploading ? "上传中…" : "参考图"}
           </button>
-          <div className="desk-prompt-actions">
-            <button type="button" className="ghost" disabled={busy} onClick={onCancel}>
-              取消
-            </button>
-            <button
-              type="button"
-              className={busy ? "busy" : "primary"}
-              disabled={!canSubmit || busy}
-              onClick={submit}
-              title={hint}
-            >
-              {busy ? "生成中…" : "重绘"}
-            </button>
-          </div>
+          <button
+            type="button"
+            className={`inpaint-submit${busy ? " busy" : ""}`}
+            disabled={!canSubmit || busy}
+            onClick={submit}
+            title={hint}
+          >
+            {busy ? "生成中…" : "重绘"}
+          </button>
         </div>
         <input
           ref={fileInputRef}

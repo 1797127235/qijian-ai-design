@@ -50,6 +50,29 @@ export function useDeskActions(options: {
     [enqueue],
   );
 
+  const onResize = useCallback((id: string, next: { x: number; y: number; w: number }) => {
+    setObjects((cur) => cur.map((o) => (o.id === id ? { ...o, x: next.x, y: next.y, w: next.w } : o)));
+  }, [setObjects]);
+
+  const onResizeEnd = useCallback(
+    (id: string, _from: { x: number; y: number; w: number }, to: { x: number; y: number; w: number }) => {
+      const { projectId, activeProjectRef, refreshDesk, setChatItems } = depsRef.current;
+      if (!projectId) return;
+      void enqueue(() =>
+        api.moveObject(projectId, id, {
+          x: Math.round(to.x),
+          y: Math.round(to.y),
+          w: Math.round(to.w),
+        }).catch((e) => {
+          if (activeProjectRef.current !== projectId) return;
+          setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: `尺寸保存失败：${e instanceof Error ? e.message : "未知错误"}` }]);
+          void refreshDesk(projectId).catch(() => undefined);
+        }),
+      );
+    },
+    [enqueue],
+  );
+
   const onViewportChange = useCallback(
     (viewport: { x: number; y: number; zoom: number }) => {
       const { projectId, snapshot, activeProjectRef, refreshDesk, setChatItems } = depsRef.current;
@@ -85,6 +108,8 @@ export function useDeskActions(options: {
     enqueue,
     onMove,
     onMoveEnd,
+    onResize,
+    onResizeEnd,
     onViewportChange,
     clearViewportTimer,
   };

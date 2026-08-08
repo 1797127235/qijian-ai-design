@@ -64,6 +64,8 @@ function generationPayloadFields(input: {
   origin: GenerateSource;
   region?: ImageRegion;
   referenceFileId?: string;
+  size?: string;
+  model?: string;
 }) {
   return {
     prompt: input.composedPrompt,
@@ -71,6 +73,8 @@ function generationPayloadFields(input: {
     source: input.origin,
     ...(input.region ? { region: input.region, inpaint: true as const } : {}),
     ...(input.referenceFileId ? { reference_file_id: input.referenceFileId } : {}),
+    ...(input.size ? { size: input.size } : {}),
+    ...(input.model ? { model: input.model } : {}),
   };
 }
 
@@ -127,6 +131,10 @@ export interface GenerateFromCanvasInput {
   region?: ImageRegion;
   /** 局部重绘：用户上传的参考图 fileId（须属于本项目） */
   referenceFileId?: string;
+  /** 出图尺寸偏好：比例或 WxH；auto/空=不传 */
+  size?: string;
+  /** 单次生图 model（须在服务端 allowlist） */
+  model?: string;
   /** 外部取消（agent stop / 工具 AbortSignal） */
   signal?: AbortSignal;
 }
@@ -154,6 +162,8 @@ export interface PreparedGenerate {
   /** 局部重绘透传：complete 时裁剪/合成 */
   region?: ImageRegion;
   referenceFileId?: string;
+  size?: string;
+  model?: string;
 }
 
 /**
@@ -233,6 +243,8 @@ export class CanvasGenerateService {
       origin,
       region: input.region,
       referenceFileId: input.referenceFileId,
+      size: input.size,
+      model: input.model,
     });
 
     const preparedTarget = input.targetArtifactId
@@ -261,6 +273,8 @@ export class CanvasGenerateService {
       lockKey: `${input.projectId}:${input.targetArtifactId ?? input.sourceArtifactId}`,
       region: input.region,
       referenceFileId: input.referenceFileId,
+      size: input.size,
+      model: input.model,
     };
   }
 
@@ -288,6 +302,8 @@ export class CanvasGenerateService {
       origin,
       region: prepared.region,
       referenceFileId: prepared.referenceFileId,
+      size: prepared.size,
+      model: prepared.model,
     });
     const inputRefs = referenceFileIds.map((file_id) => ({ file_id }));
 
@@ -309,6 +325,8 @@ export class CanvasGenerateService {
           context: composedPrompt,
           intent: "canvas_panel",
           referenceFiles,
+          size: prepared.size,
+          model: prepared.model,
         },
         controller.signal,
       );

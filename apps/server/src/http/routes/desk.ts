@@ -92,6 +92,9 @@ export function registerDeskRoutes(app: Hono, deps: {
         message: "选区超出图片边界",
       }).optional(),
       referenceFileId: z.string().uuid().optional(),
+      // 出图尺寸：auto / 1:1 / 16:9 / 1024x1024 等；服务端解析失败则 omit
+      size: z.string().max(32).optional(),
+      model: z.string().min(1).max(80).optional(),
     }));
 
     let prepared: PreparedGenerate | undefined;
@@ -104,6 +107,8 @@ export function registerDeskRoutes(app: Hono, deps: {
         source_artifact_id: input.sourceArtifactId,
         target_artifact_id: input.targetArtifactId,
         client_op_id: input.clientOpId,
+        size: input.size,
+        model: input.model,
       },
       prepare: async () => {
         prepared = await deps.generate!.prepare({
@@ -114,6 +119,8 @@ export function registerDeskRoutes(app: Hono, deps: {
           targetArtifactId: input.targetArtifactId,
           region: input.region,
           referenceFileId: input.referenceFileId,
+          size: input.size,
+          model: input.model,
           source: "canvas_panel",
           createdBy: "designer",
         });

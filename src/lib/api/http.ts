@@ -67,6 +67,10 @@ export const api = {
     region?: { x: number; y: number; w: number; h: number };
     /** 局部重绘：用户上传的参考图 fileId */
     referenceFileId?: string;
+    /** 出图尺寸：auto / 1:1 / 16:9 / WxH */
+    size?: string;
+    /** 生图 model（服务端 allowlist） */
+    model?: string;
   }) =>
     request<{
       status: "accepted";
@@ -92,4 +96,11 @@ export const api = {
   deleteFile: (projectId: string, fileId: string) =>
     request<void>(`/api/projects/${projectId}/files/${fileId}`, { method: "DELETE" }),
   fileUrl: (fileId: string) => `/api/files/${fileId}`,
+  publicConfig: () =>
+    request<{
+      imageModel: string | null;
+      imageModels: string[];
+      imageModelChoices?: Array<{ id: string; providerId: string; providerLabel: string }>;
+      imageSize: string | null;
+    }>("/api/public-config"),
 };

@@ -47,6 +47,16 @@ export function createHttpApp(deps: HttpDependencies) {
   // 健康检查：livenessProbe 用
   app.get("/health", (c) => c.json({ ok: true }));
 
+  // 前端公开配置（无密钥）：生图模型列表（含所属 provider 标签）
+  app.get("/api/public-config", (c) =>
+    c.json({
+      imageModel: deps.config.imageModel ?? null,
+      imageModels: deps.config.imageModelOptions,
+      imageModelChoices: deps.config.imageModelChoices,
+      imageSize: deps.config.imageSize ?? null,
+    }),
+  );
+
   // 路由注册：每个文件管自己的资源
   registerProjectRoutes(app, deps);
   registerDeskRoutes(app, {

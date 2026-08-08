@@ -26,7 +26,14 @@ function imageFields(payload: Record<string, unknown>) {
 
 function mapArtifact(artifact: ArtifactSnapshot, layout: { x: number; y: number; rot: number; w?: number }): DeskObject | undefined {
   const { payload, status } = artifact;
-  const base = { id: artifact.id, x: layout.x, y: layout.y, rot: layout.rot, status };
+  const base = {
+    id: artifact.id,
+    x: layout.x,
+    y: layout.y,
+    rot: layout.rot,
+    ...(layout.w && layout.w > 0 ? { w: layout.w } : {}),
+    status,
+  };
   if (artifact.artifactType === "canvas_image" || artifact.artifactType === "effect_image") {
     const fileId = text(payload.file_id);
     return {

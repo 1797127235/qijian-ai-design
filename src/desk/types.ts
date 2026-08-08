@@ -5,6 +5,8 @@ export type DeskObject =
       x: number;
       y: number;
       rot: number;
+      /** 展示宽度；缺省 NODE_SIZE；高度按默认比例推算 */
+      w?: number;
       status: "draft" | "confirmed";
       /** 与 Agent Survey 一致的桌面编号（A01…），按 desk_state.objects 顺序 */
       alias?: string;
@@ -27,6 +29,8 @@ export type DeskObject =
       x: number;
       y: number;
       rot: number;
+      /** 展示宽度；缺省 NODE_SIZE；高度按默认比例推算 */
+      w?: number;
       status: "draft" | "confirmed";
       /** 与 Agent Survey 一致的桌面编号（A01…） */
       alias?: string;

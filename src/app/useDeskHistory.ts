@@ -20,6 +20,12 @@ export type DeskHistoryOp =
   | { type: "place"; entry: DeskHistoryEntry }
   | { type: "remove"; entry: DeskHistoryEntry }
   | { type: "move"; artifactId: string; from: { x: number; y: number }; to: { x: number; y: number } }
+  | {
+      type: "resize";
+      artifactId: string;
+      from: { x: number; y: number; w: number };
+      to: { x: number; y: number; w: number };
+    }
   | { type: "place_connection"; connection: { id: string; from: string; to: string } }
   | { type: "remove_connection"; connection: { id: string; from: string; to: string } }
   | { type: "generate"; entry: DeskHistoryEntry; connections: { id: string; from: string; to: string }[] }
@@ -70,6 +76,13 @@ async function applyInverse(projectId: string, op: DeskHistoryOp): Promise<void>
     case "move":
       await api.moveObject(projectId, op.artifactId, { x: Math.round(op.from.x), y: Math.round(op.from.y) });
       return;
+    case "resize":
+      await api.moveObject(projectId, op.artifactId, {
+        x: Math.round(op.from.x),
+        y: Math.round(op.from.y),
+        w: Math.round(op.from.w),
+      });
+      return;
     case "place_connection":
       await api.deleteConnection(projectId, op.connection.id);
       return;
@@ -105,6 +118,13 @@ async function applyForward(projectId: string, op: DeskHistoryOp): Promise<void>
       return;
     case "move":
       await api.moveObject(projectId, op.artifactId, { x: Math.round(op.to.x), y: Math.round(op.to.y) });
+      return;
+    case "resize":
+      await api.moveObject(projectId, op.artifactId, {
+        x: Math.round(op.to.x),
+        y: Math.round(op.to.y),
+        w: Math.round(op.to.w),
+      });
       return;
     case "place_connection":
       await api.createConnection(projectId, {

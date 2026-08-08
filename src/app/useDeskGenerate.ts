@@ -20,6 +20,10 @@ export interface GenerateOptions {
   region?: { x: number; y: number; w: number; h: number };
   /** 局部重绘：用户上传的参考图 fileId */
   referenceFileId?: string;
+  /** 出图尺寸：auto / 1:1 / 16:9 / WxH */
+  size?: string;
+  /** 生图 model */
+  model?: string;
 }
 
 /** 面板生图：H8 秒级 accepted；终态靠 WS object_changed。 */
@@ -57,6 +61,8 @@ export function useDeskGenerate(options: {
           targetArtifactId: opts.targetArtifactId,
           region: opts.region,
           referenceFileId: opts.referenceFileId,
+          size: opts.size,
+          model: opts.model,
         });
         const snap = await refreshDesk(projectId).catch(() => undefined);
         const artifact = snap?.artifacts.find((a) => a.id === result.artifact.id);

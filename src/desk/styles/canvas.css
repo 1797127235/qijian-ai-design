@@ -129,6 +129,21 @@
 .conn-handle-source { cursor: crosshair; }
 .conn-handle-target { pointer-events: none; opacity: .7; }
 
+/* 选中黄框：整条边 + 四角可拖；尺寸由 inline style 铺满框线 */
+.resize-handle {
+  position: absolute; z-index: 8; pointer-events: auto; touch-action: none;
+  box-sizing: border-box;
+}
+.resize-handle-corner {
+  z-index: 9; border-radius: 2px;
+  background: #fff; border: 2px solid var(--color-accent);
+  box-shadow: 0 1px 4px rgba(28, 26, 22, .22);
+}
+/* 边：透明命中带，盖住整段黄框线（角由 corner 更高 z 抢） */
+.resize-handle-edge {
+  background: transparent; border: 0;
+}
+
 /* 连线默认不抢点击；仅选中/可点时 path 自己开 pointer-events */
 .desk-connections { z-index: 0; pointer-events: none; }
 .desk-connections path.conn-hit { pointer-events: stroke; }
@@ -177,34 +192,86 @@
   border: 1px solid transparent;
 }
 .desk-prompt-bar {
-  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding-top: 8px; border-top: 1px solid var(--color-hairline);
 }
-.desk-prompt-actions { display: flex; align-items: center; gap: 6px; flex: none; }
-.desk-prompt-actions button {
-  border: 0; border-radius: 7px; padding: 6px 12px;
-  font-family: var(--font-body); font-size: 12px; font-weight: 500;
-  cursor: pointer; line-height: 1.2;
+.desk-prompt-bar-left {
+  position: relative; min-width: 0; flex: 1;
+  display: flex; align-items: center; gap: 6px;
 }
-.desk-prompt-actions button.ghost {
-  background: transparent; color: var(--color-mute);
-  border: 1px solid var(--color-hairline-strong);
+.desk-prompt-model-wrap, .desk-prompt-settings-wrap { position: relative; min-width: 0; }
+.desk-prompt-model, .desk-prompt-settings {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  border: 1px solid var(--color-hairline-strong); border-radius: 999px;
+  padding: 6px 10px; background: var(--color-surface); color: var(--color-ink-soft);
+  font-family: var(--font-body); font-size: 12px; cursor: pointer; line-height: 1.2;
 }
-.desk-prompt-actions button.primary {
-  background: var(--color-accent); color: var(--color-accent-ink);
+.desk-prompt-model { max-width: 9.5rem; }
+.desk-prompt-settings { max-width: 7rem; }
+.desk-prompt-model:disabled, .desk-prompt-settings:disabled { opacity: .45; cursor: not-allowed; }
+.desk-prompt-model-label, .desk-prompt-settings-label {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 @media (hover: hover) and (pointer: fine) {
-  .desk-prompt-actions button.ghost:hover:not(:disabled) {
-    color: var(--color-ink-soft); background: var(--color-surface);
-  }
-  .desk-prompt-actions button.primary:hover:not(:disabled) { background: var(--color-accent-hover); }
+  .desk-prompt-model:hover:not(:disabled),
+  .desk-prompt-settings:hover:not(:disabled) { color: var(--color-ink); background: var(--color-card); }
 }
-.desk-prompt-actions button.busy {
-  background: var(--color-surface); color: var(--color-mute); cursor: default;
-  border: 1px solid var(--color-hairline);
+.desk-prompt-model-pop, .desk-prompt-settings-pop {
+  position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40;
+  border-radius: 10px; border: 1px solid var(--color-hairline-strong);
+  background: var(--color-card);
+  box-shadow: 0 10px 28px rgba(28, 26, 22, 0.14);
 }
-.desk-prompt-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
-.desk-prompt-actions button:active:not(:disabled) { transform: translateY(1px); }
+.desk-prompt-model-pop {
+  min-width: 12rem; max-width: 18rem; max-height: 12rem; overflow: auto;
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.desk-prompt-model-pop button {
+  border: 0; border-radius: 7px; padding: 7px 8px; text-align: left;
+  background: transparent; color: var(--color-ink-soft);
+  font-family: var(--font-body); font-size: 12px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.desk-prompt-model-pop button.selected {
+  background: var(--color-accent-soft); color: var(--color-accent);
+}
+.desk-prompt-model-id { font-weight: 500; }
+.desk-prompt-model-provider { font-size: 10px; opacity: .7; }
+@media (hover: hover) and (pointer: fine) {
+  .desk-prompt-model-pop button:hover { background: var(--color-surface); color: var(--color-ink); }
+}
+.desk-prompt-settings-pop {
+  width: 220px; padding: 10px;
+}
+.desk-prompt-settings-title {
+  font-size: 11px; color: var(--color-mute); margin-bottom: 8px; letter-spacing: .02em;
+}
+.desk-prompt-size-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+}
+.desk-prompt-size-grid button {
+  border: 1px solid var(--color-hairline-strong); border-radius: 7px;
+  padding: 6px 0; background: transparent; color: var(--color-ink-soft);
+  font-family: var(--font-body); font-size: 11px; cursor: pointer;
+}
+.desk-prompt-size-grid button.selected {
+  border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-accent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .desk-prompt-size-grid button:hover { background: var(--color-surface); color: var(--color-ink); }
+}
+.desk-prompt-send {
+  flex: none; width: 36px; height: 36px; border: 0; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--color-accent); color: var(--color-accent-ink); cursor: pointer;
+}
+.desk-prompt-send:disabled { opacity: .45; cursor: not-allowed; }
+.desk-prompt-send.busy { background: var(--color-surface); color: var(--color-mute); }
+@media (hover: hover) and (pointer: fine) {
+  .desk-prompt-send:hover:not(:disabled) { background: var(--color-accent-hover); }
+}
+.desk-prompt-send:active:not(:disabled) { transform: translateY(1px); }
 
 /* ── 局部重绘面板 ── */
 .inpaint-upload {
@@ -219,6 +286,20 @@
 @media (hover: hover) and (pointer: fine) {
   .inpaint-upload:hover:not(:disabled) { color: var(--color-accent); border-color: var(--color-accent); }
 }
+.inpaint-submit {
+  flex: none; border: 0; border-radius: 8px; padding: 7px 16px;
+  font-family: var(--font-body); font-size: 13px; font-weight: 500; line-height: 1.2;
+  background: var(--color-accent); color: var(--color-accent-ink); cursor: pointer;
+}
+.inpaint-submit:disabled { opacity: .45; cursor: not-allowed; }
+.inpaint-submit.busy {
+  background: var(--color-surface); color: var(--color-mute);
+  border: 1px solid var(--color-hairline);
+}
+@media (hover: hover) and (pointer: fine) {
+  .inpaint-submit:hover:not(:disabled) { background: var(--color-accent-hover); }
+}
+.inpaint-submit:active:not(:disabled) { transform: translateY(1px); }
 .inpaint-ref-chip { display: inline-flex; align-items: center; gap: 6px; }
 .inpaint-ref-chip img { width: 20px; height: 20px; border-radius: 4px; object-fit: cover; }
 .inpaint-ref-chip button {

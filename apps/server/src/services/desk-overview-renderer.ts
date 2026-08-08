@@ -103,7 +103,7 @@ export async function renderDeskOverview(input: OverviewRenderInput): Promise<Ov
   const placed: Placed[] = [];
   for (const tile of included) {
     const tw = tile.w && tile.w > 0 ? tile.w : DEFAULT_CARD_W;
-    const th = DEFAULT_CARD_H;
+    const th = Math.round(DEFAULT_CARD_H * (tw / DEFAULT_CARD_W));
     let img: Image | null = null;
     if (tile.imageBytes && tile.imageBytes.byteLength > 0) {
       try {
