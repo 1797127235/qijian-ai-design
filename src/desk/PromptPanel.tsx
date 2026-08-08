@@ -80,6 +80,8 @@ export function PromptPanel({
 
 function initialPrompt(source: DeskObject) {
   if (source.kind === "sticky_note") return source.text;
-  if (source.kind === "canvas_image" || source.kind === "effect_image") return source.prompt ?? "";
+  if (source.kind === "canvas_image" || source.kind === "effect_image") {
+    return source.userPrompt ?? source.prompt ?? "";
+  }
   return "";
 }

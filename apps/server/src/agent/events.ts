@@ -23,6 +23,8 @@ export type ServerEvent =
   | { type: "prompt_ack"; projectId: string; threadId: string; clientMessageId?: string; message: ChatMessageDto }
   | { type: "chat_message"; projectId: string; message: ChatMessageDto }
   | { type: "object_changed"; projectId: string; artifactId?: string; undoable?: boolean }
+  /** 项目被改名（目前由自动起名触发）；前端就地更新顶栏/列表 */
+  | { type: "project_renamed"; projectId: string; name: string }
   | {
     type: "agent_job_updated";
     projectId: string;

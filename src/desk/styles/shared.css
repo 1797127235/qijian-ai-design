@@ -1,0 +1,66 @@
+/* 全局壳：app-shell / topbar / 重置；token 仍在 src/tokens.css */
+:root {
+  --desk-bg: #f0ece3;
+}
+
+* { box-sizing: border-box; margin: 0; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+html, body, #root { height: 100%; }
+body {
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  background: var(--desk-bg);
+  overflow: hidden;
+}
+button { font-family: inherit; }
+
+.app-shell { height: 100%; min-width: 0; display: flex; flex-direction: column; }
+
+.topbar {
+  height: 52px; flex: none; z-index: 50;
+  display: flex; align-items: center; gap: 14px; padding: 0 16px;
+  background: rgba(240, 236, 227, .88); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--color-hairline);
+}
+.seal-box {
+  width: 26px; height: 26px; border-radius: 6px; background: var(--color-accent); color: #fff;
+  display: grid; place-items: center; font-family: var(--font-display); font-size: 15px;
+}
+.brand-mark {
+  width: 30px; height: 30px; flex: none;
+  /* 让 SVG 的描边颜色与 accent token 联动（无障碍主题/暗色模式可换 url(#...)） */
+}
+.brand { font-family: var(--font-display); font-size: 16px; line-height: 1.1; }
+.brand small { display: block; font-family: var(--font-outlier); font-size: 8.5px; letter-spacing: .18em; color: var(--color-mute-soft); }
+.proj-name { font-size: 13px; color: var(--color-ink-soft); border-left: 1px solid var(--color-hairline-strong); padding-left: 14px; }
+.proj-name-editable { cursor: text; border-radius: 4px; }
+@media (hover: hover) and (pointer: fine) {
+  .proj-name-editable:hover { color: var(--color-ink); }
+}
+.proj-name-input {
+  font-size: 13px; color: var(--color-ink); background: var(--color-card);
+  border: 1px solid var(--color-accent); border-radius: 6px; padding: 3px 8px;
+  outline: none; margin-left: 14px; min-width: 180px;
+}
+.top-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.pill {
+  font-family: var(--font-outlier); font-size: 10.5px; letter-spacing: .06em; padding: 5px 10px;
+  border-radius: 999px; border: 1px solid var(--color-hairline-strong); background: var(--color-card); color: var(--color-mute);
+}
+.pill.acc { color: var(--color-accent); border-color: var(--color-accent); background: var(--color-accent-soft); }
+.icon-command {
+  height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px;
+  border: 1px solid var(--color-hairline-strong); border-radius: 7px;
+  background: var(--color-card); color: var(--color-ink-soft); cursor: pointer; font-size: 12px;
+  transition: border-color var(--dur-micro), color var(--dur-micro);
+}
+.icon-command:active { transform: translateY(1px); }
+@media (hover: hover) and (pointer: fine) {
+  .icon-command:hover { border-color: var(--color-accent); color: var(--color-accent); }
+}
+
+.workbench { position: relative; flex: 1; display: flex; min-width: 0; min-height: 0; }
+

@@ -3,6 +3,7 @@ import { ConnectionsLayer } from "./Connections";
 import { nodeAabb, nodeSize, sourceAnchor } from "./connection-geometry";
 import { positionFromPointer, screenToWorld, zoomAtPoint, type Viewport } from "./geometry";
 import type { DeskConnection, DeskObject } from "./types";
+import { useExitTransition } from "./useExitTransition";
 
 const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 5;
@@ -35,6 +36,7 @@ export function Desk({
   onSelectConnection,
   onDropFiles,
   onCreateConnection,
+  onObjectDoubleClick,
   renderObject,
   renderNodeToolbar,
   overlay,
@@ -54,6 +56,8 @@ export function Desk({
   onSelectConnection?: (id?: string) => void;
   onDropFiles?: (files: File[]) => void;
   onCreateConnection?: (from: string, to: string) => void;
+  /** 物件双击（画布拖拽会吞原生 dblclick，这里用点击间隔识别） */
+  onObjectDoubleClick?: (obj: DeskObject) => void;
   renderObject: (obj: DeskObject) => ReactNode;
   /** 单选节点时渲染其上方悬浮工具条内容（按钮由调用方给）；定位/显隐由 Desk 负责 */
   renderNodeToolbar?: (obj: DeskObject) => ReactNode;
@@ -70,6 +74,7 @@ export function Desk({
   const lastDragPos = useRef<{ id: string; x: number; y: number }>();
   const connect = useRef<{ fromId: string; x: number; y: number }>();
   const pendingClick = useRef<{ id: string; x: number; y: number; shift: boolean }>();
+  const lastTap = useRef<{ id: string; at: number }>();
   const [preview, setPreview] = useState<{ x1: number; y1: number; x2: number; y2: number }>();
   const vpRef = useRef<HTMLDivElement>(null);
   const handledFocusToken = useRef<number>();
@@ -309,6 +314,16 @@ export function Desk({
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
     e.stopPropagation();
     const toggle = e.shiftKey;
+    const now = performance.now();
+    const prev = lastTap.current;
+    // 原生 dblclick 会被拖拽/选中链路吞掉；用 pointerdown 间隔识别双击
+    if (!toggle && prev && prev.id === obj.id && now - prev.at < 350) {
+      lastTap.current = undefined;
+      selectObject(obj, { panel: false });
+      onObjectDoubleClick?.(obj);
+      return;
+    }
+    lastTap.current = { id: obj.id, at: now };
     selectObject(obj, { panel: !toggle, toggle });
     pendingClick.current = { id: obj.id, x: e.clientX, y: e.clientY, shift: toggle };
   };
@@ -317,8 +332,11 @@ export function Desk({
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle")) return;
     e.stopPropagation();
-    const toggle = e.shiftKey;
-    selectObject(obj, { panel: !toggle, toggle });
+    // 选中已在 pointerdown 完成；此处仅兜底（如无 pointer 路径）
+    if (!lastTap.current || lastTap.current.id !== obj.id) {
+      const toggle = e.shiftKey;
+      selectObject(obj, { panel: !toggle, toggle });
+    }
   };
 
   const startConnect = (e: React.PointerEvent, obj: DeskObject) => {
@@ -341,6 +359,7 @@ export function Desk({
   const toolbarObject = renderNodeToolbar && selectedIds.length === 1
     ? objects.find((o) => o.id === selectedIds[0])
     : undefined;
+  const toolbar = useExitTransition(toolbarObject, 120);
   const marqueeStyle = marqueeScreen
     ? {
       left: Math.min(marqueeScreen.x1, marqueeScreen.x2),
@@ -407,16 +426,16 @@ export function Desk({
       {marqueeStyle && (
         <div className="desk-marquee" style={marqueeStyle} aria-hidden="true" />
       )}
-      {toolbarObject && renderNodeToolbar && (
+      {toolbar.rendered && renderNodeToolbar && (
         <div
-          className="desk-node-toolbar"
+          className={`desk-node-toolbar${toolbar.closing ? " closing" : ""}`}
           style={{
-            left: view.x + (toolbarObject.x + nodeSize(toolbarObject).w / 2) * view.zoom,
-            top: view.y + toolbarObject.y * view.zoom - 14,
+            left: view.x + (toolbar.rendered.x + nodeSize(toolbar.rendered).w / 2) * view.zoom,
+            top: view.y + toolbar.rendered.y * view.zoom - 14,
           }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          {renderNodeToolbar(toolbarObject)}
+          {renderNodeToolbar(toolbar.rendered)}
         </div>
       )}
       <div className="desk-tools">

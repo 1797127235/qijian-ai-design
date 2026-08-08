@@ -6,7 +6,74 @@ import { HttpError } from "../lib/errors.js";
 import type { ArtifactService } from "./artifact-service.js";
 import type { DeskStateService } from "./desk-state-service.js";
 import type { FileStorage } from "./file-storage.js";
+import { composeSideBySide, cropImage, type ImageRegion } from "./image-crop.js";
 import type { ImageGenerator, ReferenceFile } from "./image-generator.js";
+
+/**
+ * 局部重绘的参考图组装（纯编排，便于单测）：
+ *  - 有 region：裁剪源图（referenceFiles[0]，collectReferences 保证源在最前）替换整图
+ *  - region + 上传参考图：「裁剪 | 参考」左右合成单张（grok edit 只收单图）
+ *  - 只有上传参考图：参考图作为唯一 ref
+ *  - 都没有：原样返回（整图生成回归路径）
+ */
+export async function buildInpaintReferences(input: {
+  referenceFiles: ReferenceFile[];
+  region?: ImageRegion;
+  referenceFile?: ReferenceFile;
+}): Promise<ReferenceFile[]> {
+  const { referenceFiles, region, referenceFile } = input;
+  if (region && referenceFiles.length > 0) {
+    const source = referenceFiles[0];
+    const cropped = await cropImage(source.bytes, source.mediaType, region);
+    const croppedRef: ReferenceFile = { bytes: cropped, mediaType: "image/png", filename: "inpaint-region.png" };
+    if (referenceFile) {
+      const composed = await composeSideBySide(croppedRef, referenceFile);
+      return [{ bytes: composed, mediaType: "image/png", filename: "inpaint-composed.png" }];
+    }
+    return [croppedRef];
+  }
+  if (referenceFile) return [referenceFile];
+  return referenceFiles;
+}
+
+/** 去掉历史重试可能带回的局部重绘前缀，保证 compose 只加一次。 */
+export function stripInpaintPrefix(prompt: string): string {
+  return prompt.replace(/^(局部重绘：[^\n]*\n)+/, "").trim();
+}
+
+/** 用户原文 + 便签 + 缺图提示 + 可选局部重绘前缀 → 模型上下文。 */
+export function composeCanvasPrompt(input: {
+  userPrompt: string;
+  noteTexts: string[];
+  missingRef: boolean;
+  region?: ImageRegion;
+  hasReferenceFile?: boolean;
+}): string {
+  const parts = [stripInpaintPrefix(input.userPrompt)].filter(Boolean);
+  if (input.noteTexts.length > 0) parts.push(`参考要求：${input.noteTexts.join("；")}`);
+  if (input.missingRef) parts.push("（有参考图缺失）");
+  const base = parts.join("\n") || "生成效果图";
+  if (!input.region) return base;
+  const dual = input.hasReferenceFile ? "左图为待修改区域，右图为参考图，按右图的物品/风格替换。" : "";
+  return `局部重绘：只修改图中所选区域的内容，区域外保持原样。${dual}\n${base}`;
+}
+
+/** pending/终态 payload 共用字段：user_prompt 供重试，prompt 仍写 composed 供展示/审计。 */
+function generationPayloadFields(input: {
+  composedPrompt: string;
+  userPrompt: string;
+  origin: GenerateSource;
+  region?: ImageRegion;
+  referenceFileId?: string;
+}) {
+  return {
+    prompt: input.composedPrompt,
+    user_prompt: input.userPrompt,
+    source: input.origin,
+    ...(input.region ? { region: input.region, inpaint: true as const } : {}),
+    ...(input.referenceFileId ? { reference_file_id: input.referenceFileId } : {}),
+  };
+}
 
 /**
  * 画布生成编排服务：把「源物件 + prompt」变成「源旁落一张 effect_image」的全套动作。
@@ -57,6 +124,10 @@ export interface GenerateFromCanvasInput {
   /** 默认 canvas_panel；Agent 工具传 agent_chat */
   source?: GenerateSource;
   createdBy?: GenerateCreatedBy;
+  /** 局部重绘：归一化选区（0–1，源图本地坐标）。存在时裁剪源图作为参考 */
+  region?: ImageRegion;
+  /** 局部重绘：用户上传的参考图 fileId（须属于本项目） */
+  referenceFileId?: string;
   /** 外部取消（agent stop / 工具 AbortSignal） */
   signal?: AbortSignal;
 }
@@ -75,10 +146,15 @@ export interface GenerateFromCanvasResult {
 export interface PreparedGenerate {
   pending: GenerateFromCanvasResult;
   composedPrompt: string;
+  /** 用户原文（不含局部重绘前缀/便签拼接），落库 user_prompt 与重试回传 */
+  userPrompt: string;
   referenceFileIds: string[];
   origin: GenerateSource;
   createdBy: GenerateCreatedBy;
   lockKey: string;
+  /** 局部重绘透传：complete 时裁剪/合成 */
+  region?: ImageRegion;
+  referenceFileId?: string;
 }
 
 /**
@@ -128,6 +204,14 @@ export class CanvasGenerateService {
     const origin = input.source ?? "canvas_panel";
     const createdBy = input.createdBy ?? "designer";
 
+    if (input.referenceFileId) {
+      const [row] = await this.db
+        .select({ id: storedFiles.id })
+        .from(storedFiles)
+        .where(and(eq(storedFiles.id, input.referenceFileId), eq(storedFiles.projectId, input.projectId)));
+      if (!row) throw new HttpError(422, "参考图不存在于本项目中");
+    }
+
     const snapshot = await this.desks.snapshot(input.projectId);
     const source = snapshot.artifacts.find((a) => a.id === input.sourceArtifactId);
     const sourceLayout = snapshot.deskState.objects.find((o) => o.artifact_id === input.sourceArtifactId);
@@ -136,15 +220,25 @@ export class CanvasGenerateService {
     const inbound = snapshot.deskState.connections.filter((c) => c.to === input.sourceArtifactId);
     const extraRefIds = [...new Set((input.referenceArtifactIds ?? []).filter((id) => id && id !== input.sourceArtifactId))];
     const { referenceFileIds, noteTexts } = this.collectReferences(snapshot, source, inbound, extraRefIds);
-    const composedPrompt = this.composePrompt(
-      input.prompt,
+    const userPrompt = stripInpaintPrefix(input.prompt);
+    const composedPrompt = composeCanvasPrompt({
+      userPrompt,
       noteTexts,
-      referenceFileIds.length < this.expectedImageRefs(snapshot, source, inbound, extraRefIds),
-    );
+      missingRef: referenceFileIds.length < this.expectedImageRefs(snapshot, source, inbound, extraRefIds),
+      region: input.region,
+      hasReferenceFile: Boolean(input.referenceFileId),
+    });
+    const payloadFields = generationPayloadFields({
+      composedPrompt,
+      userPrompt,
+      origin,
+      region: input.region,
+      referenceFileId: input.referenceFileId,
+    });
 
     const preparedTarget = input.targetArtifactId
-      ? await this.prepareRetryTarget(input, snapshot, composedPrompt, referenceFileIds, origin, createdBy, extraRefIds)
-      : await this.prepareNewTarget(input, sourceLayout, composedPrompt, referenceFileIds, origin, createdBy, extraRefIds);
+      ? await this.prepareRetryTarget(input, snapshot, referenceFileIds, createdBy, extraRefIds, payloadFields)
+      : await this.prepareNewTarget(input, sourceLayout, referenceFileIds, createdBy, extraRefIds, payloadFields);
 
     const pending: GenerateFromCanvasResult = {
       artifact: { id: preparedTarget.artifactId },
@@ -161,10 +255,13 @@ export class CanvasGenerateService {
     return {
       pending,
       composedPrompt,
+      userPrompt,
       referenceFileIds,
       origin,
       createdBy,
       lockKey: `${input.projectId}:${input.targetArtifactId ?? input.sourceArtifactId}`,
+      region: input.region,
+      referenceFileId: input.referenceFileId,
     };
   }
 
@@ -176,7 +273,6 @@ export class CanvasGenerateService {
   async complete(prepared: PreparedGenerate, signal?: AbortSignal): Promise<GenerateFromCanvasResult> {
     const { pending, composedPrompt, referenceFileIds, origin, createdBy, lockKey } = prepared;
     const projectId = lockKey.split(":")[0];
-
     this.inflight.get(lockKey)?.abort();
     const controller = new AbortController();
     this.inflight.set(lockKey, controller);
@@ -187,8 +283,27 @@ export class CanvasGenerateService {
       else signal.addEventListener("abort", onExternalAbort, { once: true });
     }
 
+    const payloadBase = generationPayloadFields({
+      composedPrompt,
+      userPrompt: prepared.userPrompt,
+      origin,
+      region: prepared.region,
+      referenceFileId: prepared.referenceFileId,
+    });
+    const inputRefs = referenceFileIds.map((file_id) => ({ file_id }));
+
     try {
-      const referenceFiles = await this.loadReferenceFiles(projectId, referenceFileIds);
+      const loaded = await this.loadReferenceFiles(projectId, referenceFileIds);
+      let referenceFile: ReferenceFile | undefined;
+      if (prepared.referenceFileId) {
+        referenceFile = (await this.loadReferenceFiles(projectId, [prepared.referenceFileId]))[0];
+        if (!referenceFile) throw new HttpError(422, "参考图不存在于本项目中");
+      }
+      const referenceFiles = await buildInpaintReferences({
+        referenceFiles: loaded,
+        region: prepared.region,
+        referenceFile,
+      });
       const generated = await this.images.generate(
         {
           projectId,
@@ -201,12 +316,11 @@ export class CanvasGenerateService {
       const version = await this.artifacts.append(pending.artifact.id, {
         payload: {
           file_id: generated.fileId,
-          prompt: composedPrompt,
-          source: origin,
           pending: false,
           source_url: generated.sourceUrl,
+          ...payloadBase,
         },
-        inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
+        inputRefs,
         status: "confirmed",
         createdBy,
       });
@@ -228,8 +342,8 @@ export class CanvasGenerateService {
       const message = publicGenerateError(raw);
       try {
         await this.artifacts.append(pending.artifact.id, {
-          payload: { pending: false, prompt: composedPrompt, source: origin, error: message },
-          inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
+          payload: { pending: false, error: message, ...payloadBase },
+          inputRefs,
           status: "draft",
           createdBy,
         });
@@ -283,11 +397,10 @@ export class CanvasGenerateService {
   private async prepareNewTarget(
     input: GenerateFromCanvasInput,
     sourceLayout: DeskLayoutObject,
-    composedPrompt: string,
     referenceFileIds: string[],
-    origin: GenerateSource,
     createdBy: GenerateCreatedBy,
-    extraRefIds: string[] = [],
+    extraRefIds: string[],
+    payloadFields: ReturnType<typeof generationPayloadFields>,
   ) {
     const layout: Omit<DeskLayoutObject, "artifact_id"> = {
       kind: "effect_image",
@@ -300,7 +413,7 @@ export class CanvasGenerateService {
       input.projectId,
       "effect_image",
       {
-        payload: { pending: true, prompt: composedPrompt, source: origin },
+        payload: { pending: true, ...payloadFields },
         inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
         status: "draft",
         createdBy,
@@ -327,11 +440,10 @@ export class CanvasGenerateService {
   private async prepareRetryTarget(
     input: GenerateFromCanvasInput,
     snapshot: Awaited<ReturnType<DeskStateService["snapshot"]>>,
-    composedPrompt: string,
     referenceFileIds: string[],
-    origin: GenerateSource,
     createdBy: GenerateCreatedBy,
-    extraRefIds: string[] = [],
+    extraRefIds: string[],
+    payloadFields: ReturnType<typeof generationPayloadFields>,
   ) {
     const targetId = input.targetArtifactId!;
     const target = snapshot.artifacts.find((a) => a.id === targetId);
@@ -350,7 +462,7 @@ export class CanvasGenerateService {
     );
 
     const version = await this.artifacts.append(targetId, {
-      payload: { pending: true, prompt: composedPrompt, source: origin },
+      payload: { pending: true, ...payloadFields },
       inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
       status: "draft",
       createdBy,
@@ -438,14 +550,6 @@ export class CanvasGenerateService {
       pushArtifact(snapshot.artifacts.find((a) => a.id === id));
     }
     return { referenceFileIds, noteTexts };
-  }
-
-  /** 拼最终 prompt：用户原意 + 收集到的便签文本 + 缺图提示。空 prompt 兜底为「生成效果图」。 */
-  private composePrompt(userPrompt: string, noteTexts: string[], missingRef: boolean) {
-    const parts = [userPrompt.trim()].filter(Boolean);
-    if (noteTexts.length > 0) parts.push(`参考要求：${noteTexts.join("；")}`);
-    if (missingRef) parts.push("（有参考图缺失）");
-    return parts.join("\n") || "生成效果图";
   }
 
   /** 把 fileIds 读出为 ReferenceFile 列表（缺一个跳一个，不阻断主流程）。 */

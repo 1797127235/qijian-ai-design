@@ -12,6 +12,7 @@ import { MAX_ATTACHMENTS_PER_MESSAGE } from "../domain/attachment-limits.js";
 import { MAX_SELECTED_ARTIFACTS } from "../domain/selection-limits.js";
 import { AppError } from "../lib/errors.js";
 import type { ChatService } from "../services/chat-service.js";
+import type { ProjectAutoNamer } from "../services/project-namer.js";
 import type { EventSink, ServerEvent } from "./events.js";
 import type { AgentSessionRegistry } from "./session-registry.js";
 import type { TraceRegistry } from "./tracing/index.js";
@@ -43,6 +44,9 @@ export class ChatGateway {
   private readonly clients = new Map<string, Set<WebSocket>>();
   private readonly stopping = new Set<string>();
   readonly emit: EventSink = (event) => this.broadcastEvent(event);
+
+  /** 自动起名器（index.ts 在 publish 回填后注入，打破循环依赖） */
+  namer?: ProjectAutoNamer;
 
   constructor(
     private readonly sessions: AgentSessionRegistry,
@@ -108,6 +112,7 @@ export class ChatGateway {
         message: saved.message,
       });
       this.emit({ type: "chat_message", projectId, message: saved.message });
+      if (saved.created) this.namer?.kick(projectId, message.text);
       if (saved.created && saved.run) {
         const runId = saved.run.id;
         // H7：捕获 run_id 常量；root 生命周期可晚于 H2 finish

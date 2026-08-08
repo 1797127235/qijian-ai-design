@@ -4,6 +4,7 @@ import type { ChatConnectionStatus, ChatThread } from "../lib/api";
 import { MAX_SELECTED_ARTIFACTS } from "../shared/selection-limits";
 import type { ChatItem, DeskObject } from "./types";
 import { useAttachmentDraft } from "./useAttachmentDraft";
+import { useExitTransition } from "./useExitTransition";
 import { ChatComposer, connectionLabels } from "./chat/ChatComposer";
 import { ChatMessageList, MarkdownMessage } from "./chat/ChatMessageList";
 import { ChatThreadList } from "./chat/ChatThreadList";
@@ -84,6 +85,7 @@ export function ChatPanel({
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("qijian.chat.collapsed") === "true");
   const [panelWidth, setPanelWidth] = useState(storedChatWidth);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const historyMenu = useExitTransition(historyOpen ? true : undefined, 120);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -319,9 +321,10 @@ export function ChatPanel({
                 <PanelRightClose size={18} strokeWidth={1.7} />
               </button>
             </div>
-            {historyOpen && (
+            {historyMenu.rendered && (
               <ChatThreadList
                 ref={historyMenuRef}
+                closing={historyMenu.closing}
                 threads={threads}
                 activeThreadId={activeThreadId}
                 threadChanging={threadChanging}

@@ -16,6 +16,10 @@ export interface GenerateOptions {
   fillBack?: boolean;
   previousPayload?: Record<string, unknown>;
   previousInputRefs?: unknown[];
+  /** 局部重绘：归一化选区（0–1，源图本地坐标） */
+  region?: { x: number; y: number; w: number; h: number };
+  /** 局部重绘：用户上传的参考图 fileId */
+  referenceFileId?: string;
 }
 
 /** 面板生图：H8 秒级 accepted；终态靠 WS object_changed。 */
@@ -50,7 +54,9 @@ export function useDeskGenerate(options: {
           prompt: opts.prompt,
           sourceArtifactId: opts.sourceArtifactId,
           clientOpId,
-          ...(opts.targetArtifactId ? { targetArtifactId: opts.targetArtifactId } : {}),
+          targetArtifactId: opts.targetArtifactId,
+          region: opts.region,
+          referenceFileId: opts.referenceFileId,
         });
         const snap = await refreshDesk(projectId).catch(() => undefined);
         const artifact = snap?.artifacts.find((a) => a.id === result.artifact.id);

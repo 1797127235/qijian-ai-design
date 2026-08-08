@@ -6,6 +6,7 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { AgentSessionRegistry } from "../../agent/session-registry.js";
+import { DEFAULT_PROJECT_NAME } from "../../domain/types.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
 import type { FileStorage } from "../../services/file-storage.js";
 import { body } from "./shared.js";
@@ -24,7 +25,13 @@ export function registerProjectRoutes(
   /** 新建项目：name 可选，默认「未命名项目」。 */
   app.post("/api/projects", async (c) => {
     const input = await body(c.req.raw, z.object({ name: z.string().trim().min(1).max(200).optional() }));
-    return c.json(await deps.desks.createProject(input.name ?? "未命名项目"), 201);
+    return c.json(await deps.desks.createProject(input.name ?? DEFAULT_PROJECT_NAME), 201);
+  });
+
+  /** 改名：项目名就地更新。 */
+  app.patch("/api/projects/:id", async (c) => {
+    const input = await body(c.req.raw, z.object({ name: z.string().trim().min(1).max(200) }));
+    return c.json(await deps.desks.renameProject(c.req.param("id"), input.name));
   });
 
   /** 删项目：级联清 chat / artifact / file / desk_state，再 rm 磁盘文件。 */

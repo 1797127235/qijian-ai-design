@@ -11,7 +11,14 @@ export type DeskObject =
       url?: string;
       pending?: boolean;
       error?: string;
+      /** 展示/审计用 composed prompt；重试优先用 userPrompt */
       prompt?: string;
+      /** 用户原文（payload.user_prompt）；重试回传，避免叠前缀 */
+      userPrompt?: string;
+      /** 局部重绘选区（payload.region 透传，重试时回传） */
+      region?: { x: number; y: number; w: number; h: number };
+      /** 局部重绘参考图 fileId（payload.reference_file_id） */
+      referenceFileId?: string;
     }
   | {
       id: string;
@@ -24,6 +31,9 @@ export type DeskObject =
       pending?: boolean;
       error?: string;
       prompt?: string;
+      userPrompt?: string;
+      region?: { x: number; y: number; w: number; h: number };
+      referenceFileId?: string;
     };
 
 export type DeskConnection = { id: string; from: string; to: string };

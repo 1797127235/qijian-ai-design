@@ -82,6 +82,16 @@ export function registerDeskRoutes(app: Hono, deps: {
       sourceArtifactId: z.string().uuid(),
       clientOpId: z.string().min(1).max(80),
       targetArtifactId: z.string().uuid().optional(),
+      // 局部重绘：归一化选区（0–1）；任一边 < 2% 视为误触；x+w / y+h 可略越界，服务端 crop clamp
+      region: z.object({
+        x: z.number().min(0).max(1),
+        y: z.number().min(0).max(1),
+        w: z.number().min(0.02).max(1),
+        h: z.number().min(0.02).max(1),
+      }).refine((r) => r.x + r.w <= 1.0001 && r.y + r.h <= 1.0001, {
+        message: "选区超出图片边界",
+      }).optional(),
+      referenceFileId: z.string().uuid().optional(),
     }));
 
     let prepared: PreparedGenerate | undefined;
@@ -102,6 +112,8 @@ export function registerDeskRoutes(app: Hono, deps: {
           prompt: input.prompt,
           clientOpId: input.clientOpId,
           targetArtifactId: input.targetArtifactId,
+          region: input.region,
+          referenceFileId: input.referenceFileId,
           source: "canvas_panel",
           createdBy: "designer",
         });

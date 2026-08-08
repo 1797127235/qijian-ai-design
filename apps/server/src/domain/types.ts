@@ -11,6 +11,8 @@ export const artifactTypes = [
 ] as const;
 
 export type ArtifactType = (typeof artifactTypes)[number];
+/** 项目默认名；自动起名（LLM 总结首条消息）只对仍是默认名的项目生效。 */
+export const DEFAULT_PROJECT_NAME = "未命名项目";
 /** 版本状态仅作元数据，不做产品流程关卡（参考 ADR 关于不强制阶段流程的决策）。 */
 export type ArtifactStatus = "draft" | "confirmed";
 /** 创建者：区分人与 Agent，用于审计与权限。 */

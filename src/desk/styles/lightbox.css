@@ -1,0 +1,51 @@
+/* 画布图片双击大图（退出动画见 useExitTransition + .closing） */
+.image-lightbox-overlay {
+  position: fixed; inset: 0; z-index: 90;
+  display: grid; place-items: center;
+  padding: 32px;
+  background: rgba(28, 26, 22, .78);
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+  transition: opacity var(--dur-short) var(--ease-out);
+}
+@starting-style {
+  .image-lightbox-overlay { opacity: 0; }
+}
+.image-lightbox-overlay.closing {
+  opacity: 0;
+  transition-duration: var(--dur-micro);
+  transition-timing-function: var(--ease-in);
+}
+.image-lightbox-img {
+  max-width: min(96vw, 1400px);
+  max-height: 92vh;
+  width: auto; height: auto;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .45);
+  cursor: default;
+  user-select: none;
+  transition: opacity var(--dur-short) var(--ease-out), scale var(--dur-short) var(--ease-out);
+}
+@starting-style {
+  .image-lightbox-img { opacity: 0; scale: .95; }
+}
+.image-lightbox-overlay.closing .image-lightbox-img {
+  opacity: 0; scale: .97;
+  transition-duration: var(--dur-micro);
+  transition-timing-function: var(--ease-in);
+}
+.image-lightbox-close {
+  position: fixed; top: 16px; right: 16px;
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, .12); color: #fff;
+  cursor: pointer;
+  transition: background var(--dur-micro);
+}
+.image-lightbox-close:active { transform: translateY(1px); }
+@media (hover: hover) and (pointer: fine) {
+  .image-lightbox-close:hover { background: rgba(255, 255, 255, .22); }
+}
+
+/* ── 新建项目弹窗：字段全可选（名称默认「未命名」、文件可选） ── */

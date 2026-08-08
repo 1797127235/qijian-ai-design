@@ -1,39 +1,39 @@
+/**
+ * 项目级聊天会话：WS 生命周期、线程 CRUD、发送/停止、过程时间线。
+ *
+ * 边界：
+ *  - process 归约在 chatProcess.ts（纯函数）
+ *  - 画布落桌/history 由 onDeskObjectChanged 回调给 DeskWorkbench
+ *  - 不持有 desk snapshot，只在 object_changed 时 refreshDesk
+ */
 import { useCallback, useRef, useState, type MutableRefObject } from "react";
 import { api, connectChat, type ChatConnectionStatus, type ChatThread, type DeskSnapshot } from "../lib/api";
-import type { ChatItem, ProcessSnapshot, ProcessStep } from "../desk/types";
-import {
-  emptyProcess,
-  isToolBusinessFailure,
-  toolStepLabel,
-} from "../desk/chat/process-summary";
+import type { ChatItem, ProcessSnapshot } from "../desk/types";
 import { nextId } from "./ids";
-
-const PROCESS_ITEM_ID = "agent-process-live";
-
-function upsertProcessItem(items: ChatItem[], process: ProcessSnapshot): ChatItem[] {
-  const next: ChatItem = { id: PROCESS_ITEM_ID, role: "process", process };
-  const without = items.filter((it) => it.id !== PROCESS_ITEM_ID);
-  return [...without, next];
-}
-
-function finalizeProcessItem(items: ChatItem[], process: ProcessSnapshot): ChatItem[] {
-  const finalized: ChatItem = {
-    id: `process-${nextId()}`,
-    role: "process",
-    process: { ...process, steps: process.steps.map((s) => ({ ...s })) },
-  };
-  return [...items.filter((it) => it.id !== PROCESS_ITEM_ID), finalized];
-}
+import {
+  PROCESS_ITEM_ID,
+  applyAgentInnerEvent,
+  finalizeProcessItem,
+  settleProcessError,
+  settleProcessStopped,
+  upsertProcessItem,
+  type AgentInnerEvent,
+  type ProcessApplyResult,
+} from "./chatProcess";
 
 export function useChatSession(options: {
   activeProjectRef: MutableRefObject<string | undefined>;
   refreshDesk: (projectId: string) => Promise<DeskSnapshot>;
-  /** H8b：Agent 落桌 effect 进 history（与面板去重由调用方 gate） */
+  /** Agent 落桌 effect：DeskWorkbench 用它记 history（与面板生图 gate 去重） */
   onDeskObjectChanged?: (projectId: string, artifactId: string | undefined, snap: DeskSnapshot) => void;
+  /** 自动起名落地：同步顶栏/列表 */
+  onProjectRenamed?: (projectId: string, name: string) => void;
 }) {
   const { activeProjectRef, refreshDesk } = options;
   const onDeskObjectChangedRef = useRef(options.onDeskObjectChanged);
   onDeskObjectChangedRef.current = options.onDeskObjectChanged;
+  const onProjectRenamedRef = useRef(options.onProjectRenamed);
+  onProjectRenamedRef.current = options.onProjectRenamed;
   const [chatItems, setChatItems] = useState<ChatItem[]>([]);
   const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
   const [activeChatThreadId, setActiveChatThreadId] = useState<string>();
@@ -67,16 +67,32 @@ export function useChatSession(options: {
   // 每次 chatThreads 变化同步到 ref，让回调可以从 ref 读取最新值，无需把它放进 deps
   chatThreadsRef.current = chatThreads;
 
-  const pushProcess = useCallback((mutator: (draft: ProcessSnapshot) => void) => {
-    const draft = processRef.current ?? emptyProcess();
-    // 兜底：避免 startedAt 丢失导致「思考了 NaNs」
-    if (!Number.isFinite(draft.startedAt)) draft.startedAt = Date.now();
-    mutator(draft);
-    processRef.current = draft;
-    setChatItems((cur) => upsertProcessItem(cur, {
-      ...draft,
-      steps: draft.steps.map((s) => ({ ...s })),
-    }));
+  /**
+   * 纯函数结果 → React state。
+   * finalize 时 processRef 置 null：下一轮 agent_start 从 emptyProcess 起，不污染已落历史的卡。
+   */
+  const commitProcessResult = useCallback((result: ProcessApplyResult) => {
+    processRef.current = result.process;
+    if (result.streamDelta) {
+      streamBuf.current += result.streamDelta;
+      setStreaming(streamBuf.current);
+    }
+    if (result.clearStream) {
+      streamBuf.current = "";
+      setStreaming(undefined);
+    }
+    if (result.busy !== undefined) setBusy(result.busy);
+    if (result.chatItems === "upsert" && result.process) {
+      setChatItems((cur) => upsertProcessItem(cur, {
+        ...result.process!,
+        steps: result.process!.steps.map((s) => ({ ...s })),
+      }));
+    } else if (result.chatItems === "finalize" && result.process) {
+      setChatItems((cur) => finalizeProcessItem(cur, result.process!));
+      processRef.current = null;
+    } else if (result.chatItems === "clear") {
+      setChatItems((cur) => cur.filter((item) => item.id !== PROCESS_ITEM_ID));
+    }
   }, []);
 
   const MAX_BUSY_RETRIES = 15;
@@ -147,7 +163,7 @@ export function useChatSession(options: {
     setConnection("disconnected");
   }, []);
 
-  /** 只建/重建 WS，不清聊天记录。热更新或后端重启后用它恢复。 */
+  /** 建/重建 WS，保留已加载消息。后端热重启 / HMR 后用 reconnectChat → 此函数。 */
   const openChatSocket = useCallback((projectId: string) => {
     chatRef.current?.close();
     chatRef.current = undefined;
@@ -156,96 +172,9 @@ export function useChatSession(options: {
     const chat = connectChat(projectId, (event) => {
       if (activeProjectRef.current !== projectId) return;
       if (event.type === "agent_event") {
-        const inner = event.event as {
-          type?: string;
-          threadId?: string;
-          toolName?: string;
-          toolCallId?: string;
-          args?: unknown;
-          result?: unknown;
-          isError?: boolean;
-          assistantMessageEvent?: { type?: string; delta?: string };
-        };
+        const inner = event.event as AgentInnerEvent;
         if (inner.threadId && inner.threadId !== activeChatThreadRef.current) return;
-
-        if (inner.type === "message_update" && inner.assistantMessageEvent) {
-          const ame = inner.assistantMessageEvent;
-          if (ame.type === "text_delta" && ame.delta) {
-            streamBuf.current += ame.delta;
-            setStreaming(streamBuf.current);
-          }
-          if (ame.type === "thinking_delta" && ame.delta) {
-            const delta = ame.delta;
-            pushProcess((draft) => {
-              draft.status = "running";
-              const last = draft.steps[draft.steps.length - 1];
-              if (last?.kind === "thinking") last.text += delta;
-              else draft.steps.push({ id: nextId(), kind: "thinking", text: delta });
-            });
-          }
-        }
-
-        if (inner.type === "agent_start") {
-          processRef.current = emptyProcess();
-          setBusy(true);
-          setChatItems((cur) => upsertProcessItem(cur, processRef.current!));
-        }
-
-        if (inner.type === "agent_settled") {
-          const snap = processRef.current;
-          if (snap) {
-            const failed = snap.steps.some((s) => s.kind === "tool" && s.status === "failed");
-            snap.status = failed ? "failed" : "done";
-            snap.endedAt = Date.now();
-            setChatItems((cur) => finalizeProcessItem(cur, snap));
-          }
-          processRef.current = null;
-          setBusy(false);
-        }
-
-        if (inner.type === "tool_execution_start" && inner.toolName) {
-          const toolCallId = inner.toolCallId ?? `${inner.toolName}-${Date.now()}`;
-          const step: ProcessStep = {
-            id: toolCallId,
-            kind: "tool",
-            name: inner.toolName,
-            status: "running",
-            label: toolStepLabel(inner.args, undefined, false),
-          };
-          pushProcess((draft) => {
-            draft.status = "running";
-            const idx = draft.steps.findIndex((s) => s.id === toolCallId);
-            if (idx >= 0) draft.steps[idx] = step;
-            else draft.steps.push(step);
-          });
-        }
-
-        if (inner.type === "tool_execution_end") {
-          const toolCallId = inner.toolCallId;
-          // fail() 返回正常 content，pi 的 isError 常为 false，需识别业务失败
-          const failed = isToolBusinessFailure(inner.result, inner.isError);
-          pushProcess((draft) => {
-            // 整轮 status 保持 running，直到 agent_settled；否则标题会变成「思考了 Ns」却仍在回复
-            draft.status = "running";
-            const tools = draft.steps.filter((s): s is Extract<ProcessStep, { kind: "tool" }> => s.kind === "tool");
-            const step = toolCallId
-              ? tools.find((t) => t.id === toolCallId)
-              : tools.find((t) => t.status === "running");
-            const label = toolStepLabel(undefined, inner.result, failed);
-            if (!step) {
-              draft.steps.push({
-                id: toolCallId ?? `tool-end-${Date.now()}`,
-                kind: "tool",
-                name: inner.toolName ?? "tool",
-                status: failed ? "failed" : "succeeded",
-                label,
-              });
-            } else {
-              step.status = failed ? "failed" : "succeeded";
-              if (label) step.label = label;
-            }
-          });
-        }
+        commitProcessResult(applyAgentInnerEvent(processRef.current, inner));
         return;
       }
       if (event.type === "chat_message") {
@@ -287,20 +216,11 @@ export function useChatSession(options: {
       }
       if (event.type === "agent_stopped") {
         if (event.threadId !== activeChatThreadRef.current) return;
-        const snap = processRef.current;
-        if (snap) {
-          snap.status = "failed";
-          snap.endedAt = Date.now();
-          for (const t of snap.steps) {
-            if (t.kind === "tool" && t.status === "running") {
-              t.status = "failed";
-              t.label = t.label ?? "已停止";
-            }
-          }
-          setChatItems((cur) => finalizeProcessItem(cur, snap));
-        }
-        processRef.current = null;
-        setBusy(false);
+        commitProcessResult(settleProcessStopped(processRef.current));
+        return;
+      }
+      if (event.type === "project_renamed") {
+        onProjectRenamedRef.current?.(projectId, event.name);
         return;
       }
       if (event.type === "object_changed") {
@@ -338,19 +258,7 @@ export function useChatSession(options: {
         }
         streamBuf.current = "";
         setStreaming(undefined);
-        const snap = processRef.current;
-        if (snap) {
-          snap.status = "failed";
-          setChatItems((cur) => [
-            ...finalizeProcessItem(cur, snap),
-            { id: nextId(), role: "agent", text: `出错了：${event.error.message}` },
-          ]);
-        } else {
-          setChatItems((cur) => [
-            ...cur.filter((item) => item.id !== PROCESS_ITEM_ID),
-            { id: nextId(), role: "agent", text: `出错了：${event.error.message}` },
-          ]);
-        }
+        setChatItems((cur) => settleProcessError(cur, processRef.current, event.error.message).items);
         processRef.current = null;
         setBusy(false);
       }
@@ -367,7 +275,7 @@ export function useChatSession(options: {
       setConnection(status);
     });
     chatRef.current = chat;
-  }, [activeProjectRef, pushProcess, refreshDesk]);
+  }, [activeProjectRef, commitProcessResult, refreshDesk]);
 
   /** 打开项目：拉线程/历史 + 建 WS。项目可以没有任何对话，发首条消息时再建。 */
   const bindProjectChat = useCallback(async (projectId: string) => {

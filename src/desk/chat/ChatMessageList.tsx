@@ -1,3 +1,4 @@
+import type React from "react";
 import { FileText, Paperclip } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -95,8 +96,14 @@ export function ChatMessageList({
             <p>把图或想法丢进来；我会尽量结合当前画布一起改。</p>
           </div>
           <div className="chat-suggestions">
-            {suggestions.map((suggestion) => (
-              <button key={suggestion.title} type="button" disabled={sendDisabled} onClick={() => onPickSuggestion(suggestion.title)}>
+            {suggestions.map((suggestion, index) => (
+              <button
+                key={suggestion.title}
+                type="button"
+                disabled={sendDisabled}
+                style={{ "--i": index } as React.CSSProperties}
+                onClick={() => onPickSuggestion(suggestion.title)}
+              >
                 <strong>{suggestion.title}</strong>
                 <span>{suggestion.description}</span>
               </button>

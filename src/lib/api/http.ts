@@ -34,6 +34,8 @@ const json = (method: string, data: unknown): RequestInit => ({
 export const api = {
   listProjects: () => request<ProjectSummary[]>("/api/projects"),
   createProject: (name: string) => request<ProjectSummary>("/api/projects", json("POST", { name })),
+  renameProject: (projectId: string, name: string) =>
+    request<ProjectSummary>(`/api/projects/${projectId}`, json("PATCH", { name })),
   deleteProject: (projectId: string) => request<void>(`/api/projects/${projectId}`, { method: "DELETE" }),
   desk: (projectId: string) => request<DeskSnapshot>(`/api/projects/${projectId}/desk`),
   chatThreads: (projectId: string) => request<ChatThread[]>(`/api/projects/${projectId}/chat/threads`),
@@ -61,6 +63,10 @@ export const api = {
     clientOpId: string;
     /** 重试时传入失败卡 id，服务端在原卡上重跑 */
     targetArtifactId?: string;
+    /** 局部重绘：归一化选区（0–1，源图本地坐标） */
+    region?: { x: number; y: number; w: number; h: number };
+    /** 局部重绘：用户上传的参考图 fileId */
+    referenceFileId?: string;
   }) =>
     request<{
       status: "accepted";

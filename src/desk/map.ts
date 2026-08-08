@@ -3,36 +3,41 @@ import type { DeskConnection, DeskObject } from "./types";
 
 const text = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
 
+/** payload.region 形状校验：四个数值字段齐全才透传。 */
+function region(payload: Record<string, unknown>) {
+  const r = payload.region;
+  if (!r || typeof r !== "object") return undefined;
+  const { x, y, w, h } = r as Record<string, unknown>;
+  if (typeof x !== "number" || typeof y !== "number" || typeof w !== "number" || typeof h !== "number") return undefined;
+  return { x, y, w, h };
+}
+
+/** 图片卡公共字段：prompt / user_prompt / region / reference_file_id。 */
+function imageFields(payload: Record<string, unknown>) {
+  return {
+    pending: payload.pending === true,
+    error: typeof payload.error === "string" ? payload.error : undefined,
+    prompt: text(payload.prompt) || undefined,
+    userPrompt: text(payload.user_prompt) || undefined,
+    region: region(payload),
+    referenceFileId: text(payload.reference_file_id) || undefined,
+  };
+}
+
 function mapArtifact(artifact: ArtifactSnapshot, layout: { x: number; y: number; rot: number; w?: number }): DeskObject | undefined {
   const { payload, status } = artifact;
   const base = { id: artifact.id, x: layout.x, y: layout.y, rot: layout.rot, status };
-  switch (artifact.artifactType) {
-    case "sticky_note":
-      return { ...base, kind: "sticky_note", text: text(payload.text) };
-    case "canvas_image": {
-      const fileId = text(payload.file_id);
-      return {
-        ...base,
-        kind: "canvas_image",
-        url: fileId ? api.fileUrl(fileId) : undefined,
-        pending: payload.pending === true,
-        error: typeof payload.error === "string" ? payload.error : undefined,
-        prompt: text(payload.prompt) || undefined,
-      };
-    }
-    case "effect_image": {
-      const pending = payload.pending === true;
-      const error = typeof payload.error === "string" ? payload.error : undefined;
-      const fileId = text(payload.file_id);
-      return {
-        ...base,
-        kind: "effect_image",
-        url: fileId ? api.fileUrl(fileId) : undefined,
-        pending,
-        error,
-        prompt: text(payload.prompt) || undefined,
-      };
-    }
+  if (artifact.artifactType === "sticky_note") {
+    return { ...base, kind: "sticky_note", text: text(payload.text) };
+  }
+  if (artifact.artifactType === "canvas_image" || artifact.artifactType === "effect_image") {
+    const fileId = text(payload.file_id);
+    return {
+      ...base,
+      kind: artifact.artifactType,
+      url: fileId ? api.fileUrl(fileId) : undefined,
+      ...imageFields(payload),
+    };
   }
 }
 

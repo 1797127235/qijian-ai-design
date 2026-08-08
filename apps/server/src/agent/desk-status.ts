@@ -9,22 +9,25 @@ import type { ArtifactSnapshot, DeskSnapshot } from "../domain/types.js";
 /** 大桌面截断：状态栏只列前 30 件，超出标「…共 N 件」。 */
 export const MAX_DESK_STATUS_OBJECTS = 30;
 
+/** 状态栏短标签：压空白并截到 14 字；空串回 fallback。 */
+function clipLabel(raw: string, fallback: string): string {
+  const text = raw.trim().replace(/\s+/g, " ");
+  if (!text) return fallback;
+  return text.length > 14 ? `${text.slice(0, 14)}…` : text;
+}
+
 /** 状态栏/chip 用的短标签，不塞 payload 全文或 base64。 */
 function shortLabel(artifact: ArtifactSnapshot): string {
   const payload = artifact.payload;
-  if (artifact.artifactType === "sticky_note" && typeof payload.text === "string") {
-    const text = payload.text.trim().replace(/\s+/g, " ");
-    if (!text) return "空便签";
-    return text.length > 14 ? `${text.slice(0, 14)}…` : text;
+  if (artifact.artifactType === "sticky_note") {
+    return typeof payload.text === "string" ? clipLabel(payload.text, "空便签") : "空便签";
   }
   if (artifact.artifactType === "effect_image") {
     if (payload.pending === true) return "生成中";
     if (typeof payload.error === "string" && payload.error) return "生成失败";
-    if (typeof payload.prompt === "string" && payload.prompt.trim()) {
-      const prompt = payload.prompt.trim().replace(/\s+/g, " ");
-      return prompt.length > 14 ? `${prompt.slice(0, 14)}…` : prompt;
-    }
-    return "效果图";
+    // 优先 user_prompt（用户原文），避免「局部重绘：…」前缀占满 chip
+    const preferred = [payload.user_prompt, payload.prompt].find((v) => typeof v === "string" && v.trim());
+    return typeof preferred === "string" ? clipLabel(preferred, "效果图") : "效果图";
   }
   return "画布图";
 }

@@ -1,23 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Trash2, Upload } from "lucide-react";
-import { api, type DeskSnapshot, type ProjectSummary } from "../lib/api";
-import { Desk } from "../desk/Desk";
-import { DeskObjectView } from "../desk/nodes";
-import { DeskToolbar } from "../desk/Toolbar";
-import { PromptPanel } from "../desk/PromptPanel";
-import { CANVAS_IMAGE_ACCEPT } from "../desk/attachments";
-import { ChatPanel } from "../desk/ChatPanel";
+/**
+ * 应用壳（P0 拆分后）：
+ *  - URL 路由 home | desk
+ *  - 项目列表 CRUD（useProjects）
+ *  - 桌面 snapshot 的加载与刷新（供 DeskWorkbench 渲染）
+ *
+ * 不负责：聊天 WS、选中、生图、inpaint —— 全在 DeskWorkbench。
+ */
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type DeskSnapshot } from "../lib/api";
 import { Home } from "../desk/Home";
+import { validateCanvasImageFile } from "../desk/attachments";
 import { mapConnections, mapSnapshot } from "../desk/map";
 import type { DeskConnection, DeskObject } from "../desk/types";
-import type { Viewport } from "../desk/geometry";
-import { nextId } from "./ids";
-import { createGenerateHistoryGate } from "./recordGenerateOnce";
-import { useChatSession } from "./useChatSession";
-import { useDeskActions } from "./useDeskActions";
-import { useDeskGenerate } from "./useDeskGenerate";
-import { useDeskHistory } from "./useDeskHistory";
-import { useDeskPlacement } from "./useDeskPlacement";
+import { DeskWorkbench } from "./DeskWorkbench";
+import { useProjects } from "./useProjects";
 
 type AppView = { mode: "home" } | { mode: "desk"; projectId: string };
 
@@ -34,18 +30,20 @@ function pathForView(next: AppView) {
 
 export function App() {
   const [view, setView] = useState<AppView>(() => viewFromPath(window.location.pathname));
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [homeError, setHomeError] = useState<string>();
+  const projectsApi = useProjects();
   const [snapshot, setSnapshot] = useState<DeskSnapshot>();
   const [objects, setObjects] = useState<DeskObject[]>([]);
+  const [connections, setConnections] = useState<DeskConnection[]>([]);
+  /** Home 创建时带入的首条文案/附件，交给 ChatPanel 后清空。 */
   const [composerHandoff, setComposerHandoff] = useState<{ text?: string; files?: File[] }>();
   const activeProjectRef = useRef<string>();
+  /** 丢弃过期 refresh：快速切项目时旧请求不得覆盖新桌面。 */
   const refreshSequence = useRef(0);
   const hasAttachmentDraftRef = useRef(false);
+  /** popstate 与 confirm 取消离开时，阻止二次处理 history.forward。 */
   const skipHistoryRef = useRef(false);
   const bootstrappedRef = useRef(false);
 
-  const [connections, setConnections] = useState<DeskConnection[]>([]);
   const refreshDesk = useCallback(async (projectId: string) => {
     const sequence = ++refreshSequence.current;
     const snap = await api.desk(projectId);
@@ -57,270 +55,28 @@ export function App() {
     return snap;
   }, []);
 
-  const generateGate = useMemo(() => createGenerateHistoryGate(), []);
-  const historyRecordRef = useRef<(op: import("./useDeskHistory").DeskHistoryOp) => void>(() => undefined);
-  const historyPatchFillRef = useRef<(artifactId: string, to: { payload: Record<string, unknown>; inputRefs?: unknown[] }) => void>(() => undefined);
-
-  const onDeskObjectChanged = useCallback((pid: string, artifactId: string | undefined, snap: DeskSnapshot) => {
-    if (!artifactId) return;
-    const art = snap.artifacts.find((a) => a.id === artifactId);
-    if (!art) return;
-    // 同卡填回终态（成功 file_id / 失败 error）：刷新 fill_version 的 to，便于 redo
-    if (art.artifactType === "canvas_image" || art.artifactType === "effect_image") {
-      const pending = art.payload.pending === true;
-      if (!pending) {
-        historyPatchFillRef.current(artifactId, { payload: art.payload, inputRefs: art.inputRefs });
-      }
-    }
-    if (art.artifactType !== "effect_image") return;
-    // 仅新建 pending/刚落桌时记 history；重试版本前进不记（gate 同 id 也会挡）
-    const object = snap.deskState.objects.find((o) => o.artifact_id === artifactId);
-    // 多参考生图会写多条 from→效果 连线；redo 必须全量恢复
-    const edgeConnections = snap.deskState.connections.filter((c) => c.to === artifactId);
-    if (!object || edgeConnections.length === 0) return;
-    generateGate.tryRecord(
-      artifactId,
-      (op) => historyRecordRef.current(op),
-      {
-        artifactId,
-        artifactType: "effect_image",
-        payload: art.payload,
-        inputRefs: art.inputRefs,
-        layout: { kind: object.kind, x: object.x, y: object.y, rot: object.rot, w: object.w },
-      },
-      edgeConnections,
-    );
-  }, [generateGate]);
-
-  const chat = useChatSession({ activeProjectRef, refreshDesk, onDeskObjectChanged });
-  const projectId = view.mode === "desk" ? view.projectId : undefined;
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [selectedConnectionId, setSelectedConnectionId] = useState<string>();
-  const viewportRef = useRef<Viewport>({ x: 40, y: 20, zoom: 0.62 });
-  const imagePickerRef = useRef<HTMLInputElement>(null);
-  const imageUploadTargetRef = useRef<string>();
-  const desk = useDeskActions({
-    projectId,
-    snapshot,
-    activeProjectRef,
-    refreshDesk,
-    setChatItems: chat.setChatItems,
-    setObjects,
-  });
-  const pushCanvasError = useCallback(
-    (message: string) => {
-      chat.setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: message }]);
-    },
-    [chat.setChatItems],
-  );
-  const history = useDeskHistory({ projectId, enqueue: desk.enqueue, refreshDesk, onError: pushCanvasError });
-  historyRecordRef.current = history.record;
-  historyPatchFillRef.current = history.patchLatestFill;
-  const placement = useDeskPlacement({
-    projectId,
-    snapshot,
-    objects,
-    selectedIds,
-    setSelectedIds,
-    enqueue: desk.enqueue,
-    history,
-    refreshDesk,
-    onError: pushCanvasError,
-    viewportRef,
-  });
-  const gen = useDeskGenerate({ projectId, history, refreshDesk, onError: pushCanvasError, generateGate });
-
   useEffect(() => {
-    setSelectedIds([]);
-    setSelectedConnectionId(undefined);
-    generateGate.reset();
-    gen.closePanel();
-  }, [projectId, generateGate]);
-
-  const createConnection = useCallback(
-    (from: string, to: string) => {
-      if (!projectId) return;
-      void desk.enqueue(async () => {
-        try {
-          const { connection } = await api.createConnection(projectId, { from, to, clientOpId: crypto.randomUUID() });
-          history.record({ type: "place_connection", connection });
-        } catch (error) {
-          pushCanvasError(`连线失败：${error instanceof Error ? error.message : "未知错误"}`);
-        }
-        await refreshDesk(projectId).catch(() => undefined);
-      });
-    },
-    [projectId, desk, history, pushCanvasError, refreshDesk],
-  );
-
-  const deleteConnection = useCallback(
-    (connectionId: string) => {
-      if (!projectId) return;
-      const connection = connections.find((c) => c.id === connectionId);
-      void desk.enqueue(async () => {
-        try {
-          await api.deleteConnection(projectId, connectionId);
-          if (connection) history.record({ type: "remove_connection", connection });
-          setSelectedConnectionId((cur) => (cur === connectionId ? undefined : cur));
-        } catch (error) {
-          pushCanvasError(`删除连线失败：${error instanceof Error ? error.message : "未知错误"}`);
-        }
-        await refreshDesk(projectId).catch(() => undefined);
-      });
-    },
-    [projectId, connections, desk, history, pushCanvasError, refreshDesk],
-  );
-
-  const panelSource = useMemo(
-    () => (gen.panelSourceId ? objects.find((o) => o.id === gen.panelSourceId) : undefined),
-    [gen.panelSourceId, objects],
-  );
-  const panelRefs = useMemo(() => {
-    if (!panelSource) return [];
-    const inbound = connections.filter((c) => c.to === panelSource.id).map((c) => c.from);
-    return objects.filter((o) => inbound.includes(o.id));
-  }, [panelSource, connections, objects]);
-
-  const onMoveEnd = useCallback(
-    (id: string, from: { x: number; y: number }, to: { x: number; y: number }) => {
-      desk.onMoveEnd(id, from, to);
-      if (Math.round(from.x) !== Math.round(to.x) || Math.round(from.y) !== Math.round(to.y)) {
-        history.record({ type: "move", artifactId: id, from, to });
-      }
-    },
-    [desk.onMoveEnd, history.record],
-  );
-
-  const onViewportChange = useCallback(
-    (viewport: Viewport) => {
-      viewportRef.current = viewport;
-      desk.onViewportChange(viewport);
-    },
-    [desk.onViewportChange],
-  );
-
-  // 全局键盘/粘贴监听：handler 用 ref 持有最新值，effect 只订阅一次（避免 selectedConnectionId 等频繁变 dep）
-  const keydownHandlersRef = useRef({
-    deleteSelected: placement.deleteSelected,
-    deleteConnection: (id: string) => deleteConnection(id),
-    undo: history.undo,
-    redo: history.redo,
-    selectedConnectionId: undefined as string | undefined,
-    addImageFiles: placement.addImageFiles,
-  });
-  keydownHandlersRef.current.deleteSelected = placement.deleteSelected;
-  keydownHandlersRef.current.deleteConnection = deleteConnection;
-  keydownHandlersRef.current.undo = history.undo;
-  keydownHandlersRef.current.redo = history.redo;
-  keydownHandlersRef.current.selectedConnectionId = selectedConnectionId;
-  keydownHandlersRef.current.addImageFiles = placement.addImageFiles;
-
-  useEffect(() => {
-    const isEditableTarget = (target: EventTarget | null) => {
-      const element = target as HTMLElement | null;
-      return Boolean(element && (element.isContentEditable || element.closest("input, textarea, select, [contenteditable=true]")));
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target)) return;
-      const handlers = keydownHandlersRef.current;
-      if (e.key === "Delete" || e.key === "Backspace") {
-        e.preventDefault();
-        if (handlers.selectedConnectionId) handlers.deleteConnection(handlers.selectedConnectionId);
-        else handlers.deleteSelected();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        if (e.shiftKey) handlers.redo();
-        else handlers.undo();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
-        e.preventDefault();
-        handlers.redo();
-      }
-    };
-    const onPaste = (e: ClipboardEvent) => {
-      if (isEditableTarget(e.target)) return;
-      const files = Array.from(e.clipboardData?.files ?? []);
-      if (files.length === 0) return;
-      e.preventDefault();
-      keydownHandlersRef.current.addImageFiles(files);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("paste", onPaste);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("paste", onPaste);
-    };
-  }, []);
-
-  const loadProjects = useCallback(async () => {
-    try {
-      setProjects(await api.listProjects());
-    } catch (e) {
-      setHomeError(e instanceof Error ? e.message : "无法加载项目列表");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (view.mode === "home") void loadProjects();
-  }, [view.mode, loadProjects]);
-
-  useEffect(() => {
-    if (chat.focusFromAgent) desk.setFocusRequest(chat.focusFromAgent);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to agent focus events
-  }, [chat.focusFromAgent]);
-
-  const closeChat = chat.closeChat;
-  const resetChatUi = chat.resetChatUi;
-  const clearViewportTimer = desk.clearViewportTimer;
-  const bindProjectChat = chat.bindProjectChat;
-  const reconnectChat = chat.reconnectChat;
-  const setChatConnection = chat.setConnection;
-  const setChatBusy = chat.setBusy;
-  const setChatItems = chat.setChatItems;
-
-  // 用 Set 查表避免每次物件变化都做 O(n) some 扫描（rerender-dependencies + js-set-map-lookups）
-  const objectIds = useMemo(() => new Set(objects.map((o) => o.id)), [objects]);
-  const connectionIds = useMemo(() => new Set(connections.map((c) => c.id)), [connections]);
-
-  useEffect(() => {
-    setSelectedIds((cur) => {
-      const next = cur.filter((id) => objectIds.has(id));
-      return next.length === cur.length ? cur : next;
-    });
-  }, [objectIds]);
-
-  useEffect(() => {
-    if (selectedConnectionId && !connectionIds.has(selectedConnectionId)) setSelectedConnectionId(undefined);
-  }, [connectionIds, selectedConnectionId]);
+    if (view.mode === "home") void projectsApi.loadProjects();
+  }, [view.mode, projectsApi.loadProjects]);
 
   const resetToHome = useCallback(() => {
     activeProjectRef.current = undefined;
     hasAttachmentDraftRef.current = false;
     setComposerHandoff(undefined);
     refreshSequence.current += 1;
-    closeChat();
-    resetChatUi();
-    clearViewportTimer();
     setSnapshot(undefined);
     setObjects([]);
     setConnections([]);
     setView({ mode: "home" });
-  }, [clearViewportTimer, closeChat, resetChatUi]);
+  }, []);
 
   const openProject = useCallback(
     async (nextProjectId: string, options?: { initialText?: string; initialFiles?: File[]; history?: "push" | "replace" | "none" }) => {
       const historyMode = options?.history ?? "push";
-      // 先切断旧项目 socket，避免切换窗口内仍用旧连接发新项目消息
-      closeChat();
-      setChatConnection("connecting");
       activeProjectRef.current = nextProjectId;
       setComposerHandoff(options?.initialText || options?.initialFiles?.length
         ? { text: options.initialText, files: options.initialFiles }
         : undefined);
-      clearViewportTimer();
       setSnapshot(undefined);
       setObjects([]);
       setConnections([]);
@@ -331,41 +87,10 @@ export function App() {
         if (historyMode === "replace") window.history.replaceState(state, "", nextPath);
         else window.history.pushState(state, "", nextPath);
       }
-      try {
-        await refreshDesk(nextProjectId);
-        if (activeProjectRef.current !== nextProjectId) return;
-        await bindProjectChat(nextProjectId);
-      } catch (e) {
-        if (activeProjectRef.current !== nextProjectId) return;
-        setChatConnection("disconnected");
-        setChatBusy(false);
-        setChatItems([{ id: nextId(), role: "agent", text: `打开项目失败：${e instanceof Error ? e.message : "未知错误"}` }]);
-      }
+      await refreshDesk(nextProjectId).catch(() => undefined);
     },
-    [bindProjectChat, clearViewportTimer, closeChat, refreshDesk, setChatBusy, setChatConnection, setChatItems],
+    [refreshDesk],
   );
-
-  // 仅卸载时关 WS；依赖稳定，避免 HMR 重跑 effect 时反复 close 却不重连
-  useEffect(() => () => {
-    closeChat();
-    clearViewportTimer();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount-only cleanup
-  }, []);
-
-  // 桌面页且已加载过线程：掉成 disconnected 时重绑 WS（后端热重启），不清消息
-  // 要求 activeChatThreadId：避免与首次 bindProjectChat 抢跑
-  useEffect(() => {
-    if (view.mode !== "desk") return;
-    if (chat.connection !== "disconnected") return;
-    if (!chat.activeChatThreadId) return;
-    const projectId = view.projectId;
-    if (!projectId || activeProjectRef.current !== projectId) return;
-    const timer = window.setTimeout(() => {
-      if (activeProjectRef.current !== projectId) return;
-      reconnectChat(projectId);
-    }, 400);
-    return () => window.clearTimeout(timer);
-  }, [view, chat.connection, chat.activeChatThreadId, reconnectChat]);
 
   const leaveProject = useCallback((options?: { history?: "push" | "none" }) => {
     if (hasAttachmentDraftRef.current && !window.confirm("当前消息还有未发送的附件。离开后将丢弃这些附件，是否继续？")) return false;
@@ -411,223 +136,77 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, [openProject, resetToHome]);
 
+  /**
+   * 新建项目：图片直接落桌为首个 canvas_image；
+   * PDF 等非图附件走对话 handoff（首条消息附件）。
+   */
   const createProject = useCallback(
     async (input: { name: string; files?: File[]; prompt?: string }) => {
       const project = await api.createProject(input.name);
-      await openProject(project.id, { initialText: input.prompt, initialFiles: input.files });
+      const files = input.files ?? [];
+      const images = files.filter((file) => validateCanvasImageFile(file) === undefined);
+      const others = files.filter((file) => validateCanvasImageFile(file) !== undefined);
+      await openProject(project.id, { initialText: input.prompt, initialFiles: others });
+      for (const [index, file] of images.entries()) {
+        try {
+          const stored = await api.uploadFile(project.id, file);
+          await api.createArtifact(project.id, {
+            artifactType: "canvas_image",
+            payload: { file_id: stored.id },
+            inputRefs: [{ file_id: stored.id }],
+            clientOpId: crypto.randomUUID(),
+            layout: { kind: "canvas_image", x: 60 + index * 32, y: 60 + index * 32, rot: 0 },
+          });
+        } catch {
+          // 单个文件失败不阻断进入项目；用户可稍后拖放补上
+        }
+      }
+      if (images.length > 0) await refreshDesk(project.id).catch(() => undefined);
     },
-    [openProject],
+    [openProject, refreshDesk],
   );
 
-  const deleteProject = useCallback(async (project: ProjectSummary) => {
-    try {
-      await api.deleteProject(project.id);
-      setProjects((cur) => cur.filter((p) => p.id !== project.id));
-    } catch (e) {
-      setHomeError(e instanceof Error ? e.message : "删除失败");
-    }
-  }, []);
+  const renameProject = useCallback(async (project: { id: string }, name: string) => {
+    const updated = await projectsApi.renameProject(project, name);
+    if (!updated) return;
+    setSnapshot((cur) => (cur && cur.project.id === project.id
+      ? { ...cur, project: { ...cur.project, name: updated.name, updatedAt: updated.updatedAt } }
+      : cur));
+  }, [projectsApi]);
 
   if (view.mode === "home") {
     return (
       <div className="app-shell">
         <Home
-          projects={projects}
-          error={homeError}
+          projects={projectsApi.projects}
+          error={projectsApi.homeError}
           onOpen={(p) => void openProject(p.id)}
           onCreate={createProject}
-          onDelete={deleteProject}
+          onRename={renameProject}
+          onDelete={projectsApi.deleteProject}
         />
       </div>
     );
   }
 
-  const deskProjectId = view.projectId;
-  const deskSnapshot = snapshot?.project.id === deskProjectId ? snapshot : undefined;
-
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <img className="brand-mark" src="/brand-mark.svg" alt="Qijian" width={30} height={30} />
-        <div className="brand">砌间<small>QIJIAN AI DESIGN</small></div>
-        <button type="button" className="back-btn" onClick={() => leaveProject()}>← 项目列表</button>
-        <span className="proj-name">{snapshot?.project.name}</span>
-      </header>
-      <div className="workbench">
-        <Desk
-          key={deskProjectId}
-          objects={objects}
-          connections={connections}
-          initialViewport={deskSnapshot?.deskState.viewport}
-          onMove={desk.onMove}
-          onMoveEnd={onMoveEnd}
-          onViewportChange={onViewportChange}
-          focusRequest={desk.focusRequest}
-          selectedIds={selectedIds}
-          selectedConnectionId={selectedConnectionId}
-          onSelect={(id, opts) => {
-            setSelectedConnectionId(undefined);
-            if (!id) {
-              setSelectedIds([]);
-              gen.closePanel();
-              return;
-            }
-            if (opts?.toggle) {
-              setSelectedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
-              gen.closePanel();
-              return;
-            }
-            setSelectedIds([id]);
-            const openPanel = opts?.panel !== false;
-            if (openPanel) gen.openPanel(id);
-            else if (gen.panelSourceId && gen.panelSourceId !== id) gen.closePanel();
-          }}
-          onMarqueeSelect={(ids) => {
-            setSelectedConnectionId(undefined);
-            setSelectedIds(ids);
-            gen.closePanel();
-          }}
-          onSelectConnection={(id) => {
-            setSelectedConnectionId(id);
-            // 仅在选中某条连线时清掉物件选中；id 为空表示“取消连线选中”，勿动物件选中
-            if (id) {
-              setSelectedIds([]);
-              gen.closePanel();
-            }
-          }}
-          onDropFiles={placement.addImageFiles}
-          onCreateConnection={createConnection}
-          overlay={
-            <DeskToolbar
-              canUndo={history.canUndo}
-              canRedo={history.canRedo}
-              onHand={() => {
-                setSelectedIds([]);
-                setSelectedConnectionId(undefined);
-                gen.closePanel();
-              }}
-              onUndo={history.undo}
-              onRedo={history.redo}
-              onText={placement.addStickyNote}
-              onImage={placement.addImagePlaceholder}
-            />
-          }
-          renderNodeToolbar={(obj) => (
-            <>
-              {obj.kind === "canvas_image" && !obj.url && !obj.pending && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    imageUploadTargetRef.current = obj.id;
-                    imagePickerRef.current?.click();
-                  }}
-                >
-                  <Upload size={14} />
-                  上传图片
-                </button>
-              )}
-              <button type="button" className="danger" onClick={() => placement.deleteObject(obj.id)}>
-                <Trash2 size={14} />
-                删除
-              </button>
-            </>
-          )}
-          renderObject={(obj) => (
-            <DeskObjectView
-              obj={obj}
-              editing={placement.editingId === obj.id}
-              onStartEdit={placement.startEdit}
-              onCommitText={placement.commitText}
-              onRetryGenerate={(id) => {
-                // id 是失败卡本身；真实参考源从连入边 from 解析，不能再当 source 新建一张
-                const target = objects.find((item) => item.id === id);
-                if (!target || (target.kind !== "effect_image" && target.kind !== "canvas_image")) return;
-                const inbound = connections.find((c) => c.to === id);
-                const sourceArtifactId = inbound?.from ?? id;
-                void gen.generate({
-                  sourceArtifactId,
-                  targetArtifactId: id,
-                  prompt: target.prompt ?? "",
-                });
-              }}
-            />
-          )}
-        >
-          {panelSource && (
-            <PromptPanel
-              source={panelSource}
-              references={panelRefs}
-              busy={gen.busySourceId === panelSource.id}
-              onGenerate={(prompt) => {
-                // 空占位图卡：生成结果填回该卡本身，不新建效果图节点
-                const fillBack = panelSource.kind === "canvas_image" && !panelSource.url;
-                const prev = fillBack
-                  ? deskSnapshot?.artifacts.find((a) => a.id === panelSource.id)
-                  : undefined;
-                void gen.generate({
-                  sourceArtifactId: panelSource.id,
-                  prompt,
-                  ...(fillBack
-                    ? {
-                      targetArtifactId: panelSource.id,
-                      fillBack: true,
-                      previousPayload: prev?.payload ?? {},
-                      previousInputRefs: prev?.inputRefs,
-                    }
-                    : {}),
-                });
-              }}
-              onClose={gen.closePanel}
-            />
-          )}
-        </Desk>
-        <input
-          ref={imagePickerRef}
-          type="file"
-          accept={CANVAS_IMAGE_ACCEPT}
-          className="sr-only"
-          onChange={(e) => {
-            const file = e.currentTarget.files?.[0];
-            const targetId = imageUploadTargetRef.current;
-            imageUploadTargetRef.current = undefined;
-            if (file && targetId) placement.uploadImageToObject(targetId, file);
-            e.currentTarget.value = "";
-          }}
-        />
-        <ChatPanel
-          projectId={deskProjectId}
-          items={chat.chatItems}
-          streaming={chat.streaming}
-          busy={chat.busy}
-          connection={chat.connection}
-          threads={chat.chatThreads}
-          activeThreadId={chat.activeChatThreadId}
-          threadChanging={chat.threadChanging}
-          initialText={composerHandoff?.text}
-          initialFiles={composerHandoff?.files}
-          submissionOutcome={chat.submissionOutcome}
-          // 画布 selectedIds → 对话多 chip；× 可清单项或全部
-          selectedObjects={selectedIds
-            .map((id) => objects.find((item) => item.id === id))
-            .filter((item): item is NonNullable<typeof item> => Boolean(item))}
-          onClearSelection={(id) => {
-            if (id) {
-              setSelectedIds((cur) => cur.filter((x) => x !== id));
-              if (gen.panelSourceId === id) gen.closePanel();
-              return;
-            }
-            setSelectedIds([]);
-            gen.closePanel();
-          }}
-          onSend={chat.sendChat}
-          onStop={chat.stopChat}
-          onNewThread={() => void chat.createChatThread()}
-          onSelectThread={(threadId) => void chat.selectChatThread(threadId)}
-          onDeleteThread={(threadId) => void chat.deleteChatThread(threadId)}
-          onInitialFilesConsumed={() => setComposerHandoff(undefined)}
-          onDraftStateChange={(hasDraft) => { hasAttachmentDraftRef.current = hasDraft; }}
-        />
-      </div>
-    </div>
+    <DeskWorkbench
+      projectId={view.projectId}
+      snapshot={snapshot}
+      objects={objects}
+      connections={connections}
+      setObjects={setObjects}
+      refreshDesk={refreshDesk}
+      activeProjectRef={activeProjectRef}
+      composerHandoff={composerHandoff}
+      setComposerHandoff={setComposerHandoff}
+      hasAttachmentDraftRef={hasAttachmentDraftRef}
+      onProjectRenamed={(pid, name) => {
+        setSnapshot((cur) => (cur && cur.project.id === pid ? { ...cur, project: { ...cur.project, name } } : cur));
+        projectsApi.setProjects((cur) => cur.map((p) => (p.id === pid ? { ...p, name } : p)));
+      }}
+      onRenameProject={renameProject}
+      onLeave={() => { leaveProject(); }}
+    />
   );
 }

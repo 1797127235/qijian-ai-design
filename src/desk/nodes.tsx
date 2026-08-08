@@ -62,7 +62,7 @@ function ImageCard({
     );
   }
   return (
-    <div className="image-card" style={IMAGE_BOX}>
+    <div className="image-card" style={IMAGE_BOX} title="双击查看大图">
       <img
         src={obj.url}
         alt={label}
@@ -74,7 +74,7 @@ function ImageCard({
   );
 }
 
-/** 展示层：只呈现物件；便签编辑通过回调上抛。 */
+/** 展示层：只呈现物件；便签编辑通过回调上抛。图片双击由 Desk 识别。 */
 export function DeskObjectView({
   obj,
   editing,

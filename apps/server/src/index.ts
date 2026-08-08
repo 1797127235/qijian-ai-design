@@ -26,6 +26,7 @@ import { DeskStateService } from "./services/desk-state-service.js";
 import { FileStorage } from "./services/file-storage.js";
 import { HttpImageGenerator } from "./services/image-generator.js";
 import { ChatService } from "./services/chat-service.js";
+import { ProjectAutoNamer } from "./services/project-namer.js";
 import { createTraceRegistry } from "./agent/tracing/index.js";
 
 // —— 基础设施 ——
@@ -68,6 +69,9 @@ const sessions = new AgentSessionRegistry({
 const chat = new ChatGateway(sessions, chats, traces);
 // publish 回填：从此刻起，Agent/Job 抛出的事件统一进 ChatGateway，由它按连接 fan-out
 publish = chat.emit;
+// 自动起名：走 publish（= chat.emit）fan-out project_renamed；需在 publish 回填后构造
+const namer = new ProjectAutoNamer(desks, config, (event) => publish(event));
+chat.namer = namer;
 
 /**
  * HTTP 启动 + WS upgrade 路由。

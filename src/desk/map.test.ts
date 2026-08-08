@@ -62,6 +62,24 @@ describe("mapSnapshot", () => {
     expect(objects[0]).toMatchObject({ kind: "effect_image", url: "/api/files/f-fx", pending: false });
   });
 
+  it("maps inpaint fields for retry (user_prompt / region / reference_file_id)", () => {
+    const objects = mapSnapshot(snapshotWith("effect_image", {
+      pending: false,
+      prompt: "局部重绘：…\n换成绿沙发",
+      user_prompt: "换成绿沙发",
+      region: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+      reference_file_id: "f-ref",
+      inpaint: true,
+    }));
+    expect(objects[0]).toMatchObject({
+      kind: "effect_image",
+      prompt: "局部重绘：…\n换成绿沙发",
+      userPrompt: "换成绿沙发",
+      region: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+      referenceFileId: "f-ref",
+    });
+  });
+
   it("drops objects whose artifact is missing from the snapshot", () => {
     const snapshot = snapshotWith("sticky_note", { text: "x" });
     snapshot.deskState.objects.push({ artifact_id: "ghost", kind: "sticky_note", x: 0, y: 0, rot: 0 });

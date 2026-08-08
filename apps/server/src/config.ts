@@ -19,6 +19,10 @@ export interface ServerConfig {
   /** 图像生成端点；为空时所有生图调用直接 503（不算 bug，是「未配置」语义） */
   imageEndpoint?: string;
   imageApiKey?: string;
+  /** 文本 LLM（项目自动起名）：OpenAI 兼容 chat/completions 端点；未配置则自动起名静默关闭 */
+  textEndpoint?: string;
+  textApiKey?: string;
+  textModel?: string;
   /** 文生图 model；codex2api 实测 grok-imagine-image-quality */
   imageModel?: string;
   /** 有参考图时的 model；edits 路径用（grok-imagine-edit 上游 404，改用 quality） */
@@ -31,6 +35,18 @@ export interface ServerConfig {
   langsmithProject?: string;
   langsmithEndpoint?: string;
   langsmithDebugSync: boolean;
+}
+
+/** 从 images API URL 推导同网关的 chat/completions（取 origin + /v1/chat/completions；失败返回 undefined）。 */
+function deriveChatCompletionsUrl(imageApiUrl?: string): string | undefined {
+  if (!imageApiUrl) return undefined;
+  try {
+    const url = new URL(imageApiUrl);
+    const base = url.pathname.match(/^(\/v\d+)\//)?.[1] ?? "/v1";
+    return `${url.origin}${base}/chat/completions`;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -51,6 +67,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     agentModel: env.AGENT_MODEL ?? "grok-4.5-latest",
     imageEndpoint: env.IMAGE_API_URL,
     imageApiKey: env.IMAGE_API_KEY,
+    // 文本 LLM：显式 TEXT_API_* 优先；否则从 IMAGE_API_URL 推导同网关的 chat/completions（codex2api 同源）
+    textEndpoint: env.TEXT_API_URL ?? deriveChatCompletionsUrl(env.IMAGE_API_URL),
+    textApiKey: env.TEXT_API_KEY ?? env.IMAGE_API_KEY,
+    textModel: env.TEXT_MODEL ?? env.AGENT_MODEL ?? "grok-4.5-latest",
     imageModel: env.IMAGE_MODEL ?? "grok-imagine-image-quality",
     // imageEditModel 缺省回退到 imageModel（保持单一 provider 时的简洁）
     imageEditModel: env.IMAGE_EDIT_MODEL ?? env.IMAGE_MODEL ?? "grok-imagine-image-quality",

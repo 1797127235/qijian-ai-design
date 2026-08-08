@@ -1,6 +1,25 @@
 import { useRef, useState } from "react";
 import type { ProjectSummary } from "../lib/api";
-import { ATTACHMENT_ACCEPT, MAX_ATTACHMENTS_PER_MESSAGE, MAX_TOTAL_ATTACHMENT_BYTES, validateAttachmentFile } from "./attachments";
+import { useExitTransition } from "./useExitTransition";
+import {
+  ATTACHMENT_ACCEPT,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+  validateAttachmentFile,
+} from "./attachments";
+
+/** 校验一批待创建项目附件；返回错误文案（合法返回 undefined）。 */
+function validateNewFiles(current: File[], picked: File[]): string | undefined {
+  const invalid = picked.find((file) => Boolean(validateAttachmentFile(file)));
+  if (invalid) return `${invalid.name}：${validateAttachmentFile(invalid)}`;
+  if (current.length + picked.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    return `最多添加 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`;
+  }
+  if ([...current, ...picked].reduce((total, file) => total + file.size, 0) > MAX_TOTAL_ATTACHMENT_BYTES) {
+    return "附件总大小不能超过 60MB";
+  }
+  return undefined;
+}
 
 function DeskPreview() {
   return (
@@ -20,12 +39,14 @@ export function Home({
   error,
   onOpen,
   onCreate,
+  onRename,
   onDelete,
 }: {
   projects: ProjectSummary[];
   error?: string;
   onOpen: (project: ProjectSummary) => void;
   onCreate: (input: { name: string; files?: File[]; prompt?: string }) => Promise<void>;
+  onRename: (project: ProjectSummary, name: string) => Promise<void>;
   onDelete: (project: ProjectSummary) => Promise<void>;
 }) {
   const [name, setName] = useState("");
@@ -33,8 +54,14 @@ export function Home({
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string>();
   const [deletingId, setDeletingId] = useState<string>();
+  const [renamingId, setRenamingId] = useState<string>();
+  const [createOpen, setCreateOpen] = useState(false);
+  const createModal = useExitTransition(createOpen ? true : undefined, 120);
+  const [createName, setCreateName] = useState("");
+  const [createFiles, setCreateFiles] = useState<File[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const createFileInputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => inputRef.current?.focus();
 
@@ -44,12 +71,42 @@ export function Home({
     setSubmitting(true);
     setFormError(undefined);
     try {
-      await onCreate({ name: prompt || "未命名项目", files, prompt: prompt || undefined });
+      // 名字交给 LLM 总结（首条消息触发自动起名）；这里先落默认名，用户后续可改
+      await onCreate({ name: "未命名项目", files, prompt: prompt || undefined });
       setName("");
       setFiles([]);
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "创建失败");
+    } finally {
       setSubmitting(false);
+    }
+  };
+
+  /** 弹窗新建：字段全可选；空提交 = 「未命名」白画板，带图则图片落桌为首个资产 */
+  const confirmCreate = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setFormError(undefined);
+    try {
+      await onCreate({ name: createName.trim() || "未命名项目", files: createFiles });
+      setCreateOpen(false);
+      setCreateName("");
+      setCreateFiles([]);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "创建失败");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const commitRename = async (project: ProjectSummary, next: string) => {
+    const trimmed = next.trim();
+    setRenamingId(undefined);
+    if (!trimmed || trimmed === project.name) return;
+    try {
+      await onRename(project, trimmed);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "改名失败");
     }
   };
 
@@ -57,7 +114,7 @@ export function Home({
     <div className="home-shell">
       <nav className="home-rail" aria-label="主导航">
         <img className="brand-mark rail-seal" src="/brand-mark.svg" alt="Qijian" width={30} height={30} />
-        <button type="button" className="rail-btn" title="新建项目" aria-label="新建项目" disabled={submitting} onClick={() => void submit()}>
+        <button type="button" className="rail-btn" title="新建项目" aria-label="新建项目" disabled={submitting} onClick={() => setCreateOpen(true)}>
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
             <path d="M9 3.5v11M3.5 9h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
           </svg>
@@ -141,14 +198,9 @@ export function Home({
               className="sr-only"
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
-                const invalid = picked.find((file) => Boolean(validateAttachmentFile(file)));
-                if (invalid) {
-                  setFormError(`${invalid.name}：${validateAttachmentFile(invalid)}`);
-                } else if (files.length + picked.length > MAX_ATTACHMENTS_PER_MESSAGE) {
-                  setFormError(`每条消息最多添加 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`);
-                } else if ([...files, ...picked].reduce((total, file) => total + file.size, 0) > MAX_TOTAL_ATTACHMENT_BYTES) {
-                  setFormError("每条消息的附件总大小不能超过 60MB");
-                } else if (picked.length > 0) {
+                const problem = validateNewFiles(files, picked);
+                if (problem) setFormError(problem);
+                else if (picked.length > 0) {
                   setFormError(undefined);
                   setFiles((cur) => [...cur, ...picked]);
                 }
@@ -179,7 +231,7 @@ export function Home({
         <section className="home-recent" aria-label="最近项目">
             <h2>最近项目{projects.length > 0 ? ` · ${projects.length}` : ""}</h2>
             <div className="home-row">
-              <button type="button" className="home-card home-card-new" disabled={submitting} onClick={() => void submit()}>
+              <button type="button" className="home-card home-card-new" disabled={submitting} onClick={() => setCreateOpen(true)}>
                 <div className="desk-thumb desk-thumb-new">
                   <span className="home-card-plus">＋</span>
                 </div>
@@ -190,11 +242,37 @@ export function Home({
                   <button type="button" className="home-card-open" onClick={() => onOpen(p)}>
                     <DeskPreview />
                     <div className="home-card-cap">
-                      <span className="home-card-name">{p.name}</span>
+                      {renamingId === p.id ? (
+                        <input
+                          className="home-card-name-input"
+                          autoFocus
+                          defaultValue={p.name}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void commitRename(p, e.currentTarget.value);
+                            if (e.key === "Escape") setRenamingId(undefined);
+                          }}
+                          onBlur={(e) => void commitRename(p, e.currentTarget.value)}
+                        />
+                      ) : (
+                        <span className="home-card-name">{p.name}</span>
+                      )}
                       <span className="home-card-meta">
                         更新于 {new Date(p.updatedAt).toLocaleDateString("zh-CN")}
                       </span>
                     </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="home-card-rename"
+                    title="改名"
+                    aria-label={`改名 ${p.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRenamingId(p.id);
+                    }}
+                  >
+                    改名
                   </button>
                   <button
                     type="button"
@@ -216,6 +294,96 @@ export function Home({
             </div>
         </section>
       </div>
+
+      {createModal.rendered && (
+        <div
+          className={`home-modal-overlay${createModal.closing ? " closing" : ""}`}
+          onClick={() => !submitting && setCreateOpen(false)}
+        >
+          <div
+            className="home-modal"
+            role="dialog"
+            aria-label="添加项目"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="home-modal-head">
+              <h3>添加项目</h3>
+              <button
+                type="button"
+                className="home-modal-close"
+                aria-label="关闭"
+                disabled={submitting}
+                onClick={() => setCreateOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <label className="home-modal-label" htmlFor="create-project-name">项目名称</label>
+            <input
+              id="create-project-name"
+              className="home-modal-input"
+              autoFocus
+              value={createName}
+              placeholder="未命名"
+              maxLength={200}
+              onChange={(e) => setCreateName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void confirmCreate();
+                if (e.key === "Escape") setCreateOpen(false);
+              }}
+            />
+            <span className="home-modal-label">导入画布</span>
+            <button
+              type="button"
+              className="home-modal-upload"
+              onClick={() => createFileInputRef.current?.click()}
+            >
+              ⇪ 上传项目文件
+            </button>
+            {createFiles.length > 0 && (
+              <div className="home-files">
+                {createFiles.map((file, index) => (
+                  <span className="home-file-chip" key={`${file.name}-${index}`}>
+                    {file.name}
+                    <button
+                      type="button"
+                      aria-label={`移除 ${file.name}`}
+                      onClick={() => setCreateFiles((cur) => cur.filter((_, i) => i !== index))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <input
+              ref={createFileInputRef}
+              type="file"
+              multiple
+              accept={ATTACHMENT_ACCEPT}
+              className="sr-only"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                const problem = validateNewFiles(createFiles, picked);
+                if (problem) setFormError(problem);
+                else if (picked.length > 0) {
+                  setFormError(undefined);
+                  setCreateFiles((cur) => [...cur, ...picked]);
+                }
+                e.target.value = "";
+              }}
+            />
+            <div className="home-modal-actions">
+              <button type="button" className="home-modal-cancel" disabled={submitting} onClick={() => setCreateOpen(false)}>
+                取消
+              </button>
+              <button type="button" className="home-modal-confirm" disabled={submitting} onClick={() => void confirmCreate()}>
+                {submitting ? "创建中…" : "确定"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -47,6 +47,12 @@ export class DeskStateService {
     return Boolean(row);
   }
 
+  /** 取项目行（自动起名等轻量场景；要全量桌面请用 snapshot）。 */
+  async getProject(projectId: string) {
+    const [row] = await this.db.select().from(projects).where(eq(projects.id, projectId)).limit(1);
+    return row;
+  }
+
   /** 新建项目同时插入 desk_state 单行（事务保证一致性，避免空状态查询）。 */
   async createProject(name: string) {
     return this.db.transaction(async (tx) => {
@@ -54,6 +60,17 @@ export class DeskStateService {
       await tx.insert(deskStates).values({ projectId: project.id, objects: [], connections: [], viewport: defaultViewport });
       return project;
     });
+  }
+
+  /** 改名：就地更新 projects.name（updatedAt 触发器/显式刷新）。 */
+  async renameProject(projectId: string, name: string) {
+    const [project] = await this.db
+      .update(projects)
+      .set({ name, updatedAt: new Date() })
+      .where(eq(projects.id, projectId))
+      .returning();
+    if (!project) throw new HttpError(404, "未找到该设计项目");
+    return project;
   }
 
   /**

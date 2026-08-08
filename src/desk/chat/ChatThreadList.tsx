@@ -7,6 +7,7 @@ export const ChatThreadList = forwardRef<HTMLDivElement, {
   activeThreadId?: string;
   threadChanging: boolean;
   busy: boolean;
+  closing?: boolean;
   onSelect: (threadId: string) => void;
   onDelete: (threadId: string, title: string) => void;
 }>(function ChatThreadList({
@@ -14,11 +15,12 @@ export const ChatThreadList = forwardRef<HTMLDivElement, {
   activeThreadId,
   threadChanging,
   busy,
+  closing = false,
   onSelect,
   onDelete,
 }, ref) {
   return (
-    <div className="chat-thread-menu" role="dialog" aria-label="对话历史" ref={ref}>
+    <div className={`chat-thread-menu${closing ? " closing" : ""}`} role="dialog" aria-label="对话历史" ref={ref}>
       <div className="chat-thread-menu-head">
         <span className="chat-thread-menu-title">对话历史</span>
         <span className="chat-thread-menu-count">{threads.length}</span>
