@@ -3,7 +3,7 @@
 **状态：** 调研结论（供决策，非 ADR）  
 **日期：** 2026-08-06  
 **范围：** 从 Agent 架构视角审视砌间设计桌面；对照 2025–2026 主流实践与《深入理解 AI Agent》（李博杰），给出分阶段路线。  
-**相关：** [ADR 0012](adr/0012-agent-analysis-only.md)、[画布工作台设计](canvas-workbench-design.md)、[后端重写设计](implementation/agent-backend-redesign.md)、[核心 skill 与场景适配器](adr/0003-core-skill-with-domain-adapters.md)
+**相关：** [ADR 0012](adr/0012-agent-analysis-only.md)、[画布工作台设计](canvas-workbench-design.md)、[后端重写设计](implementation/agent-backend-redesign.md)
 
 ---
 
@@ -137,7 +137,7 @@
 | Harness / Loop 工程 | 管工具不稳、幻觉、危险/越权操作、指令不遵循               | 已有 session/事件/run；差 desk 观察与写桌闭环                   |
 | 上下文 = 能力上限        | 模型「看不见」的东西等于不存在                      | 当前无 desk/选中 → 眼睛被蒙住                                |
 | KV Cache 友好       | 稳定前缀 + 动态内容后置；缓存是架构约束                | system/工具定义固定；选中与桌面摘要走末尾 meta                      |
-| Agent Skills      | 渐进披露；元数据常驻、正文按需；注意第三方 Skill 注入面      | 打开 `noSkills`；家装/桌面 skill（对齐 ADR 0003）             |
+| Agent Skills      | 渐进披露；元数据常驻、正文按需；注意第三方 Skill 注入面      | 打开 `noSkills`；家装/桌面 skill 渐进加载                     |
 | Agent 状态栏         | 轨迹末尾注入任务进度、环境与工作状态                   | **选中 ids、desk 摘要、run 状态** 放 status bar，不塞 system 头 |
 | 提议者–审核者           | 审阅自己的 **artifact**，由验证决定结束，防假成功/过早放弃 | 出图/落桌后对照源图与工具结果再收口；Artifact 版本天然可审                 |
 | 工具 ACI            | 粒度、描述、参数保真；专用工具 vs Skill+通用执行器       | Phase 1 少而清晰的写桌工具                                  |
@@ -192,7 +192,7 @@
 | ---------------- | ------------------------ | ------------------------------ |
 | Desk 不在 context  | Agent 看不到选中物件与桌面快照       | 状态栏注入「当前选中 + 邻近物件摘要」           |
 | 写工具仍窄           | 仅 `generate_from_desk`  | 可再扩读桌 / 便签 / 多源落图             |
-| Skills 关闭        | `noSkills: true`         | 家装 skill 渐进加载（对齐 ADR 0003）     |
+| Skills 关闭        | `noSkills: true`         | 家装 skill 渐进加载                    |
 | Prompt 与 ADR 不一致 | 自称行动者但无工具                | 无工具只分析；有工具再切行动者语义              |
 | 无 Agent eval     | 仅有单元测试                   | 20 条黄金任务 + 幻觉写桌 / 假成功检测        |
 | 选中不进 prompt      | 前端选中未进入 agent            | 「选中 = 本轮输入」为一等上下文              |
@@ -278,7 +278,6 @@ ACI 原则：
   - L2：提案节奏、方向比较规则（按需加载）  
   - L3：材料 / 灯光参考按需读
 - [ ] Skill 描述写清**反例**（何时不要触发），避免误路由  
-- [ ] ADR 0003 的 domain adapter 优先落成 skill，而不是硬编码阶段机  
 - [ ] 第三方 / 外部 skill 安装前审查（提示注入面）
 
 ### Phase 3 — 可靠与可测

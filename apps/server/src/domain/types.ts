@@ -5,7 +5,6 @@
 
 /** 当前支持的 Artifact 类型；新增类型时必须同时改 payload-rules.ts 的 assertPayload。 */
 export const artifactTypes = [
-  "sticky_note",
   "canvas_image",
   "effect_image",
 ] as const;

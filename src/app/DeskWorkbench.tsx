@@ -422,7 +422,6 @@ export function DeskWorkbench({
               }}
               onUndo={history.undo}
               onRedo={history.redo}
-              onText={placement.addStickyNote}
               onImage={placement.addImagePlaceholder}
             />
           }
@@ -461,9 +460,6 @@ export function DeskWorkbench({
           renderObject={(obj) => (
             <DeskObjectView
               obj={obj}
-              editing={placement.editingId === obj.id}
-              onStartEdit={placement.startEdit}
-              onCommitText={placement.commitText}
               onRetryGenerate={(id) => {
                 const target = objects.find((item) => item.id === id);
                 if (!target || (target.kind !== "effect_image" && target.kind !== "canvas_image")) return;

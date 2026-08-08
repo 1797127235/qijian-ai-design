@@ -1,7 +1,6 @@
 import type { DeskObject } from "./types";
 
 export const NODE_SIZE: Record<DeskObject["kind"], { w: number; h: number }> = {
-  sticky_note: { w: 210, h: 140 },
   canvas_image: { w: 220, h: 160 },
   effect_image: { w: 220, h: 160 },
 };

@@ -41,16 +41,14 @@ export function stripInpaintPrefix(prompt: string): string {
   return prompt.replace(/^(局部重绘：[^\n]*\n)+/, "").trim();
 }
 
-/** 用户原文 + 便签 + 缺图提示 + 可选局部重绘前缀 → 模型上下文。 */
+/** 用户原文 + 缺图提示 + 可选局部重绘前缀 → 模型上下文。 */
 export function composeCanvasPrompt(input: {
   userPrompt: string;
-  noteTexts: string[];
   missingRef: boolean;
   region?: ImageRegion;
   hasReferenceFile?: boolean;
 }): string {
   const parts = [stripInpaintPrefix(input.userPrompt)].filter(Boolean);
-  if (input.noteTexts.length > 0) parts.push(`参考要求：${input.noteTexts.join("；")}`);
   if (input.missingRef) parts.push("（有参考图缺失）");
   const base = parts.join("\n") || "生成效果图";
   if (!input.region) return base;
@@ -146,7 +144,7 @@ export interface GenerateFromCanvasResult {
 export interface PreparedGenerate {
   pending: GenerateFromCanvasResult;
   composedPrompt: string;
-  /** 用户原文（不含局部重绘前缀/便签拼接），落库 user_prompt 与重试回传 */
+  /** 用户原文（不含局部重绘前缀），落库 user_prompt 与重试回传 */
   userPrompt: string;
   referenceFileIds: string[];
   origin: GenerateSource;
@@ -219,11 +217,10 @@ export class CanvasGenerateService {
 
     const inbound = snapshot.deskState.connections.filter((c) => c.to === input.sourceArtifactId);
     const extraRefIds = [...new Set((input.referenceArtifactIds ?? []).filter((id) => id && id !== input.sourceArtifactId))];
-    const { referenceFileIds, noteTexts } = this.collectReferences(snapshot, source, inbound, extraRefIds);
+    const { referenceFileIds } = this.collectReferences(snapshot, source, inbound, extraRefIds);
     const userPrompt = stripInpaintPrefix(input.prompt);
     const composedPrompt = composeCanvasPrompt({
       userPrompt,
-      noteTexts,
       missingRef: referenceFileIds.length < this.expectedImageRefs(snapshot, source, inbound, extraRefIds),
       region: input.region,
       hasReferenceFile: Boolean(input.referenceFileId),
@@ -522,7 +519,7 @@ export class CanvasGenerateService {
     return n;
   }
 
-  /** 收集参考：源 + 入边 + 显式参考 id。图片入 referenceFileIds，便签文本入 noteTexts。 */
+  /** 收集参考：源 + 入边 + 显式参考 id。图片入 referenceFileIds。 */
   private collectReferences(
     snapshot: Awaited<ReturnType<DeskStateService["snapshot"]>>,
     source: { id: string; artifactType: ArtifactType; payload: Record<string, unknown> },
@@ -530,7 +527,6 @@ export class CanvasGenerateService {
     extraRefIds: string[] = [],
   ) {
     const referenceFileIds: string[] = [];
-    const noteTexts: string[] = [];
     const pushFile = (payload: Record<string, unknown>) => {
       const id = payload.file_id;
       if (typeof id === "string" && id && !referenceFileIds.includes(id)) referenceFileIds.push(id);
@@ -538,9 +534,6 @@ export class CanvasGenerateService {
     const pushArtifact = (art: { artifactType: ArtifactType; payload: Record<string, unknown> } | undefined) => {
       if (!art) return;
       if (art.artifactType === "canvas_image" || art.artifactType === "effect_image") pushFile(art.payload);
-      if (art.artifactType === "sticky_note" && typeof art.payload.text === "string" && art.payload.text.trim()) {
-        noteTexts.push(art.payload.text.trim());
-      }
     };
     pushArtifact(source);
     for (const edge of inbound) {
@@ -549,7 +542,7 @@ export class CanvasGenerateService {
     for (const id of extraRefIds) {
       pushArtifact(snapshot.artifacts.find((a) => a.id === id));
     }
-    return { referenceFileIds, noteTexts };
+    return { referenceFileIds };
   }
 
   /** 把 fileIds 读出为 ReferenceFile 列表（缺一个跳一个，不阻断主流程）。 */

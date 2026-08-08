@@ -48,9 +48,9 @@ describe("ArtifactService placed-object lifecycle (integration)", () => {
   itDb("createPlaced is idempotent per clientOpId", async () => {
     const project = await desks.createProject("it-idempotent");
     try {
-      const layout = { kind: "sticky_note", x: 10, y: 20, rot: 0 };
-      const first = await service.createPlaced(project.id, "sticky_note", { payload: { text: "a" }, createdBy: "designer" }, layout, "op-1");
-      const second = await service.createPlaced(project.id, "sticky_note", { payload: { text: "a" }, createdBy: "designer" }, layout, "op-1");
+      const layout = { kind: "canvas_image", x: 10, y: 20, rot: 0 };
+      const first = await service.createPlaced(project.id, "canvas_image", { payload: {}, createdBy: "designer" }, layout, "op-1");
+      const second = await service.createPlaced(project.id, "canvas_image", { payload: {}, createdBy: "designer" }, layout, "op-1");
       expect(second.artifact.id).toBe(first.artifact.id);
       const snapshot = await desks.snapshot(project.id);
       expect(snapshot.deskState.objects).toHaveLength(1);
@@ -63,9 +63,9 @@ describe("ArtifactService placed-object lifecycle (integration)", () => {
   itDb("retries with a different clientOpId create separate artifacts", async () => {
     const project = await desks.createProject("it-not-idempotent");
     try {
-      const layout = { kind: "sticky_note", x: 0, y: 0, rot: 0 };
-      await service.createPlaced(project.id, "sticky_note", { payload: { text: "a" }, createdBy: "designer" }, layout, "op-a");
-      await service.createPlaced(project.id, "sticky_note", { payload: { text: "a" }, createdBy: "designer" }, layout, "op-b");
+      const layout = { kind: "canvas_image", x: 0, y: 0, rot: 0 };
+      await service.createPlaced(project.id, "canvas_image", { payload: {}, createdBy: "designer" }, layout, "op-a");
+      await service.createPlaced(project.id, "canvas_image", { payload: {}, createdBy: "designer" }, layout, "op-b");
       const snapshot = await desks.snapshot(project.id);
       expect(snapshot.artifacts).toHaveLength(2);
     } finally {
@@ -113,8 +113,8 @@ describe("ArtifactService placed-object lifecycle (integration)", () => {
   itDb("deletePlaced removes layout and hard-deletes the artifact with its versions", async () => {
     const project = await desks.createProject("it-delete");
     try {
-      const placed = await service.createPlaced(project.id, "sticky_note", { payload: { text: "gone" }, createdBy: "designer" }, { kind: "sticky_note", x: 1, y: 1, rot: 0 });
-      await service.append(placed.artifact.id, { payload: { text: "gone v2" }, createdBy: "designer" });
+      const placed = await service.createPlaced(project.id, "canvas_image", { payload: {}, createdBy: "designer" }, { kind: "canvas_image", x: 1, y: 1, rot: 0 });
+      await service.append(placed.artifact.id, { payload: { pending: true, prompt: "v2" }, createdBy: "designer" });
       await service.deletePlaced(project.id, placed.artifact.id);
       const snapshot = await desks.snapshot(project.id);
       expect(snapshot.deskState.objects).toHaveLength(0);
@@ -138,20 +138,20 @@ describe("ArtifactService placed-object lifecycle (integration)", () => {
   itDb("restorePlaced recreates the artifact with the same UUID and restores layout", async () => {
     const project = await desks.createProject("it-restore");
     try {
-      const placed = await service.createPlaced(project.id, "sticky_note", { payload: { text: "back" }, createdBy: "designer" }, { kind: "sticky_note", x: 7, y: 8, rot: 0 });
+      const placed = await service.createPlaced(project.id, "canvas_image", { payload: {}, createdBy: "designer" }, { kind: "canvas_image", x: 7, y: 8, rot: 0 });
       await service.deletePlaced(project.id, placed.artifact.id);
       const restored = await service.restorePlaced(project.id, {
         artifactId: placed.artifact.id,
-        artifactType: "sticky_note",
-        payload: { text: "back" },
+        artifactType: "canvas_image",
+        payload: {},
         createdBy: "designer",
-        layout: { kind: "sticky_note", x: 7, y: 8, rot: 0 },
+        layout: { kind: "canvas_image", x: 7, y: 8, rot: 0 },
       });
       expect(restored.artifact.id).toBe(placed.artifact.id);
       expect(restored.version.versionNo).toBe(1);
       const snapshot = await desks.snapshot(project.id);
       expect(snapshot.deskState.objects).toHaveLength(1);
-      expect(snapshot.artifacts[0]?.payload.text).toBe("back");
+      expect(snapshot.artifacts[0]?.artifactType).toBe("canvas_image");
     } finally {
       await desks.deleteProject(project.id);
     }
@@ -160,14 +160,14 @@ describe("ArtifactService placed-object lifecycle (integration)", () => {
   itDb("restorePlaced refuses to overwrite an existing artifact", async () => {
     const project = await desks.createProject("it-restore-conflict");
     try {
-      const placed = await service.createPlaced(project.id, "sticky_note", { payload: { text: "here" }, createdBy: "designer" }, { kind: "sticky_note", x: 0, y: 0, rot: 0 });
+      const placed = await service.createPlaced(project.id, "canvas_image", { payload: {}, createdBy: "designer" }, { kind: "canvas_image", x: 0, y: 0, rot: 0 });
       await expect(
         service.restorePlaced(project.id, {
           artifactId: placed.artifact.id,
-          artifactType: "sticky_note",
-          payload: { text: "here" },
+          artifactType: "canvas_image",
+          payload: {},
           createdBy: "designer",
-          layout: { kind: "sticky_note", x: 0, y: 0, rot: 0 },
+          layout: { kind: "canvas_image", x: 0, y: 0, rot: 0 },
         }),
       ).rejects.toThrow("该 Artifact 已存在");
     } finally {

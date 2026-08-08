@@ -2,7 +2,7 @@
  * 桌面状态栏：把 DeskSnapshot 压成当轮 prompt 的一段文本。
  *  - 只进当轮模型输入，不写 chat_messages（KV cache 友好）
  *  - 大桌面截断 MAX_DESK_STATUS_OBJECTS 件
- *  - 短标签：便签取前 14 字 / 效果图取 prompt 前 14 字 / 画布图固定文案
+ *  - 短标签：效果图取 prompt 前 14 字 / 画布图固定文案
  */
 import type { ArtifactSnapshot, DeskSnapshot } from "../domain/types.js";
 
@@ -19,9 +19,6 @@ function clipLabel(raw: string, fallback: string): string {
 /** 状态栏/chip 用的短标签，不塞 payload 全文或 base64。 */
 function shortLabel(artifact: ArtifactSnapshot): string {
   const payload = artifact.payload;
-  if (artifact.artifactType === "sticky_note") {
-    return typeof payload.text === "string" ? clipLabel(payload.text, "空便签") : "空便签";
-  }
   if (artifact.artifactType === "effect_image") {
     if (payload.pending === true) return "生成中";
     if (typeof payload.error === "string" && payload.error) return "生成失败";
@@ -91,7 +88,7 @@ export function buildDeskStatusBlock(
 
 /**
  * 解析选中物件的 file_id，供 loadAgentImages 做多模态。
- * 跳过：不在桌、便签（无图）、pending 效果图、无 file_id 的物件。
+ * 跳过：不在桌、pending 效果图、无 file_id 的物件。
  * 返回去重后的 file_id 列表，喂给 Agent 视觉输入。
  */
 export function selectedVisualFileIds(

@@ -13,9 +13,9 @@ import {
 
 const entry = (id: string): DeskHistoryEntry => ({
   artifactId: id,
-  artifactType: "sticky_note",
-  payload: { text: `note-${id}` },
-  layout: { kind: "sticky_note", x: 1, y: 2, rot: 0 },
+  artifactType: "canvas_image",
+  payload: {},
+  layout: { kind: "canvas_image", x: 1, y: 2, rot: 0 },
 });
 
 const place = (id: string): DeskHistoryOp => ({ type: "place", entry: entry(id) });

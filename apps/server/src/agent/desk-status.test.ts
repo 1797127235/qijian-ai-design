@@ -7,17 +7,6 @@ function snapshot(partial?: Partial<DeskSnapshot>): DeskSnapshot {
     project: { id: "p1", name: "静安两居" },
     artifacts: [
       {
-        id: "note-1",
-        artifactType: "sticky_note",
-        versionId: "v1",
-        versionNo: 1,
-        status: "draft",
-        payload: { text: "客户喜欢原木色与暖光氛围" },
-        inputRefs: [],
-        createdBy: "designer",
-        createdAt: new Date("2026-08-06T00:00:00.000Z"),
-      },
-      {
         id: "img-1",
         artifactType: "canvas_image",
         versionId: "v2",
@@ -42,7 +31,6 @@ function snapshot(partial?: Partial<DeskSnapshot>): DeskSnapshot {
     ],
     deskState: {
       objects: [
-        { artifact_id: "note-1", kind: "sticky_note", x: 0, y: 0, rot: 0 },
         { artifact_id: "img-1", kind: "canvas_image", x: 10, y: 10, rot: 0 },
         { artifact_id: "fx-pending", kind: "effect_image", x: 20, y: 20, rot: 0 },
       ],
@@ -64,14 +52,14 @@ describe("buildDeskStatusBlock", () => {
     expect(block).toContain("项目：静安两居");
     expect(block).toContain("选中（1）：");
     expect(block).toContain("canvas_image img-1");
-    expect(block).toContain("sticky_note note-1");
+    expect(block).toContain("effect_image fx-pending");
   });
 
   it("lists multiple selections", () => {
-    const block = buildDeskStatusBlock(snapshot(), ["img-1", "note-1"]);
+    const block = buildDeskStatusBlock(snapshot(), ["img-1", "fx-pending"]);
     expect(block).toContain("选中（2）：");
     expect(block).toContain("canvas_image img-1");
-    expect(block).toContain("sticky_note note-1");
+    expect(block).toContain("effect_image fx-pending");
   });
 
   it("marks missing selection as invalid", () => {
@@ -86,7 +74,7 @@ describe("buildDeskStatusBlock", () => {
 
 describe("selectedVisualFileIds", () => {
   it("returns file ids for selected images on the desk", () => {
-    expect(selectedVisualFileIds(snapshot(), ["img-1", "note-1", "fx-pending"])).toEqual(["file-img-1"]);
+    expect(selectedVisualFileIds(snapshot(), ["img-1", "fx-pending"])).toEqual(["file-img-1"]);
   });
 
   it("ignores invalid or off-desk ids", () => {

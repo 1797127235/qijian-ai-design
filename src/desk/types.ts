@@ -1,5 +1,4 @@
 export type DeskObject =
-  | { id: string; kind: "sticky_note"; x: number; y: number; rot: number; status: "draft" | "confirmed"; text: string }
   | {
       id: string;
       kind: "canvas_image";

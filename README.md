@@ -9,7 +9,7 @@
 - 创建、查看和删除设计项目；每项目一张可平移、缩放、持久化布局的桌面。
 - 右侧对话与附件；Agent 可分析桌面选中，并经 `generate_from_desk` 生成 `effect_image` 落桌（ADR 0013）。
 - Artifact 不可变版本历史；桌面位置、旋转、视口独立持久化。
-- 已支持的 Artifact 类型：`sticky_note`、`canvas_image`、`effect_image`。
+- 已支持的 Artifact 类型：`canvas_image`、`effect_image`。
 
 已砍：空间地图、确认/采用审批、导出提案包、`/export` 与 confirm 流程关卡、`proposal_package` 类型壳。
 

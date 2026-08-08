@@ -1,11 +1,11 @@
-import { useCallback, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { api, type DeskSnapshot } from "../lib/api";
 import { screenToWorld, type Viewport } from "../desk/geometry";
 import { validateCanvasImageFile } from "../desk/attachments";
 import type { DeskObject } from "../desk/types";
 import type { DeskHistory, DeskHistoryEntry } from "./useDeskHistory";
 
-/** 文字/图片落桌、删除、便签提交 —— 全部经串行队列执行并写入会话历史。 */
+/** 图片落桌、删除 —— 全部经串行队列执行并写入会话历史。 */
 export function useDeskPlacement(options: {
   projectId?: string;
   snapshot?: DeskSnapshot;
@@ -19,7 +19,6 @@ export function useDeskPlacement(options: {
   viewportRef: MutableRefObject<Viewport>;
 }) {
   const { projectId, snapshot, objects, selectedIds, setSelectedIds, enqueue, history, refreshDesk, onError, viewportRef } = options;
-  const [editingId, setEditingId] = useState<string>();
   const cascadeRef = useRef(0);
 
   const nextPlacement = useCallback(() => {
@@ -29,31 +28,6 @@ export function useDeskPlacement(options: {
     cascadeRef.current += 1;
     return { x: Math.round(center.x - 105 + offset), y: Math.round(center.y - 60 + offset) };
   }, [viewportRef]);
-
-  const addStickyNote = useCallback(() => {
-    if (!projectId) return;
-    const { x, y } = nextPlacement();
-    const clientOpId = crypto.randomUUID();
-    void enqueue(async () => {
-      try {
-        const result = await api.createArtifact(projectId, {
-          artifactType: "sticky_note",
-          payload: { text: "" },
-          clientOpId,
-          layout: { kind: "sticky_note", x, y, rot: 0 },
-        });
-        history.record({
-          type: "place",
-          entry: { artifactId: result.artifact.id, artifactType: "sticky_note", payload: { text: "" }, layout: { kind: "sticky_note", x, y, rot: 0 } },
-        });
-        setSelectedIds([result.artifact.id]);
-        setEditingId(result.artifact.id);
-      } catch (error) {
-        onError(`创建便签失败：${error instanceof Error ? error.message : "未知错误"}`);
-      }
-      await refreshDesk(projectId).catch(() => undefined);
-    });
-  }, [projectId, enqueue, history, nextPlacement, onError, refreshDesk, setSelectedIds]);
 
   const addImagePlaceholder = useCallback(() => {
     if (!projectId) return;
@@ -175,11 +149,7 @@ export function useDeskPlacement(options: {
       const artifact = snapshot?.artifacts.find((item) => item.id === artifactId);
       const object = objects.find((item) => item.id === artifactId);
       if (!artifact || !object) return undefined;
-      if (
-        artifact.artifactType !== "sticky_note"
-        && artifact.artifactType !== "canvas_image"
-        && artifact.artifactType !== "effect_image"
-      ) return undefined;
+      if (artifact.artifactType !== "canvas_image" && artifact.artifactType !== "effect_image") return undefined;
       return {
         artifactId,
         artifactType: artifact.artifactType,
@@ -200,7 +170,6 @@ export function useDeskPlacement(options: {
           await api.deleteObject(projectId, artifactId);
           if (entry) history.record({ type: "remove", entry });
           setSelectedIds((cur) => cur.filter((id) => id !== artifactId));
-          setEditingId((cur) => (cur === artifactId ? undefined : cur));
         } catch (error) {
           onError(`删除失败：${error instanceof Error ? error.message : "未知错误"}`);
         }
@@ -214,40 +183,11 @@ export function useDeskPlacement(options: {
     for (const id of selectedIds) deleteObject(id);
   }, [selectedIds, deleteObject]);
 
-  const commitText = useCallback(
-    (artifactId: string, text: string) => {
-      setEditingId((cur) => (cur === artifactId ? undefined : cur));
-      if (!projectId) return;
-      const object = objects.find((item) => item.id === artifactId && item.kind === "sticky_note");
-      if (!object || object.kind !== "sticky_note") return;
-      const next = text;
-      if (next.trim().length === 0) {
-        deleteObject(artifactId);
-        return;
-      }
-      if (next === object.text) return;
-      void enqueue(async () => {
-        try {
-          await api.appendVersion(artifactId, { text: next });
-          history.record({ type: "update_text", artifactId, from: object.text, to: next });
-        } catch (error) {
-          onError(`便签保存失败：${error instanceof Error ? error.message : "未知错误"}`);
-        }
-        await refreshDesk(projectId).catch(() => undefined);
-      });
-    },
-    [projectId, objects, enqueue, history, onError, refreshDesk, deleteObject],
-  );
-
   return {
-    editingId,
-    startEdit: setEditingId,
-    addStickyNote,
     addImagePlaceholder,
     uploadImageToObject,
     addImageFiles,
     deleteObject,
     deleteSelected,
-    commitText,
   };
 }

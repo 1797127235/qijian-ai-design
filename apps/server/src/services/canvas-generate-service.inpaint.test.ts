@@ -74,18 +74,16 @@ describe("buildInpaintReferences", () => {
 });
 
 describe("composeCanvasPrompt / stripInpaintPrefix", () => {
-  it("无 region：原样拼便签，不加重绘前缀", () => {
+  it("无 region：原样保留用户 prompt", () => {
     expect(composeCanvasPrompt({
       userPrompt: "暖色调",
-      noteTexts: ["木地板"],
       missingRef: false,
-    })).toBe("暖色调\n参考要求：木地板");
+    })).toBe("暖色调");
   });
 
   it("有 region：只加一次局部重绘前缀", () => {
     const once = composeCanvasPrompt({
       userPrompt: "换成绿沙发",
-      noteTexts: [],
       missingRef: false,
       region: { x: 0, y: 0, w: 0.5, h: 0.5 },
     });
@@ -97,14 +95,12 @@ describe("composeCanvasPrompt / stripInpaintPrefix", () => {
   it("重试带回已 composed prompt：strip 后仍只加一次前缀", () => {
     const leaked = composeCanvasPrompt({
       userPrompt: "换成绿沙发",
-      noteTexts: [],
       missingRef: false,
       region: { x: 0, y: 0, w: 0.5, h: 0.5 },
       hasReferenceFile: true,
     });
     const again = composeCanvasPrompt({
       userPrompt: leaked,
-      noteTexts: [],
       missingRef: false,
       region: { x: 0, y: 0, w: 0.5, h: 0.5 },
       hasReferenceFile: true,
@@ -117,7 +113,6 @@ describe("composeCanvasPrompt / stripInpaintPrefix", () => {
   it("空 prompt 兜底为「生成效果图」", () => {
     expect(composeCanvasPrompt({
       userPrompt: "  ",
-      noteTexts: [],
       missingRef: false,
     })).toBe("生成效果图");
   });

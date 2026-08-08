@@ -1,4 +1,4 @@
-import { Hand, Image, Redo2, Type, Undo2 } from "lucide-react";
+import { Hand, Image, Redo2, Undo2 } from "lucide-react";
 
 export function DeskToolbar({
   canUndo,
@@ -6,7 +6,6 @@ export function DeskToolbar({
   onHand,
   onUndo,
   onRedo,
-  onText,
   onImage,
 }: {
   canUndo: boolean;
@@ -14,7 +13,6 @@ export function DeskToolbar({
   onHand: () => void;
   onUndo: () => void;
   onRedo: () => void;
-  onText: () => void;
   onImage: () => void;
 }) {
   return (
@@ -30,9 +28,6 @@ export function DeskToolbar({
         <Redo2 size={16} />
       </button>
       <span className="tb-sep" />
-      <button type="button" title="文字" aria-label="文字" onClick={onText}>
-        <Type size={16} />
-      </button>
       <button type="button" title="图片" aria-label="图片" onClick={onImage}>
         <Image size={16} />
       </button>

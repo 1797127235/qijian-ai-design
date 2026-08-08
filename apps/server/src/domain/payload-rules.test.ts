@@ -2,16 +2,6 @@ import { describe, expect, it } from "vitest";
 import { assertPayload, DomainValidationError } from "./payload-rules.js";
 
 describe("assertPayload", () => {
-  it("accepts empty sticky notes (create-then-edit flow)", () => {
-    expect(() => assertPayload("sticky_note", {})).not.toThrow();
-    expect(() => assertPayload("sticky_note", { text: "" })).not.toThrow();
-    expect(() => assertPayload("sticky_note", { text: "hello" })).not.toThrow();
-  });
-
-  it("rejects non-string sticky note text", () => {
-    expect(() => assertPayload("sticky_note", { text: 42 })).toThrow("便签内容必须是文本");
-  });
-
   it("accepts empty canvas_image placeholders (create-then-fill flow)", () => {
     expect(() => assertPayload("canvas_image", {})).not.toThrow();
   });

@@ -1,4 +1,4 @@
-import { ArrowUp, FileText, LoaderCircle, Plus, RotateCcw, Square, StickyNote, X } from "lucide-react";
+import { ArrowUp, FileText, Image as ImageIcon, LoaderCircle, Plus, RotateCcw, Square, X } from "lucide-react";
 import type { ChatConnectionStatus } from "../../lib/api";
 import { ATTACHMENT_ACCEPT } from "../attachments";
 import type { DeskObject } from "../types";
@@ -16,13 +16,8 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 选中 chip 标题：便签截断正文，图用类型名（非附件上传态）。 */
+/** 选中 chip 标题：图用类型名（非附件上传态）。 */
 function selectionLabel(object: DeskObject) {
-  if (object.kind === "sticky_note") {
-    const text = object.text.trim().replace(/\s+/g, " ");
-    if (!text) return "空便签";
-    return text.length > 14 ? `${text.slice(0, 14)}…` : text;
-  }
   if (object.kind === "effect_image") {
     if (object.pending) return "效果图 · 生成中";
     if (object.error) return "效果图 · 失败";
@@ -35,9 +30,7 @@ function selectionLabel(object: DeskObject) {
 }
 
 function selectionPreview(object: DeskObject) {
-  if (object.kind === "canvas_image") return object.url;
-  if (object.kind === "effect_image") return object.url;
-  return undefined;
+  return object.url;
 }
 
 export function ChatComposer({
@@ -107,7 +100,7 @@ export function ChatComposer({
                 <div className="composer-selection-preview" aria-hidden="true">
                   {previewUrl
                     ? <img src={previewUrl} alt="" />
-                    : <StickyNote size={16} strokeWidth={1.6} />}
+                    : <ImageIcon size={16} strokeWidth={1.6} />}
                 </div>
                 <div className="composer-selection-copy">
                   <span title={selectionLabel(selectedObject)}>{selectionLabel(selectedObject)}</span>

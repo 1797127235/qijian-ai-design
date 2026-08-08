@@ -56,7 +56,7 @@ function ImageCard({
       <div className="image-card image-card-empty" style={IMAGE_BOX}>
         <div className="image-card-placeholder">
           <ImagePlus size={26} strokeWidth={1.2} />
-          <span>连线便签生成，或直接上传</span>
+          <span>上传图片，或连接参考后生成</span>
         </div>
       </div>
     );
@@ -74,43 +74,15 @@ function ImageCard({
   );
 }
 
-/** 展示层：只呈现物件；便签编辑通过回调上抛。图片双击由 Desk 识别。 */
+/** 展示层：只呈现物件。图片双击由 Desk 识别。 */
 export function DeskObjectView({
   obj,
-  editing,
-  onStartEdit,
-  onCommitText,
   onRetryGenerate,
 }: {
   obj: DeskObject;
-  editing?: boolean;
-  onStartEdit?: (id: string) => void;
-  onCommitText?: (id: string, text: string) => void;
   onRetryGenerate?: (id: string) => void;
 }) {
   switch (obj.kind) {
-    case "sticky_note":
-      return (
-        <div className="sticky-card" onDoubleClick={() => onStartEdit?.(obj.id)}>
-          {editing ? (
-            <textarea
-              autoFocus
-              defaultValue={obj.text}
-              placeholder="输入文字…"
-              onPointerDown={(e) => e.stopPropagation()}
-              onBlur={(e) => onCommitText?.(obj.id, e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") e.currentTarget.blur();
-              }}
-            />
-          ) : obj.text ? (
-            <p>{obj.text}</p>
-          ) : (
-            <p className="sticky-placeholder">输入文字…</p>
-          )}
-        </div>
-      );
-
     case "canvas_image":
       return <ImageCard obj={obj} label="图片" onRetryGenerate={onRetryGenerate} />;
 

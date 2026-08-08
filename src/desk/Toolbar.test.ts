@@ -7,16 +7,16 @@ const base = {
   onHand: () => undefined,
   onUndo: () => undefined,
   onRedo: () => undefined,
-  onText: () => undefined,
   onImage: () => undefined,
 };
 
 describe("DeskToolbar", () => {
-  it("renders all five tools in order", () => {
+  it("renders tools in order without text tool", () => {
     const html = renderToStaticMarkup(createElement(DeskToolbar, { ...base, canUndo: false, canRedo: false }));
-    const order = ["漫游", "撤销", "重做", "文字", "图片"].map((label) => html.indexOf(`aria-label="${label}"`));
+    const order = ["漫游", "撤销", "重做", "图片"].map((label) => html.indexOf(`aria-label="${label}"`));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).not.toContain('aria-label="文字"');
   });
 
   it("disables undo/redo when nothing can be undone or redone", () => {

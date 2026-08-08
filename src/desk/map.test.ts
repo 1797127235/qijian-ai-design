@@ -27,16 +27,6 @@ const snapshotWith = (
 });
 
 describe("mapSnapshot", () => {
-  it("maps sticky_note with its text", () => {
-    const objects = mapSnapshot(snapshotWith("sticky_note", { text: "记得选砖" }));
-    expect(objects[0]).toMatchObject({ kind: "sticky_note", text: "记得选砖", x: 10, y: 20 });
-  });
-
-  it("maps empty sticky_note to an empty string", () => {
-    const objects = mapSnapshot(snapshotWith("sticky_note", {}));
-    expect(objects[0]).toMatchObject({ kind: "sticky_note", text: "" });
-  });
-
   it("maps canvas_image file_id to the file-serving URL", () => {
     const objects = mapSnapshot(snapshotWith("canvas_image", { file_id: "f-123" }));
     expect(objects[0]).toMatchObject({ kind: "canvas_image", url: "/api/files/f-123" });
@@ -81,8 +71,8 @@ describe("mapSnapshot", () => {
   });
 
   it("drops objects whose artifact is missing from the snapshot", () => {
-    const snapshot = snapshotWith("sticky_note", { text: "x" });
-    snapshot.deskState.objects.push({ artifact_id: "ghost", kind: "sticky_note", x: 0, y: 0, rot: 0 });
+    const snapshot = snapshotWith("canvas_image", { file_id: "f-1" });
+    snapshot.deskState.objects.push({ artifact_id: "ghost", kind: "canvas_image", x: 0, y: 0, rot: 0 });
     expect(mapSnapshot(snapshot)).toHaveLength(1);
   });
 });

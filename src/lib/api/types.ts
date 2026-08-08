@@ -29,11 +29,11 @@ export interface ChatAttachment {
 }
 
 // 画布对象的内容快照
-// artifactType：便利贴 / 画布图片 / 效果图
+// artifactType：画布图片 / 效果图
 // payload 是 Record<string, unknown>，具体结构由 src/desk/map.ts 解释
 export interface ArtifactSnapshot {
   id: string;
-  artifactType: "sticky_note" | "canvas_image" | "effect_image";
+  artifactType: "canvas_image" | "effect_image";
   versionId: string;
   versionNo: number;
   status: "draft" | "confirmed"; // 草稿 / 已确认

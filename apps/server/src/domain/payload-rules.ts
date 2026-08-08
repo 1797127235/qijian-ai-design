@@ -26,9 +26,6 @@ const nonEmpty = (value: unknown) => typeof value === "string" && value.trim().l
  *  - 失败：payload.error 非空（保留占位记录，让前端能显示错误）
  */
 export function assertPayload(artifactType: ArtifactType, payload: Record<string, unknown>) {
-  if (artifactType === "sticky_note" && payload.text !== undefined && typeof payload.text !== "string") {
-    throw new DomainValidationError("便签内容必须是文本");
-  }
   if (artifactType === "canvas_image") {
     if (payload.file_id !== undefined && !nonEmpty(payload.file_id)) {
       throw new DomainValidationError("canvas_image 的 file_id 不能为空字符串");

@@ -22,8 +22,8 @@ export function PromptPanel({
     setPrompt(initialPrompt(source));
   }, [source.id]);
 
-  // 有图（canvas/effect 已出图）可空 prompt 直接图生图；空占位卡与便签必须填提示词
-  const sourceHasImage = (source.kind === "canvas_image" || source.kind === "effect_image") && Boolean(source.url);
+  // 有图（canvas/effect 已出图）可空 prompt 直接图生图；空占位卡必须填提示词
+  const sourceHasImage = Boolean(source.url);
   const canSubmit = prompt.trim().length > 0 || sourceHasImage;
   const size = nodeSize(source);
   const top = source.y + size.h + 14;
@@ -41,8 +41,8 @@ export function PromptPanel({
       {references.length > 0 && (
         <div className="desk-prompt-refs">
           {references.map((ref) => (
-            <span key={ref.id} className="desk-prompt-chip" title={ref.kind === "sticky_note" ? ref.text : undefined}>
-              {ref.kind === "sticky_note" ? (ref.text?.slice(0, 14) || "便签") : "参考图"}
+            <span key={ref.id} className="desk-prompt-chip">
+              参考图
             </span>
           ))}
         </div>
@@ -79,9 +79,5 @@ export function PromptPanel({
 }
 
 function initialPrompt(source: DeskObject) {
-  if (source.kind === "sticky_note") return source.text;
-  if (source.kind === "canvas_image" || source.kind === "effect_image") {
-    return source.userPrompt ?? source.prompt ?? "";
-  }
-  return "";
+  return source.userPrompt ?? source.prompt ?? "";
 }
