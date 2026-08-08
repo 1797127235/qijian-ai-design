@@ -36,24 +36,25 @@
 - **Context:** D5 决策记录（gstack decision log）。上传管线 `inspectUpload` 已提取 pageCount。
 - **Depends on / blocked by:** 无。
 
-## 5. 选中物件浮动操作条
+## 5. 选中物件浮动操作条 — 部分完成
 
-- **What:** 选中图片/效果图物件时浮出操作条：提示词（面板入口）/重新生成/查看大图/下载。参考建筑学长画布浮动条。
-- **Why:** 重新生成与看大图是改图高频动作；连线+面板生图切片（`docs/canvas-connections-generate-design.md`）用户确认 2026-08-06 进 TODOS。
-- **Context:** 面板组件（PromptPanel）落地后可复用为操作条的一项。
-- **Depends on / blocked by:** 连线+面板生图切片完成后做。
+- **What:** 选中时浮出操作条：提示词入口 / 重新生成 / 查看大图 / 下载；以及完整「建筑学长」式工具条密度。
+- **Done (partial):** 节点工具条已有「局部重绘」等入口；双击/大图 lightbox 已有；Prompt 面板选中即开。仍缺：统一浮动条上的「重新生成 / 下载」与更完整的工具排布。
+- **Why:** 改图高频动作应一键可达。
+- **Context:** `docs/canvas-connections-generate-design.md`、`src/app/DeskWorkbench.tsx` `renderNodeToolbar`。
 
-## 6. 图片加工（局部重绘/细节增强/视角转换/宫格拆分）
+## 6. 图片加工（局部重绘/细节增强/视角转换/宫格拆分） — 部分完成
 
-- **What:** 建筑学长形态的图片加工能力；局部重绘需蒙版交互（涂鸦层），细节增强/视角转换是 provider 参数化调用。
-- **Why:** 深化改图能力；依赖 provider 接口能力确认，且蒙版交互本身是独立工作量。
-- **Depends on / blocked by:** provider 能力摸底；连线+面板生图切片完成。
+- **What:** 局部重绘（蒙版级）+ 细节增强 / 视角转换 / 宫格拆分。
+- **Done (partial):** 矩形框选局部重绘（`InpaintDialog` + generate region/reference）已落地，见 `docs/canvas-inpainting-design.md`。
+- **Still open:** 涂鸦蒙版、细节增强、视角转换、宫格拆分；依赖 provider 参数化能力。
+- **Depends on / blocked by:** provider 摸底。
 
 ## 7. 原图 vs 生成图滑块对比
 
 - **What:** 改图场景的前后对比视图（滑块/并排）。
-- **Why:** 改图验收高频；用户 2026-08-06 确认先进 TODOS（先有大图查看再说）。
-- **Depends on / blocked by:** TODO 5（查看大图）优先。
+- **Why:** 改图验收高频；用户 2026-08-06 确认先进 TODOS。
+- **Depends on / blocked by:** 大图查看已有；对比 UI 未做。
 
 ## 8. Agent stop 取消粒度（thread/run 级 jobs） — DONE（H8）
 
