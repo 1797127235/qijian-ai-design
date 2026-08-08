@@ -44,7 +44,7 @@ export type AgentInnerEvent = {
   assistantMessageEvent?: { type?: string; delta?: string };
 };
 
-/** hook 根据此结果改 state，避免在纯函数里 setState。 */
+/** hook 根据此结果改 state */
 export type ProcessApplyResult = {
   process: ProcessSnapshot | null;
   /** upsert=进行中卡；finalize=本轮结束落历史；clear=去掉 live 卡 */
@@ -58,7 +58,6 @@ export type ProcessApplyResult = {
 /**
  * 应用一条 agent_event 内层事件。
  * 约定：整轮 status 在 tool 结束后仍保持 running，直到 agent_settled，
- * 否则标题会过早变成「思考了 Ns」而模型还在回正文。
  */
 export function applyAgentInnerEvent(
   process: ProcessSnapshot | null,

@@ -1,0 +1,26 @@
+{
+  "id": "GT-02",
+  "title": "静安桌默认 Survey（无选中）",
+  "desk": "s1",
+  "fileNames": "s1",
+  "selection": [],
+  "userText": "先看看桌面",
+  "expect": {
+    "codes": ["H1", "H2", "S1", "S2", "S3", "S4"],
+    "textIncludes": [
+      "art-living",
+      "art-mat",
+      "art-fx1",
+      "art-pending",
+      "art-empty",
+      "客厅原图",
+      "浅橡木材质",
+      "art-living → art-fx1",
+      "art-living → art-pending",
+      "pending",
+      "empty",
+      "ready"
+    ],
+    "noBlocks": ["FOCUS"]
+  }
+}

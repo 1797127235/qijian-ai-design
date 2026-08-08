@@ -1,11 +1,26 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { DeskSnapshot } from "../domain/types.js";
 import type { ChatAttachmentDto } from "../services/chat-service.js";
 import type { AgentImageContent } from "../services/file-storage.js";
 import { formatJobsStatusBlock } from "./async-job/protocol.js";
 import { agentPrompt } from "./agent-prompt.js";
 import { EventWriteTracker, jsonSnapshot, persistToolEvent } from "./agent-event-persister.js";
-import { buildDeskStatusBlock, selectedVisualFileIds } from "./desk-status.js";
+import {
+  assembleDeskContext,
+  deskFileIds,
+  formatInspectBlock,
+  planInspectSelection,
+  type DeskObjectView,
+  type InspectImageRef,
+  type InspectPlan,
+  type ReferenceResolution,
+} from "./desk-status.js";
 import { SessionFactory, type SessionFactoryDependencies } from "./session-factory.js";
+import {
+  CAPTION_ANALYZER_VERSION,
+  sanitizeCaptionText,
+} from "../services/image-caption-sanitize.js";
+import type { ImageCaptionStore } from "../services/image-caption-store.js";
 
 export type { SessionFactoryDependencies as RegistryDependencies } from "./session-factory.js";
 export { agentPrompt } from "./agent-prompt.js";
@@ -32,6 +47,8 @@ export class AgentSessionRegistry {
   private readonly generate: SessionFactoryDependencies["generate"];
   private readonly jobs: SessionFactoryDependencies["jobs"];
   private readonly jobStore: SessionFactoryDependencies["jobStore"];
+  private readonly files: SessionFactoryDependencies["files"];
+  private readonly captions?: ImageCaptionStore;
   /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源。 */
   private readonly selectionBySession = new Map<string, string[]>();
   private shuttingDown = false;
@@ -46,6 +63,8 @@ export class AgentSessionRegistry {
     this.generate = deps.generate;
     this.jobs = deps.jobs;
     this.jobStore = deps.jobStore;
+    this.files = deps.files;
+    this.captions = deps.captions;
   }
 
   /**
@@ -76,33 +95,48 @@ export class AgentSessionRegistry {
       const snapshot = await this.desks.snapshot(projectId).catch(() => null);
       const recentJobs = await this.jobStore?.listRecentForStatus(projectId).catch(() => []) ?? [];
       const jobsBlock = formatJobsStatusBlock(recentJobs);
-      const statusBlock = [
-        buildDeskStatusBlock(snapshot, selectedArtifactIds),
-        jobsBlock,
-      ].filter(Boolean).join("\n\n");
+      const fileNames = snapshot
+        ? await this.files.originalFilenames(projectId, deskFileIds(snapshot)).catch(() => ({}))
+        : {};
+      // 先无 caption 装配一次，拿到 core focus file_ids，再批量 preload（超时则跳过）
+      const draft = assembleDeskContext(snapshot, selectedArtifactIds, {
+        fileNames,
+        userText: text,
+      });
+      const captions = await this.preloadCaptions(projectId, draft.objects, selectedArtifactIds, draft.resolution);
+      const assembled = captions && Object.keys(captions).length > 0
+        ? assembleDeskContext(snapshot, selectedArtifactIds, {
+          fileNames,
+          userText: text,
+          captions,
+        })
+        : draft;
+      const aliasById = new Map(assembled.objects.map((o) => [o.id, o.alias]));
       const attachmentImages = await this.factory.loadAgentImages(projectId, attachments);
-      // 与附件同一 file 时去重，避免双份 base64
-      const selectedFileIds = selectedVisualFileIds(snapshot, selectedArtifactIds)
-        .filter((fileId) => !attachments.some((attachment) => attachment.id === fileId));
-      let selectedImages: AgentImageContent[] = [];
-      let selectedVisualNote = "";
-      if (selectedFileIds.length > 0) {
-        try {
-          // mediaType 占位即可：loader 以 DB stored.mediaType 为准
-          selectedImages = await this.factory.loadAgentImages(
-            projectId,
-            selectedFileIds.map((id) => ({
-              id,
-              originalFilename: `selected-${id}`,
-              mediaType: "image/png",
-            })),
-          );
-        } catch {
-          selectedVisualNote = "\n选中视觉：不可用";
-        }
-      }
-      // 状态栏只拼进当轮 prompt，不写入 chat_messages
-      const promptText = `${agentPrompt(text, attachments)}\n\n${statusBlock}${selectedVisualNote}`;
+      // Inspect：选中 ∪ 唯一指代结果（assemble 已合并进 inspectPlan）
+      const inspectIds = [
+        ...selectedArtifactIds,
+        ...(assembled.resolution?.unique ? assembled.resolution.resolvedIds : []),
+      ];
+      const { selectedImages, inspectPlan, imageRefs } = await this.loadInspectVisuals(
+        projectId,
+        snapshot,
+        inspectIds,
+        attachments,
+        attachmentImages.length,
+      );
+      const inspectBlock = formatInspectBlock(
+        inspectPlan,
+        attachmentImages.length + 1,
+        imageRefs,
+        aliasById,
+      );
+      const deskBlocks = [
+        assembled.text,
+        jobsBlock,
+        inspectBlock,
+      ].filter(Boolean).join("\n\n");
+      const promptText = `${agentPrompt(text, attachments)}\n\n${deskBlocks}`;
       await session.prompt(promptText, {
         images: [...attachmentImages, ...selectedImages],
         source: "interactive",
@@ -116,6 +150,143 @@ export class AgentSessionRegistry {
       if (activeRuns.length === 0) this.activeRunIds.delete(key);
       this.scheduleIdle(key, pending);
     }
+  }
+
+  /**
+   * 预加载 core focus 的 caption（仅 cache hit；失败/超时 → 空，不堵流）。
+   * Survey 不读 caption。
+   */
+  private async preloadCaptions(
+    projectId: string,
+    objects: DeskObjectView[],
+    selectedArtifactIds: string[],
+    resolution: ReferenceResolution | null,
+  ): Promise<Record<string, string>> {
+    if (!this.captions) return {};
+    const byId = new Map(objects.map((o) => [o.id, o]));
+    const coreIds: string[] = [];
+    for (const id of selectedArtifactIds) {
+      if (byId.has(id) && !coreIds.includes(id)) coreIds.push(id);
+    }
+    if (resolution?.unique) {
+      for (const id of resolution.resolvedIds) {
+        if (byId.has(id) && !coreIds.includes(id)) coreIds.push(id);
+      }
+    }
+    const fileIds = coreIds
+      .map((id) => byId.get(id)?.fileId)
+      .filter((id): id is string => Boolean(id));
+    if (fileIds.length === 0) return {};
+
+    const work = async (): Promise<Record<string, string>> => {
+      const hashes = await this.captions!.fileHashes(projectId, fileIds);
+      const keys = fileIds
+        .map((fileId) => {
+          const contentHash = hashes.get(fileId);
+          if (!contentHash) return null;
+          return { fileId, contentHash, analyzerVersion: CAPTION_ANALYZER_VERSION };
+        })
+        .filter((k): k is { fileId: string; contentHash: string; analyzerVersion: string } => Boolean(k));
+      if (keys.length === 0) return {};
+      const hits = await this.captions!.getMany(projectId, keys);
+      const out: Record<string, string> = {};
+      for (const [fileId, hit] of hits) {
+        const safe = sanitizeCaptionText(hit.text);
+        if (safe) out[fileId] = safe;
+      }
+      return out;
+    };
+
+    try {
+      return await Promise.race([
+        work(),
+        new Promise<Record<string, string>>((resolve) => {
+          setTimeout(() => resolve({}), 80);
+        }),
+      ]);
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * 选中 → Inspect 计划 → 加载像素（与附件 file 去重）→ imageRefs 供 [INSPECT] 文本。
+   */
+  private async loadInspectVisuals(
+    projectId: string,
+    snapshot: DeskSnapshot | null,
+    selectedArtifactIds: string[],
+    attachments: ChatAttachmentDto[],
+    attachmentImageCount: number,
+  ): Promise<{
+    selectedImages: AgentImageContent[];
+    inspectPlan: InspectPlan;
+    imageRefs: InspectImageRef[];
+  }> {
+    const plan = planInspectSelection(snapshot, selectedArtifactIds);
+    if (plan.included.length === 0) {
+      return { selectedImages: [], inspectPlan: plan, imageRefs: [] };
+    }
+    const attachmentFileIds = new Set(attachments.map((a) => a.id));
+    const viaAttachment = plan.included.filter((item) => attachmentFileIds.has(item.fileId));
+    const toLoad = plan.included.filter((item) => !attachmentFileIds.has(item.fileId));
+
+    let selectedImages: AgentImageContent[] = [];
+    let loadFailed = false;
+    if (toLoad.length > 0) {
+      try {
+        selectedImages = await this.factory.loadAgentImages(
+          projectId,
+          toLoad.map((item) => ({
+            id: item.fileId,
+            originalFilename: `selected-${item.artifactId}`,
+            mediaType: "image/png",
+          })),
+        );
+      } catch {
+        loadFailed = true;
+        selectedImages = [];
+      }
+    }
+
+    const imageRefs: InspectImageRef[] = [];
+    const skipped = [...plan.skipped];
+    const includedOk: InspectPlan["included"] = [];
+
+    for (const item of viaAttachment) {
+      includedOk.push(item);
+      imageRefs.push({ artifactId: item.artifactId, fileId: item.fileId, kind: "attachment" });
+    }
+
+    if (loadFailed) {
+      for (const item of toLoad) {
+        skipped.push({ artifactId: item.artifactId, reason: "empty" });
+      }
+    } else {
+      // loader 按 attachments 顺序返回；张数不足则尾部视为失败
+      const loadedCount = Math.min(selectedImages.length, toLoad.length);
+      for (let i = 0; i < loadedCount; i++) {
+        const item = toLoad[i];
+        includedOk.push(item);
+        imageRefs.push({
+          artifactId: item.artifactId,
+          fileId: item.fileId,
+          kind: "image",
+          imageIndex: attachmentImageCount + i + 1,
+        });
+      }
+      for (let i = loadedCount; i < toLoad.length; i++) {
+        skipped.push({ artifactId: toLoad[i].artifactId, reason: "empty" });
+      }
+      // 若 loader 返回更少，截断 selectedImages 与 refs 对齐
+      selectedImages = selectedImages.slice(0, loadedCount);
+    }
+
+    return {
+      selectedImages,
+      inspectPlan: { included: includedOk, skipped },
+      imageRefs,
+    };
   }
 
   async ensure(projectId: string, threadId: string) {

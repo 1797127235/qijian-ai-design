@@ -6,6 +6,8 @@ export type DeskObject =
       y: number;
       rot: number;
       status: "draft" | "confirmed";
+      /** 与 Agent Survey 一致的桌面编号（A01…），按 desk_state.objects 顺序 */
+      alias?: string;
       /** 空占位卡无 url；上传或生成填回后存在 */
       url?: string;
       pending?: boolean;
@@ -26,6 +28,8 @@ export type DeskObject =
       y: number;
       rot: number;
       status: "draft" | "confirmed";
+      /** 与 Agent Survey 一致的桌面编号（A01…） */
+      alias?: string;
       url?: string;
       pending?: boolean;
       error?: string;

@@ -58,8 +58,39 @@ export class ArtifactService {
   private readonly recentPlacements = new Map<string, { result: CreatePlacedResult; expiresAt: number }>();
   /** 进行中的幂等请求：project:clientOpId → Promise，防止并发双写 */
   private readonly inflightPlacements = new Map<string, Promise<CreatePlacedResult>>();
+  /** 图片 ready 时后台 caption kick（可选，失败静默） */
+  private onImageReady?: (projectId: string, fileId: string) => void;
+  /** 桌面内容变更监听（封面调度等）。装配根注入；异常不影响主流程 */
+  private deskChangedListener?: (projectId: string) => void;
 
   constructor(private readonly db: Database) {}
+
+  setImageReadyHandler(handler: (projectId: string, fileId: string) => void) {
+    this.onImageReady = handler;
+  }
+
+  setDeskChangedListener(listener: (projectId: string) => void) {
+    this.deskChangedListener = listener;
+  }
+
+  private emitDeskChanged(projectId: string) {
+    try {
+      this.deskChangedListener?.(projectId);
+    } catch {
+      // 监听器异常不影响主流程
+    }
+  }
+
+  private kickCaption(projectId: string, payload: Record<string, unknown>) {
+    if (payload.pending === true) return;
+    const fileId = payload.file_id;
+    if (typeof fileId !== "string" || !fileId.trim()) return;
+    try {
+      this.onImageReady?.(projectId, fileId.trim());
+    } catch {
+      // caption 是增强，不抛
+    }
+  }
 
   private idempotencyKey(projectId: string, clientOpId: string) {
     return `${projectId}:${clientOpId}`;
@@ -98,6 +129,8 @@ export class ArtifactService {
       return { ...created, object };
     }).then((result) => {
       if (key) this.rememberPlacement(key, result);
+      this.kickCaption(projectId, input.payload);
+      this.emitDeskChanged(projectId);
       return result;
     }).finally(() => {
       if (key) this.inflightPlacements.delete(key);
@@ -129,6 +162,9 @@ export class ArtifactService {
       const objects = [...state.objects.filter((item) => item.artifact_id !== artifact.id), object];
       await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
       return { artifact, version, object };
+    }).then((result) => {
+      this.emitDeskChanged(projectId);
+      return result;
     });
   }
 
@@ -149,6 +185,9 @@ export class ArtifactService {
       const connections = (state.connections ?? []).filter((c) => c.from !== artifactId && c.to !== artifactId);
       await tx.update(deskStates).set({ objects, connections, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
       return { object };
+    }).then((result) => {
+      this.emitDeskChanged(projectId);
+      return result;
     });
   }
 
@@ -157,9 +196,11 @@ export class ArtifactService {
    * 继承上一版本的 inputRefs（未传时），保证 GC 引用图不断。
    */
   async append(artifactId: string, input: AppendVersionInput) {
-    return this.db.transaction(async (tx) => {
+    let changedProjectId = "";
+    const version = await this.db.transaction(async (tx) => {
       const [artifact] = await tx.select().from(artifacts).where(eq(artifacts.id, artifactId)).for("update");
       if (!artifact) throw new HttpError(404, "未找到该 Artifact");
+      changedProjectId = artifact.projectId;
       const [current] = artifact.currentVersionId
         ? await tx.select({ inputRefs: artifactVersions.inputRefs }).from(artifactVersions).where(eq(artifactVersions.id, artifact.currentVersionId))
         : [];
@@ -173,8 +214,11 @@ export class ArtifactService {
         .where(eq(artifactVersions.artifactId, artifactId));
       const version = await this.insertVersion(tx, artifactId, (next ?? 0) + 1, nextInput);
       await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifactId));
+      this.kickCaption(artifact.projectId, nextInput.payload);
       return version;
     });
+    this.emitDeskChanged(changedProjectId);
+    return version;
   }
 
   /**
@@ -182,9 +226,11 @@ export class ArtifactService {
    * 数据不删，保留历史；前端看的是「指针指向的版本」。
    */
   async rollback(artifactId: string, versionId?: string) {
-    return this.db.transaction(async (tx) => {
+    let changedProjectId = "";
+    const target = await this.db.transaction(async (tx) => {
       const [artifact] = await tx.select().from(artifacts).where(eq(artifacts.id, artifactId)).for("update");
       if (!artifact?.currentVersionId) throw new HttpError(404, "未找到该 Artifact");
+      changedProjectId = artifact.projectId;
       const current = await tx.query.artifactVersions.findFirst({ where: eq(artifactVersions.id, artifact.currentVersionId) });
       const target = versionId
         ? await tx.query.artifactVersions.findFirst({
@@ -198,6 +244,8 @@ export class ArtifactService {
       await tx.update(artifacts).set({ currentVersionId: target.id }).where(eq(artifacts.id, artifactId));
       return target;
     });
+    this.emitDeskChanged(changedProjectId);
+    return target;
   }
 
   async current(artifactId: string) {

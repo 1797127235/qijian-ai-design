@@ -62,7 +62,7 @@ function ImageCard({
     );
   }
   return (
-    <div className="image-card" style={IMAGE_BOX} title="双击查看大图">
+    <div className="image-card" style={IMAGE_BOX} title={obj.alias ? `${obj.alias} · 双击查看大图` : "双击查看大图"}>
       <img
         src={obj.url}
         alt={label}

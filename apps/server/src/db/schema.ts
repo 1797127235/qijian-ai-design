@@ -9,7 +9,7 @@
  *    → 历史可回放，UI 看到的就是「当前指针指向的版本」
  */
 import { sql } from "drizzle-orm";
-import { index, integer, jsonb, pgTable, serial, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, serial, text, timestamp, unique, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import type { CreatedBy, DeskConnection, DeskLayoutObject, DeskViewport } from "../domain/types.js";
 
 /** 设计项目：根实体，所有其他表通过 project_id 关联。 */
@@ -18,6 +18,10 @@ export const projects = pgTable("projects", {
   name: text("name").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** 人看封面（派生缓存）：指向 stored_files 里的 desk-cover.png；null = 未渲染/无 ready 图 */
+  coverFileId: uuid("cover_file_id").references((): AnyPgColumn => storedFiles.id, { onDelete: "set null" }),
+  /** 封面渲染依据的 desk revision（revisionOf(snapshot)）；相同则跳过重复渲染 */
+  coverRevision: text("cover_revision"),
 });
 
 export const chatThreads = pgTable(
@@ -239,5 +243,34 @@ export const agentJobs = pgTable(
     index("agent_jobs_project_status_idx").on(table.projectId, table.status),
     index("agent_jobs_project_created_idx").on(table.projectId, table.createdAt),
     index("agent_jobs_run_status_idx").on(table.runId, table.status),
+  ],
+);
+
+/**
+ * 图片画面描述缓存（Caption）：可重算、不进 artifact payload。
+ *  - 键：project_id + file_id + content_hash + analyzer_version
+ *  - content_hash 必须等于 stored_files 字节 hash
+ *  - 读时三者匹配才 hit；否则 miss/stale，省略文本
+ */
+export const imageCaptions = pgTable(
+  "image_captions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    fileId: uuid("file_id").notNull().references(() => storedFiles.id, { onDelete: "cascade" }),
+    contentHash: text("content_hash").notNull(),
+    analyzerVersion: text("analyzer_version").notNull(),
+    text: text("text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("image_captions_identity_unique").on(
+      table.projectId,
+      table.fileId,
+      table.contentHash,
+      table.analyzerVersion,
+    ),
+    index("image_captions_project_file_idx").on(table.projectId, table.fileId),
   ],
 );

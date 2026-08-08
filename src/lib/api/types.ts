@@ -6,6 +6,8 @@ export interface ProjectSummary {
   id: string;
   name: string;
   updatedAt: string;
+  /** 人看封面（server 预渲染桌面拼板）；null = 未渲染/无 ready 图，前端回退空骨架 */
+  coverFileId: string | null;
 }
 
 // 已上传文件元数据，含可直接访问的 url

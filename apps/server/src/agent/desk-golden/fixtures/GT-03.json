@@ -1,0 +1,47 @@
+{
+  "id": "GT-03",
+  "title": "撞名禁止",
+  "desk": {
+    "project": { "id": "p1", "name": "demo" },
+    "artifacts": [
+      {
+        "id": "c1",
+        "artifactType": "canvas_image",
+        "versionId": "v1",
+        "versionNo": 1,
+        "status": "draft",
+        "payload": { "file_id": "f1" },
+        "inputRefs": [],
+        "createdBy": "designer",
+        "createdAt": "2026-08-06T00:00:00.000Z"
+      },
+      {
+        "id": "c2",
+        "artifactType": "canvas_image",
+        "versionId": "v2",
+        "versionNo": 1,
+        "status": "draft",
+        "payload": { "file_id": "f2" },
+        "inputRefs": [],
+        "createdBy": "designer",
+        "createdAt": "2026-08-06T00:00:00.000Z"
+      }
+    ],
+    "deskState": {
+      "objects": [
+        { "artifact_id": "c1", "kind": "canvas_image", "x": 0, "y": 0, "rot": 0 },
+        { "artifact_id": "c2", "kind": "canvas_image", "x": 100, "y": 0, "rot": 0 }
+      ],
+      "connections": [],
+      "viewport": { "x": 0, "y": 0, "zoom": 1 },
+      "updatedAt": "2026-08-06T12:00:00.000Z"
+    }
+  },
+  "fileNames": {},
+  "selection": [],
+  "userText": "列一下",
+  "expect": {
+    "codes": ["S3", "H1"],
+    "labelsUnique": true
+  }
+}

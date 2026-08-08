@@ -38,12 +38,21 @@ function mapArtifact(artifact: ArtifactSnapshot, layout: { x: number; y: number;
   }
 }
 
+/** 与后端 desk-context compileDeskObjects 一致：桌上顺序 → A01、A02… */
+export function deskAlias(index: number): string {
+  return `A${String(index + 1).padStart(2, "0")}`;
+}
+
 export function mapSnapshot(snapshot: DeskSnapshot): DeskObject[] {
+  let aliasIndex = 0;
   return snapshot.deskState.objects.flatMap((layout) => {
     const artifact = snapshot.artifacts.find((a) => a.id === layout.artifact_id);
     if (!artifact) return [];
     const mapped = mapArtifact(artifact, layout);
-    return mapped ? [mapped] : [];
+    if (!mapped) return [];
+    const withAlias = { ...mapped, alias: deskAlias(aliasIndex) };
+    aliasIndex += 1;
+    return [withAlias];
   });
 }
 

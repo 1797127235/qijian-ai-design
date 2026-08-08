@@ -1,0 +1,12 @@
+{
+  "id": "GT-17",
+  "title": "snapshot 失败降级",
+  "desk": null,
+  "selection": [],
+  "userText": "看看桌",
+  "expect": {
+    "codes": ["X1", "H1"],
+    "textIncludes": ["current=true", "桌面状态暂不可用", "revision=unknown"],
+    "noBlocks": ["FOCUS", "INSPECT"]
+  }
+}

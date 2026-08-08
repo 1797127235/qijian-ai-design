@@ -25,9 +25,14 @@ import { CanvasGenerateService } from "./services/canvas-generate-service.js";
 import { DeskStateService } from "./services/desk-state-service.js";
 import { FileStorage } from "./services/file-storage.js";
 import { HttpImageGenerator } from "./services/image-generator.js";
+import { ImageCaptionStore } from "./services/image-caption-store.js";
+import { ImageCaptionService } from "./services/image-caption-service.js";
 import { ChatService } from "./services/chat-service.js";
 import { ProjectAutoNamer } from "./services/project-namer.js";
+import { ProjectCoverService } from "./services/project-cover-service.js";
 import { createTraceRegistry } from "./agent/tracing/index.js";
+import { eq } from "drizzle-orm";
+import { projects } from "./db/schema.js";
 
 // —— 基础设施 ——
 const config = loadConfig();
@@ -39,12 +44,42 @@ const desks = new DeskStateService(db);
 const files = new FileStorage(db, config);
 const effects = new HttpImageGenerator(config, files);
 const chats = new ChatService(db);
+const captionStore = new ImageCaptionStore(db);
+const captionService = new ImageCaptionService(files, captionStore, config);
+artifacts.setImageReadyHandler((projectId, fileId) => captionService.kick(projectId, fileId));
 
 // —— 复合服务：Agent 写桌唯一通路（generate_from_desk）——
 // 拼装 artifacts+desks+files+effects 四个原子服务，让 Agent 一次调用就能落桌
-const generate = new CanvasGenerateService(db, artifacts, desks, files, effects);
+const generate = new CanvasGenerateService(db, artifacts, desks, files, effects, captionService);
 // 文件孤儿检查依赖 chats/artifacts 谁持引用，先建好服务再回填
-files.setReferenceCheckers([chats, artifacts]);
+// cover checker：projects.cover_file_id 持有封面引用，防 deleteUnattached 误扫
+const coverRefs = {
+  async referencesFile(fileId: string) {
+    const [row] = await db.select({ id: projects.id }).from(projects).where(eq(projects.coverFileId, fileId)).limit(1);
+    return Boolean(row);
+  },
+};
+files.setReferenceCheckers([chats, artifacts, coverRefs]);
+
+// 人看封面（派生缓存）：桌面实质变化 → 防抖重渲 → 存 stored_files 并回填 projects.cover_*
+const covers = new ProjectCoverService({
+  snapshot: (projectId) => desks.snapshot(projectId),
+  getCover: (projectId) => desks.getProjectCover(projectId),
+  setCover: (projectId, fileId, revision) => desks.setProjectCover(projectId, fileId, revision),
+  originalFilenames: (projectId, fileIds) => files.originalFilenames(projectId, fileIds),
+  readImageBytes: async (projectId, fileId) => {
+    const stored = await files.getById(fileId);
+    if (!stored || stored.projectId !== projectId) return null;
+    return files.read(stored.objectKey);
+  },
+  putFile: (projectId, filename, mediaType, bytes) => files.put(projectId, filename, mediaType, bytes),
+  deleteFile: (projectId, fileId) => files.deleteUnattached(projectId, fileId).then(() => undefined),
+  onError: (error, projectId) => {
+    console.warn(`[cover] render failed for project ${projectId}:`, error instanceof Error ? error.message : error);
+  },
+});
+desks.setDeskChangedListener((projectId) => covers.schedule(projectId));
+artifacts.setDeskChangedListener((projectId) => covers.schedule(projectId));
 
 // —— Agent 异步任务（job）——
 // publish 先用 no-op 占位，等 ChatGateway 构造好再回填成 chat.emit
@@ -52,6 +87,7 @@ let publish: EventSink = () => undefined;
 const traces = createTraceRegistry(config);
 const jobStore = new AgentJobStore(db);
 const jobs = new AgentJobRunner(jobStore, (event) => publish(event), traces);
+const captions = captionStore;
 // Agent 写桌：generate_from_desk → Job 异步外壳 → CanvasGenerateService
 const sessions = new AgentSessionRegistry({
   artifacts,
@@ -63,6 +99,7 @@ const sessions = new AgentSessionRegistry({
   config,
   jobs,
   jobStore,
+  captions,
   traces,
   emit: (event) => publish(event),
 });

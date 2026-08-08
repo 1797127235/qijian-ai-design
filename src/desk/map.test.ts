@@ -75,4 +75,21 @@ describe("mapSnapshot", () => {
     snapshot.deskState.objects.push({ artifact_id: "ghost", kind: "canvas_image", x: 0, y: 0, rot: 0 });
     expect(mapSnapshot(snapshot)).toHaveLength(1);
   });
+
+  it("assigns A01… aliases in desk_state.objects order", () => {
+    const snap = snapshotWith("canvas_image", { file_id: "f-1" });
+    snap.artifacts.push({
+      id: "a2",
+      artifactType: "effect_image",
+      versionId: "v2",
+      versionNo: 1,
+      status: "draft",
+      payload: { file_id: "f-2", pending: false },
+      inputRefs: [],
+      createdBy: "agent",
+    });
+    snap.deskState.objects.push({ artifact_id: "a2", kind: "effect_image", x: 100, y: 0, rot: 0 });
+    const objects = mapSnapshot(snap);
+    expect(objects.map((o) => o.alias)).toEqual(["A01", "A02"]);
+  });
 });

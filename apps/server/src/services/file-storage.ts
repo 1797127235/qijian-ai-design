@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { projects, storedFiles } from "../db/schema.js";
 import type { ServerConfig } from "../config.js";
@@ -58,6 +58,19 @@ export class FileStorage {
   async getById(fileId: string) {
     const [stored] = await this.db.select().from(storedFiles).where(eq(storedFiles.id, fileId));
     return stored ?? null;
+  }
+
+  /** 批量取 original_filename，供桌面 Survey label；缺 id 跳过。 */
+  async originalFilenames(projectId: string, fileIds: string[]): Promise<Record<string, string>> {
+    const unique = [...new Set(fileIds.filter(Boolean))];
+    if (unique.length === 0) return {};
+    const rows = await this.db
+      .select({ id: storedFiles.id, originalFilename: storedFiles.originalFilename })
+      .from(storedFiles)
+      .where(and(eq(storedFiles.projectId, projectId), inArray(storedFiles.id, unique)));
+    const out: Record<string, string> = {};
+    for (const row of rows) out[row.id] = row.originalFilename;
+    return out;
   }
 
   /**

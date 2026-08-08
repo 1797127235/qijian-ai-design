@@ -26,10 +26,14 @@ export function acceptedToolText(details: AcceptedJobDetails): string {
   return `已开始「${details.kind}」（task_id=${details.task_id}${art}）。进度见桌面与后台任务状态；完成前不要声称已生成成功。`;
 }
 
+/** caption 类 job 不进 Survey 状态栏（保持 cheap）。 */
+const HIDDEN_JOB_KINDS = new Set(["caption_file"]);
+
 /** 当轮 prompt 的 [后台任务] 块：进行中优先 + 最近 1h 终态。 */
 export function formatJobsStatusBlock(jobs: AgentJobDto[]): string {
-  if (jobs.length === 0) return "";
-  const lines = jobs.map((job) => {
+  const visible = jobs.filter((job) => !HIDDEN_JOB_KINDS.has(job.kind));
+  if (visible.length === 0) return "";
+  const lines = visible.map((job) => {
     const art = job.artifactId ? ` artifact=${job.artifactId}` : "";
     const err = job.error ? " error=任务失败" : "";
     const prompt = jobLabel(job);

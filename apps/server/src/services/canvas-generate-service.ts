@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { storedFiles } from "../db/schema.js";
 import type { ArtifactType, DeskConnection, DeskLayoutObject } from "../domain/types.js";
+import type { ImageCaptionService } from "./image-caption-service.js";
 import { HttpError } from "../lib/errors.js";
 import type { ArtifactService } from "./artifact-service.js";
 import type { DeskStateService } from "./desk-state-service.js";
@@ -171,6 +172,7 @@ export class CanvasGenerateService {
     private readonly desks: DeskStateService,
     private readonly files: FileStorage,
     private readonly images: ImageGenerator,
+    private readonly captions?: ImageCaptionService,
   ) {}
 
   private opKey(projectId: string, clientOpId: string) {
@@ -321,6 +323,8 @@ export class CanvasGenerateService {
         status: "confirmed",
         createdBy,
       });
+      // 异步 caption：不 await，失败静默
+      this.captions?.kick(projectId, generated.fileId);
       const done: GenerateFromCanvasResult = {
         ...pending,
         version: { id: version.id, status: version.status },

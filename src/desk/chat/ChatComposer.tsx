@@ -16,17 +16,18 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 选中 chip 标题：图用类型名（非附件上传态）。 */
+/** 选中 chip 标题：优先桌面编号 + 类型名（与 Agent alias 对齐）。 */
 function selectionLabel(object: DeskObject) {
+  const prefix = object.alias ? `${object.alias} · ` : "";
   if (object.kind === "effect_image") {
-    if (object.pending) return "效果图 · 生成中";
-    if (object.error) return "效果图 · 失败";
-    return "效果图";
+    if (object.pending) return `${prefix}效果图 · 生成中`;
+    if (object.error) return `${prefix}效果图 · 失败`;
+    return `${prefix}效果图`;
   }
-  if (object.pending) return "图片 · 生成中";
-  if (object.error) return "图片 · 失败";
-  if (!object.url) return "图片 · 空占位";
-  return "画布图";
+  if (object.pending) return `${prefix}图片 · 生成中`;
+  if (object.error) return `${prefix}图片 · 失败`;
+  if (!object.url) return `${prefix}图片 · 空占位`;
+  return `${prefix}画布图`;
 }
 
 function selectionPreview(object: DeskObject) {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConnectionsLayer } from "./Connections";
+import { Minimap } from "./Minimap";
 import { nodeAabb, nodeSize, sourceAnchor } from "./connection-geometry";
 import { positionFromPointer, screenToWorld, zoomAtPoint, type Viewport } from "./geometry";
 import type { DeskConnection, DeskObject } from "./types";
@@ -79,6 +80,18 @@ export function Desk({
   const vpRef = useRef<HTMLDivElement>(null);
   const handledFocusToken = useRef<number>();
   const spaceHeld = useRef(false);
+  /** 画布可视区尺寸（Minimap 视口框换算用），ResizeObserver 跟随窗口变化 */
+  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const el = vpRef.current;
+    if (!el) return;
+    const measure = () => setCanvasSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (initialViewport) {
@@ -406,6 +419,9 @@ export function Desk({
               onClick={(e) => onObjectClick(e, obj)}
               onDragStart={(e) => e.preventDefault()}
             >
+              {obj.alias && (
+                <span className="desk-alias-badge" title={`对话编号 ${obj.alias}`}>{obj.alias}</span>
+              )}
               {renderObject(obj)}
               {showHandles && onCreateConnection && (
                 <>
@@ -475,6 +491,17 @@ export function Desk({
           复位
         </button>
       </div>
+      <Minimap
+        objects={objects}
+        connections={connections}
+        selectedIds={selectedIds}
+        view={view}
+        canvasSize={canvasSize}
+        onPan={(next) => {
+          setView(next);
+          reportViewport(next);
+        }}
+      />
       {overlay}
     </div>
   );

@@ -4,7 +4,7 @@
  *  - 模型：ModelRuntime 单例，懒加载；用 config.agentProvider/agentModel 选
  *  - 资源加载器：禁用 extensions/skills/promptTemplates/contextFiles（与文件无交叉污染）
  *  - SessionManager.continueRecent：进程内续历史（每个 projectId:threadId 一个目录）
- *  - 工具：只暴露 generate_from_desk + get_task 两个（白名单）
+ *  - 工具：白名单 generate_from_desk + get_task + look_at_desk（可选 debug_return_image）
  *  - 订阅：每条事件透传给 emit；工具执行事件入 EventWriteTracker 持久化；assistant 文本入 chat
  */
 import {
@@ -23,6 +23,7 @@ import type { DeskStateService } from "../services/desk-state-service.js";
 import type { ImageGenerator } from "../services/image-generator.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { FileStorage } from "../services/file-storage.js";
+import type { ImageCaptionStore } from "../services/image-caption-store.js";
 import type { AgentJobRunner } from "./async-job/runner.js";
 import type { AgentJobStore } from "./async-job/store.js";
 import {
@@ -49,6 +50,7 @@ export interface SessionFactoryDependencies {
   config: Pick<ServerConfig, "agentProvider" | "agentModel">;
   jobs?: AgentJobRunner;
   jobStore?: AgentJobStore;
+  captions?: ImageCaptionStore;
   traces?: TraceRegistry;
 }
 

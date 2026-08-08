@@ -1,7 +1,6 @@
 /**
  * Agent 工具：查询异步 job 状态。
  *  - LLM 拿到 accepted 后想确认是否完成时调用
- *  - 跨项目查不到（where project_id=xxx 守卫），不暴露其他项目的 job
  */
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";

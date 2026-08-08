@@ -230,6 +230,17 @@
   border: 1.5px solid var(--color-accent); border-radius: 8px;
 }
 
+/* 对话编号挂在卡片外上方，不遮挡画面 */
+.desk-alias-badge {
+  position: absolute; left: 0; top: -1.15rem; z-index: 4;
+  font-size: 10px; font-weight: 500; letter-spacing: 0.04em;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--color-mute);
+  line-height: 1; pointer-events: none; user-select: none;
+  white-space: nowrap;
+}
+.obj-selected > .desk-alias-badge { color: var(--color-accent); }
+
 /* ── 物件 ── */
 .pin {
   position: absolute; top: -7px; left: 50%; margin-left: -7px; width: 14px; height: 14px;
@@ -470,3 +481,36 @@
   .brand { display: none; }
   .topbar { gap: 6px; }
 }
+
+/* ── Minimap：左下小地图 + 视口框（平移导航） ── */
+.desk-minimap {
+  position: absolute; left: 16px; bottom: 16px; z-index: 40;
+  /* 底板与画布一致：--desk-bg 米色 + 点阵（点距按 minimap 尺度缩小） */
+  background-color: var(--desk-bg);
+  background-image: radial-gradient(circle, #d5cfc0 0.8px, transparent 0.8px);
+  background-size: 8px 8px;
+  border: 1px solid var(--color-hairline-strong); border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(28, 26, 22, .1);
+  overflow: hidden; cursor: crosshair; touch-action: none; user-select: none;
+}
+.desk-minimap-edges { position: absolute; inset: 0; pointer-events: none; }
+.desk-minimap-edges line { stroke: var(--color-mute-soft); stroke-width: 1; opacity: .7; }
+.desk-minimap-obj {
+  position: absolute; border-radius: 2px; overflow: hidden;
+  background: var(--color-card); border: 1px solid var(--color-hairline);
+  min-width: 3px; min-height: 3px; pointer-events: none;
+}
+.desk-minimap-obj img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.desk-minimap-obj-pending { background: #e8e0c8; }
+.desk-minimap-obj-failed { background: #f0d0d0; }
+.desk-minimap-obj-empty { background: var(--color-hairline); }
+.desk-minimap-obj-selected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+  z-index: 1;
+}
+.desk-minimap-viewport {
+  position: absolute; border: 1.5px solid var(--color-ink-soft); border-radius: 3px;
+  background: rgba(61, 58, 51, .06); cursor: grab; pointer-events: auto;
+}
+.desk-minimap-viewport:active { cursor: grabbing; }

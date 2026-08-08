@@ -1,0 +1,12 @@
+{
+  "id": "GT-04",
+  "title": "选中无效 id",
+  "desk": "s1",
+  "fileNames": "s1",
+  "selection": ["art-living", "missing-id"],
+  "userText": "继续",
+  "expect": {
+    "codes": ["S5", "H1"],
+    "textIncludes": ["无效（missing-id）", "art-living"]
+  }
+}

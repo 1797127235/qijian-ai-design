@@ -34,7 +34,23 @@ export function normalizeConnection(
 }
 
 export class DeskStateService {
+  /** 桌面内容变更监听（封面调度等）；视口变化不触发。装配根注入。 */
+  private deskChangedListener?: (projectId: string) => void;
+
   constructor(private readonly db: Database) {}
+
+  setDeskChangedListener(listener: (projectId: string) => void) {
+    this.deskChangedListener = listener;
+  }
+
+  /** 监听器异常不得影响桌面主流程。 */
+  private emitDeskChanged(projectId: string) {
+    try {
+      this.deskChangedListener?.(projectId);
+    } catch {
+      /* 忽略监听器异常 */
+    }
+  }
 
   /** 列出所有项目（按 updatedAt 倒序，前端首页用）。 */
   async listProjects() {
@@ -126,9 +142,23 @@ export class DeskStateService {
     };
   }
 
+  /** 人看封面读写（派生缓存：projects.cover_file_id + cover_revision）。 */
+  async getProjectCover(projectId: string) {
+    const [row] = await this.db
+      .select({ coverFileId: projects.coverFileId, coverRevision: projects.coverRevision })
+      .from(projects)
+      .where(eq(projects.id, projectId));
+    if (!row) throw new HttpError(404, "未找到该设计项目");
+    return { fileId: row.coverFileId, revision: row.coverRevision };
+  }
+
+  async setProjectCover(projectId: string, coverFileId: string, coverRevision: string) {
+    await this.db.update(projects).set({ coverFileId, coverRevision }).where(eq(projects.id, projectId));
+  }
+
   /** 放置 / 移动一个物件（upsert 语义：同 artifact_id 覆盖）。 */
   async placeObject(projectId: string, object: DeskLayoutObject) {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const [owned] = await tx
         .select({ id: artifacts.id })
         .from(artifacts)
@@ -140,6 +170,8 @@ export class DeskStateService {
       await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
       return object;
     });
+    this.emitDeskChanged(projectId);
+    return result;
   }
 
   /** 视口持久化（前端画布缩放/平移时频繁调用，PATCH /desk 走这里）。 */
@@ -155,7 +187,7 @@ export class DeskStateService {
 
   /** 局部更新（拖动只改 x/y，缩放改 w，旋转改 rot）。patch 中只传要改的字段。 */
   async moveObject(projectId: string, artifactId: string, patch: Partial<Pick<DeskLayoutObject, "x" | "y" | "rot" | "w">>) {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
       if (!state) throw new HttpError(404, "未找到该设计项目");
       let found = false;
@@ -168,6 +200,8 @@ export class DeskStateService {
       await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
       return objects.find((object) => object.artifact_id === artifactId)!;
     });
+    this.emitDeskChanged(projectId);
+    return result;
   }
 
   /**
@@ -175,27 +209,30 @@ export class DeskStateService {
    * clientOpId 当前未直接使用（用 connectionId 做幂等键），保留形参避免破坏 Agent 调用方。
    */
   async createConnection(projectId: string, from: string, to: string, clientOpId?: string, connectionId?: string) {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
       if (!state) throw new HttpError(404, "未找到该设计项目");
       const objectIds = new Set(state.objects.map((o) => o.artifact_id));
       const result = normalizeConnection(from, to, state.connections ?? [], objectIds);
       if (!result.ok) throw new HttpError(422, result.reason);
-      if (result.existing) return result.existing;
+      if (result.existing) return { connection: result.existing, created: false };
       const connection: DeskConnection = connectionId
         ? { id: connectionId, from, to }
         : result.connection!;
       // 若指定 id 已存在则幂等返回
       const byId = (state.connections ?? []).find((c) => c.id === connection.id);
-      if (byId) return byId;
+      if (byId) return { connection: byId, created: false };
       const connections = [...(state.connections ?? []), connection];
       await tx.update(deskStates).set({ connections, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
-      return connection;
+      return { connection, created: true };
     });
+    // 幂等命中（连线已存在）不改桌面，不触发
+    if (result.created) this.emitDeskChanged(projectId);
+    return result.connection;
   }
 
   async deleteConnection(projectId: string, connectionId: string) {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
       if (!state) throw new HttpError(404, "未找到该设计项目");
       const connection = (state.connections ?? []).find((c) => c.id === connectionId);
@@ -204,5 +241,7 @@ export class DeskStateService {
       await tx.update(deskStates).set({ connections, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
       return { connection };
     });
+    this.emitDeskChanged(projectId);
+    return result;
   }
 }

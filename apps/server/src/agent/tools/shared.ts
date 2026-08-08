@@ -7,6 +7,7 @@
 import type { ArtifactService } from "../../services/artifact-service.js";
 import type { CanvasGenerateService } from "../../services/canvas-generate-service.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
+import type { FileStorage } from "../../services/file-storage.js";
 import type { ImageGenerator } from "../../services/image-generator.js";
 import type { AgentJobRunner } from "../async-job/runner.js";
 import type { AgentJobStore } from "../async-job/store.js";
@@ -19,6 +20,8 @@ export interface ToolDependencies {
   effects: ImageGenerator;
   /** 面板/Agent 共用生图管线 */
   generate: CanvasGenerateService;
+  /** 读盘（look_at_desk 总览缩略） */
+  files: FileStorage;
   emit: EventSink;
   jobs?: AgentJobRunner;
   jobStore?: AgentJobStore;

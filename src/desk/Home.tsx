@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { ProjectSummary } from "../lib/api";
+import { api, type ProjectSummary } from "../lib/api";
 import { useExitTransition } from "./useExitTransition";
 import {
   ATTACHMENT_ACCEPT,
@@ -21,7 +21,15 @@ function validateNewFiles(current: File[], picked: File[]): string | undefined {
   return undefined;
 }
 
-function DeskPreview() {
+function DeskPreview({ coverFileId }: { coverFileId?: string | null }) {
+  // 有封面：server 预渲染的真实桌面拼板；无封面：诚实画一张空桌面骨架，不假装有图
+  if (coverFileId) {
+    return (
+      <div className="desk-thumb">
+        <img src={api.fileUrl(coverFileId)} alt="" loading="lazy" />
+      </div>
+    );
+  }
   return (
     <div className="desk-thumb desk-thumb-empty" aria-hidden="true">
       <div className="desk-thumb-dots" />
@@ -240,7 +248,7 @@ export function Home({
               {projects.map((p) => (
                 <div className="home-card" key={p.id}>
                   <button type="button" className="home-card-open" onClick={() => onOpen(p)}>
-                    <DeskPreview />
+                    <DeskPreview coverFileId={p.coverFileId} />
                     <div className="home-card-cap">
                       {renamingId === p.id ? (
                         <input
