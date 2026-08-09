@@ -11,7 +11,7 @@
 - 创建、查看、改名和删除设计项目；每项目一张可平移、缩放、持久化布局的桌面。
 - 右侧多线程对话与附件；过程时间线展示 Agent 思考与工具调用。
 - 画布：中键/空格漫游、框选多选、物件连线（参考关系）、选中下方 Prompt 面板生图、会话内撤销/重做。
-- Agent 可分析桌面与选中，经 `generate_from_desk` 异步 Job 写回 `effect_image`（ADR 0013）；按需 `look_at_desk` 桌面总览。
+- Agent 可分析桌面与选中，经 `generate_from_desk` 异步 Job 写回 `effect_image`（ADR 0013）；按需 `look_at_desk` 桌面总览、`look_at` 细看指定物件（算 Inspect）。
 - 局部重绘（框选区域 + prompt / 参考图）、大图查看、左下角 minimap 导航。
 - Artifact 不可变版本历史；桌面位置、旋转、视口与 `connections` 独立持久化。
 - 已支持的 Artifact 类型：`canvas_image`、`effect_image`。
@@ -76,7 +76,7 @@ npm run dev:server
 - 面板选定 model 后，文生图与 edits 使用同一 model id。
 - **Agent** `generate_from_desk` 不传 model，始终走主站默认（`IMAGE_MODEL` / 主站 `models[0]`）。
 
-工具白名单：`generate_from_desk`、`get_task`、`look_at_desk`（`AGENT_DEBUG_IMAGE_TOOL=1` 时另有调试图工具）。
+工具白名单：`generate_from_desk`、`get_task`、`look_at_desk`、`look_at`（`AGENT_DEBUG_IMAGE_TOOL=1` 时另有调试图工具）。
 
 ## 环境变量
 

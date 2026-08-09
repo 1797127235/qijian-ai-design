@@ -1,6 +1,6 @@
 /**
  * Agent 桌面工具注册入口。
- *  - 工具白名单：generate_from_desk / get_task / look_at_desk
+ *  - 工具白名单：generate_from_desk / get_task / look_at_desk / look_at
  *  - AGENT_DEBUG_IMAGE_TOOL=1 时追加 debug_return_image（toolResult 附图探针）
  *  - 新增工具在这里 append；session-factory 自动透传名字给 pi
  */
@@ -9,6 +9,7 @@ import { createDebugReturnImageTool, isDebugImageToolEnabled } from "./debug-ret
 import { createGenerateFromDeskTool } from "./generate-from-desk.js";
 import { createGetTaskTool } from "./get-task.js";
 import { createLookAtDeskTool } from "./look-at-desk.js";
+import { createLookAtTool } from "./look-at.js";
 import { createToolContext, type ToolDependencies, type ToolSessionRef } from "./shared.js";
 
 /**
@@ -28,6 +29,7 @@ export function createDeskTools(
     createGenerateFromDeskTool(ctx),
     createGetTaskTool(ctx),
     createLookAtDeskTool({ ...ctx, files: dependencies.files }),
+    createLookAtTool({ ...ctx, files: dependencies.files }),
   ];
   if (isDebugImageToolEnabled()) {
     tools.push(createDebugReturnImageTool());

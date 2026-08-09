@@ -4,7 +4,7 @@
  *  - 模型：ModelRuntime 单例，懒加载；用 config.agentProvider/agentModel 选
  *  - 资源加载器：禁用 extensions/skills/promptTemplates/contextFiles（与文件无交叉污染）
  *  - SessionManager.continueRecent：进程内续历史（每个 projectId:threadId 一个目录）
- *  - 工具：白名单 generate_from_desk + get_task + look_at_desk（可选 debug_return_image）
+ *  - 工具：白名单 generate_from_desk + get_task + look_at_desk + look_at（可选 debug_return_image）
  *  - 订阅：每条事件透传给 emit；工具执行事件入 EventWriteTracker 持久化；assistant 文本入 chat
  */
 import {

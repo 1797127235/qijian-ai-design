@@ -43,6 +43,8 @@ describe("process-summary", () => {
     expect(toolLine({ id: "1", kind: "tool", name: "generate_from_desk", status: "failed", label: "图服务错误" }))
       .toBe("桌面生图失败：图服务错误");
     expect(toolLabel("generate_from_desk")).toBe("桌面生图");
+    expect(toolLabel("look_at")).toBe("细看物件");
+    expect(toolLabel("look_at_desk")).toBe("桌面总览");
   });
 
   it("detects business failure without isError", () => {

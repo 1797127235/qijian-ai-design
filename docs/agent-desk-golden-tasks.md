@@ -1,7 +1,7 @@
 # Agent 桌面感知：黄金任务与验收
 
 **状态：** 验收规格（非实现、非 ADR）  
-**实现进度（2026-08-08）：** L-A 底座 + P0 夹具已落地。Caption：`image_captions` 表、Focus 注入、异步 vision 写（生图 complete / createPlaced / append ready）；读路径 80ms 超时 skip。**桌面总览：** 按需工具 `look_at_desk`（toolResult 内联 `role=desk_overview`，不算 Inspect；无 ready 像素整工具失败；**非**每轮默认注入 Survey）。**人用**画布左下 minimap 已落地（与 agent 总览解耦）。**GT-18（当前桌压历史）** L-A 夹具已落地：装配只认本轮 snapshot，`historyDeskMentions` 不入参；Survey 不得含已删 id。未做：几何「左边」（GT-11）、`relative_hints` 文本（产品决定不做）、GT-09/14–16/19–20 夹具与装配预算 report、单物件 `look_at(ids)`、Compare、L-B。GT-14/16 语义见任务注：默认 overview 已改为工具路径。  
+**实现进度（2026-08-08）：** L-A 底座 + P0 夹具已落地。Caption：`image_captions` 表、Focus 注入、异步 vision 写（生图 complete / createPlaced / append ready）；读路径 80ms 超时 skip。**桌面总览：** 按需工具 `look_at_desk`（toolResult 内联 `role=desk_overview`，不算 Inspect；无 ready 像素整工具失败；**非**每轮默认注入 Survey）。**人用**画布左下 minimap 已落地（与 agent 总览解耦）。**GT-18（当前桌压历史）** L-A 夹具已落地：装配只认本轮 snapshot，`historyDeskMentions` 不入参；Survey 不得含已删 id。已做：单物件 `look_at(ids|alias)`。未做：几何「左边」（GT-11）、`relative_hints` 文本（产品决定不做）、GT-09/14–16/19–20 夹具与装配预算 report、Compare、L-B。GT-14/16 语义见任务注：默认 overview 已改为工具路径。  
 **日期：** 2026-08-08  
 **上游：** [agent-desk-perception-goals.md](agent-desk-perception-goals.md)、[agent-desk-world-model-fields.md](agent-desk-world-model-fields.md)、[agent-desk-context-assembly.md](agent-desk-context-assembly.md)  
 **范围：** 用固定夹具断言「看见 / 指代 / 装配」是否正确  

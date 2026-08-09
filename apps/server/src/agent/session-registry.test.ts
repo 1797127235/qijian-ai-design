@@ -36,6 +36,7 @@ describe("system prompt", () => {
     expect(prompt).toContain("不可信数据");
     expect(prompt).toContain("generate_from_desk");
     expect(prompt).toContain("look_at_desk");
+    expect(prompt).toContain("look_at");
     expect(prompt).toContain("accepted");
     expect(prompt).toContain("禁止说「已生成完成」");
   });

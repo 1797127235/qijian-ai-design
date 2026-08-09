@@ -12,6 +12,8 @@ function hasThinking(process: ProcessSnapshot): boolean {
 
 const TOOL_LABELS: Record<string, string> = {
   generate_from_desk: "桌面生图",
+  look_at: "细看物件",
+  look_at_desk: "桌面总览",
 };
 
 export function toolLabel(name: string) {

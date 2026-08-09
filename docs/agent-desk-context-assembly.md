@@ -1,7 +1,7 @@
 # Agent 桌面上下文：装配规则
 
 **状态：** 目标态装配规格（非实现、非 ADR）  
-**实现进度（2026-08-08）：** Survey L0 / Focus / 选中 Inspect / 基础指代 / caption 已落地。桌面总览为按需工具 `look_at_desk`（`role=desk_overview`，非每轮默认注入）。未做：几何「左边」、`relative_hints` 文本（不做）、Compare、装配 `report.dropped`、Inspect 超限裁切夹具。  
+**实现进度（2026-08-09）：** Survey L0 / Focus / 选中 Inspect / 基础指代 / caption 已落地。桌面总览为按需工具 `look_at_desk`（`role=desk_overview`，非每轮默认注入）。主动细看 `look_at(ids|alias)` 已落地（toolResult，算 Inspect）。未做：几何「左边」、`relative_hints` 文本（不做）、Compare、装配 `report.dropped`、Inspect 超限裁切夹具。  
 **日期：** 2026-08-08  
 **上游：** [agent-desk-perception-goals.md](agent-desk-perception-goals.md)、[agent-desk-world-model-fields.md](agent-desk-world-model-fields.md)  
 **范围：** Survey / Focus / Inspect / Compare 何时触发、装什么、预算多少、如何降级与失败  
@@ -200,7 +200,7 @@
 | 用户选中且 `pixels_available` | **自动 Inspect 选中**（与现状对齐，可配置上限） |
 | 指代唯一消解且任务像改图/评价画面 | 建议 Inspect resolved |
 | 助手/工具 `look_at_desk` | 整桌总览 1 张（非 L3） |
-| 助手/工具显式 `look_at`(ids)（未做） | 按请求 id 升 L3 |
+| 助手/工具显式 `look_at`(ids) | 按请求 id/alias 升 L3（toolResult，算 Inspect） |
 | 仅闲聊/问桌上有什么 | **不**自动 Inspect |
 
 ### 8.2 必装内容

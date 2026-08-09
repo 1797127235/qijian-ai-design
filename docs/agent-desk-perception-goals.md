@@ -289,7 +289,7 @@ name / role / spatial / link → artifact id
 | L1 关系进上下文 | 连线进 Survey/Focus |
 | L0 位置 | grid `@()` 已投影 |
 | L2 caption | 独立表缓存 + Focus 注入（untrusted） |
-| L3 像素 | 选中自动 Inspect + index；单物件主动 `look_at(ids)` 未做 |
+| L3 像素 | 选中自动 Inspect + index；主动 `look_at(ids|alias)` 已做 |
 | 视觉总览 | **`look_at_desk` 按需**；非每轮默认 |
 | 四种模式 | Survey+Focus+Inspect 有；Compare 无 |
 | 指代消解 | 基础（id/alias/label/关键词/血缘等）；几何「左边」未做；`relative_hints` 不做 |
