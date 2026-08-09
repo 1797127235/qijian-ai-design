@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { projects, storedFiles } from "../db/schema.js";
 import type { ServerConfig } from "../config.js";
@@ -141,6 +141,52 @@ export class FileStorage {
     if (!stored) return false;
     await unlink(join(this.config.uploadDir, stored.objectKey)).catch(() => undefined);
     return true;
+  }
+
+  /**
+   * 清理无引用 stored_files（孤儿 GC）。
+   *  - minAgeMs：跳过「刚上传 / 会话 undo 窗口」内的文件，默认 1h
+   *  - 逐条复用 deleteUnattached 的引用检查 + 行锁，避免 TOCTOU
+   *  - 不抛单文件失败，累计 deleted/skipped/errors
+   */
+  async gcUnattached(options: {
+    projectId?: string;
+    minAgeMs?: number;
+    limit?: number;
+    now?: Date;
+  } = {}): Promise<{ scanned: number; deleted: number; skipped: number; errors: number }> {
+    const minAgeMs = options.minAgeMs ?? 60 * 60 * 1000;
+    const limit = Math.max(1, Math.min(options.limit ?? 200, 1000));
+    const now = options.now ?? new Date();
+    const cutoff = new Date(now.getTime() - minAgeMs);
+
+    const conditions = [sql`${storedFiles.createdAt} <= ${cutoff}`];
+    if (options.projectId) conditions.push(eq(storedFiles.projectId, options.projectId));
+
+    const candidates = await this.db
+      .select({ id: storedFiles.id, projectId: storedFiles.projectId })
+      .from(storedFiles)
+      .where(and(...conditions))
+      .orderBy(storedFiles.createdAt)
+      .limit(limit);
+
+    let deleted = 0;
+    let skipped = 0;
+    let errors = 0;
+    for (const row of candidates) {
+      try {
+        const ok = await this.deleteUnattached(row.projectId, row.id);
+        if (ok) deleted += 1;
+        else skipped += 1;
+      } catch (error) {
+        if (error instanceof AppError && error.status === 409) {
+          skipped += 1;
+          continue;
+        }
+        errors += 1;
+      }
+    }
+    return { scanned: candidates.length, deleted, skipped, errors };
   }
 
   async removeProjectFiles(projectId: string, objectKeys: string[]) {

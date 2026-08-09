@@ -62,6 +62,8 @@ export class ArtifactService {
   private onImageReady?: (projectId: string, fileId: string) => void;
   /** 桌面内容变更监听（封面调度等）。装配根注入；异常不影响主流程 */
   private deskChangedListener?: (projectId: string) => void;
+  /** 物件硬删成功后（孤儿文件 GC 等）。装配根注入；异常不影响主流程 */
+  private objectDeletedListener?: (projectId: string) => void;
 
   constructor(private readonly db: Database) {}
 
@@ -73,9 +75,21 @@ export class ArtifactService {
     this.deskChangedListener = listener;
   }
 
+  setObjectDeletedListener(listener: (projectId: string) => void) {
+    this.objectDeletedListener = listener;
+  }
+
   private emitDeskChanged(projectId: string) {
     try {
       this.deskChangedListener?.(projectId);
+    } catch {
+      // 监听器异常不影响主流程
+    }
+  }
+
+  private emitObjectDeleted(projectId: string) {
+    try {
+      this.objectDeletedListener?.(projectId);
     } catch {
       // 监听器异常不影响主流程
     }
@@ -187,6 +201,8 @@ export class ArtifactService {
       return { object };
     }).then((result) => {
       this.emitDeskChanged(projectId);
+      // 硬删后文件可能成孤儿；异步 GC（minAge 内跳过，不伤会话 undo）
+      this.emitObjectDeleted(projectId);
       return result;
     });
   }
@@ -281,6 +297,7 @@ export class ArtifactService {
         )
         OR ${artifactVersions.payload}->>'file_id' = ${fileId}
         OR ${artifactVersions.payload}->>'pdf_file' = ${fileId}
+        OR ${artifactVersions.payload}->>'reference_file_id' = ${fileId}
       )`)
       .limit(1);
     return Boolean(hit);

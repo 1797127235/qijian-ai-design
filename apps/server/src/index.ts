@@ -83,6 +83,19 @@ const covers = new ProjectCoverService({
 });
 desks.setDeskChangedListener((projectId) => covers.schedule(projectId));
 artifacts.setDeskChangedListener((projectId) => covers.schedule(projectId));
+// 删物件后异步扫本项目孤儿文件（默认 minAge 1h，不伤会话 undo；失败只记日志）
+artifacts.setObjectDeletedListener((projectId) => {
+  void files
+    .gcUnattached({ projectId })
+    .then((result) => {
+      if (result.deleted > 0 || result.errors > 0) {
+        console.info(`[files] gc after delete project=${projectId}`, result);
+      }
+    })
+    .catch((error) => {
+      console.warn(`[files] gc after delete failed project=${projectId}:`, error instanceof Error ? error.message : error);
+    });
+});
 
 // —— Agent 异步任务（job）——
 // publish 先用 no-op 占位，等 ChatGateway 构造好再回填成 chat.emit

@@ -119,9 +119,50 @@ describe("ArtifactService placed-object lifecycle (integration)", () => {
       const snapshot = await desks.snapshot(project.id);
       expect(snapshot.deskState.objects).toHaveLength(0);
       expect(snapshot.artifacts).toHaveLength(0);
-      const rows = await db.select({ id: artifacts.id }).from(artifacts).where(eq(artifacts.id, placed.artifact.id));
+      const rows = await db!.select({ id: artifacts.id }).from(artifacts).where(eq(artifacts.id, placed.artifact.id));
       expect(rows).toHaveLength(0);
     } finally {
+      await desks.deleteProject(project.id);
+    }
+  });
+
+  /** 回归：硬删物件不级联删 stored_files → 立刻成为无引用孤儿（会话 undo 依赖同 file_id）。 */
+  itDb("deletePlaced leaves the canvas image file on disk (orphan until GC)", async () => {
+    const project = await desks.createProject("it-delete-orphan-file");
+    try {
+      const png = await seedFile(project.id, "image/png");
+      const placed = await service.createPlaced(
+        project.id,
+        "canvas_image",
+        { payload: { file_id: png.id }, inputRefs: [{ file_id: png.id }], createdBy: "designer" },
+        { kind: "canvas_image", x: 1, y: 1, rot: 0 },
+      );
+      await service.deletePlaced(project.id, placed.artifact.id);
+      const [row] = await db!.select({ id: storedFiles.id }).from(storedFiles).where(eq(storedFiles.id, png.id));
+      expect(row?.id).toBe(png.id);
+      expect(await service.referencesFile(png.id)).toBe(false);
+    } finally {
+      await desks.deleteProject(project.id);
+    }
+  });
+
+  itDb("deletePlaced notifies object-deleted listener for async GC wiring", async () => {
+    const project = await desks.createProject("it-delete-listener");
+    const seen: string[] = [];
+    service.setObjectDeletedListener((projectId) => {
+      seen.push(projectId);
+    });
+    try {
+      const placed = await service.createPlaced(
+        project.id,
+        "canvas_image",
+        { payload: {}, createdBy: "designer" },
+        { kind: "canvas_image", x: 0, y: 0, rot: 0 },
+      );
+      await service.deletePlaced(project.id, placed.artifact.id);
+      expect(seen).toEqual([project.id]);
+    } finally {
+      service.setObjectDeletedListener(() => undefined);
       await desks.deleteProject(project.id);
     }
   });

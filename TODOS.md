@@ -9,14 +9,14 @@
 - **Context:** 设计全文见 `docs/canvas-toolbar-history-design.md` 修订前版本（git 历史）及 `~/.gstack/projects/1797127235-qijian-ai-design/liu-codex-canvas-reliability-design-20260806-111110.md`。删除语义当时定的是 tombstone（D2 分析：日志快照方案会导致文件 409 保护失效）。启动时机：Agent 桌面 tools 切片。
 - **Depends on / blocked by:** Agent 写桌需求出现前不做。
 
-## 2. 孤儿上传文件 GC
+## 2. 孤儿上传文件 GC — DONE（最小闭环）
 
-- **What:** 定期（或手动触发）清理不被任何 artifact（payload.file_id / input_refs）或聊天消息引用的 `stored_files` 行 + 磁盘字节。
-- **Why:** 上传成功但 createPlaced 失败/放弃、物件被删除后，文件成孤儿永久残留（eng review T3 + codex 指出）。
-- **Pros:** 存储有界；与 HISTORY-aware 思路一致（参考 infinite-canvas `cleanupUnusedImages`）。
-- **Cons:** 必须排除「会话内仍可撤销」的引用窗口——会话内撤销重建依赖同 file_id，GC 窗口必须大于会话生命周期或按项目活跃度保守估计。
-- **Context:** 检查器模式已存在（`FileReferenceChecker`，`artifact-service.ts:96`）。删除物件（硬删 artifact）后引用消失，文件立即可被 DELETE API 删掉——目前无 UI 触发，GC 需自行识别。
-- **Depends on / blocked by:** 无；但若先做 TODO 1（tombstone），GC 需同步排除墓碑引用。
+- **What:** ~~定期（或手动触发）清理不被任何 artifact（payload.file_id / input_refs）或聊天消息引用的 `stored_files` 行 + 磁盘字节。~~
+- **Done (2026-08-09):** `FileStorage.gcUnattached({ projectId?, minAgeMs=1h, limit })` + `POST /api/projects/:id/files/gc`；复用 reference checkers（artifact/chat/cover）；默认跳过 1h 内文件保护会话 undo。`referencesFile` 补 `payload.reference_file_id`。集成回归：`deletePlaced leaves the canvas image file on disk`。
+- **Also done:** 删物件后 best-effort 异步 GC（`setObjectDeletedListener` → `gcUnattached`，minAge 内跳过）。
+- **Still open (optional):** 启动/定时扫全库、InpaintDialog 取消清理临时参考图。
+- **Why (historical):** 主路径上传失败前端已 `deleteFile`；真泄漏是硬删物件不级联清文件 + 无扫孤儿。
+- **Depends on / blocked by:** 无；若做 TODO 1 tombstone，checker 需继续认墓碑引用。
 
 ## 3. 跨标签页 desk 同步（WS 广播）
 

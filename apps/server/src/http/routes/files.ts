@@ -40,6 +40,12 @@ export function registerFileRoutes(app: Hono, deps: { files: FileStorage }) {
     return c.body(null, 204);
   });
 
+  /** 清理本项目无引用文件（默认跳过 1h 内上传，保护会话 undo）。 */
+  app.post("/api/projects/:id/files/gc", async (c) => {
+    const result = await deps.files.gcUnattached({ projectId: c.req.param("id") });
+    return c.json(result);
+  });
+
   app.get("/api/files/:id", async (c) => {
     const stored = await deps.files.getById(c.req.param("id"));
     if (!stored) throw new HttpError(404, "文件不存在");
