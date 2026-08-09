@@ -15,6 +15,8 @@ export interface ChatMessageDto {
   text: string;
   attachments: ChatAttachmentDto[];
   createdAt: string;
+  /** 幂等键；job-wake:* 为系统回注，前端不应当用户气泡展示 */
+  externalId?: string;
 }
 
 export interface ChatAttachmentDto {
@@ -74,7 +76,19 @@ export function toMessageDto(row: typeof chatMessages.$inferSelect, attachments:
     text: row.text,
     attachments,
     createdAt: row.createdAt.toISOString(),
+    ...(row.externalId ? { externalId: row.externalId } : {}),
   };
+}
+
+/** 异步 job 回注：协议上是 user 角色喂模型，产品 UI 必须隐藏。 */
+export function isInternalSystemChatMessage(
+  message: Pick<ChatMessageDto, "text" | "externalId"> | { text: string; externalId?: string | null },
+): boolean {
+  if (typeof message.externalId === "string" && message.externalId.startsWith("job-wake:")) return true;
+  const text = (message.text ?? "").replace(/^\uFEFF/, "").trimStart();
+  return text.includes("[JOB_EVENT]")
+    || text.includes("[系统事件")
+    || text.startsWith("source=agent_job");
 }
 
 /** row → DTO。 */

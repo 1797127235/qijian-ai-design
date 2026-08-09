@@ -160,6 +160,20 @@ export function assertGoldenExpect(
     }
   }
 
+  if (exp.reportDroppedIncludes) {
+    for (const d of exp.reportDroppedIncludes) {
+      expect(
+        result.report.dropped,
+        `${task.id} report.dropped missing ${d}: ${result.report.dropped.join(",")}`,
+      ).toContain(d);
+    }
+  }
+  if (exp.reportModesIncludes) {
+    for (const m of exp.reportModesIncludes) {
+      expect(result.report.modes, `${task.id} report.modes missing ${m}`).toContain(m);
+    }
+  }
+
   if (exp.resolution) {
     expect(result.resolution, `${task.id} expected resolution`).toBeTruthy();
     if (exp.resolution.unique !== undefined) {

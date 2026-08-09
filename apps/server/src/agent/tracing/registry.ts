@@ -119,7 +119,15 @@ export class TraceRegistry {
     if (!ctx.productFinished) return;
     if (ctx.inflightJobs.size > 0) return;
     const pending = (ctx as TraceContext & { pendingEnd?: EndOptions }).pendingEnd;
-    this.tracer.end(ctx.root, pending ?? { status: "ok" });
+    const base = pending ?? { status: "ok" as const };
+    const outputs = {
+      ...(base.outputs ?? {}),
+      ...(ctx.usageTotals ? { model_usage: ctx.usageTotals } : {}),
+    };
+    this.tracer.end(ctx.root, {
+      ...base,
+      outputs: Object.keys(outputs).length > 0 ? outputs : base.outputs,
+    });
     ctx.closed = true;
     this.clearTimeout(runId);
     this.byRun.delete(runId);

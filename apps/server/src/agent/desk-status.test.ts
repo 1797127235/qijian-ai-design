@@ -347,6 +347,32 @@ describe("assembleDeskContext", () => {
     expect(assembled.inspectPlan.skipped.some((s) => s.artifactId === "art-pending")).toBe(true);
   });
 
+  it("assembly_report lists modes and inspect drops; not in model text", () => {
+    const assembled = assembleDeskContext(
+      snapshot(),
+      ["art-living", "art-mat", "art-fx1", "art-pending"],
+      { fileNames, maxInspect: 2 },
+    );
+    expect(assembled.report.modes).toEqual(
+      expect.arrayContaining(["survey", "focus", "inspect"]),
+    );
+    expect(assembled.report.focusIds).toEqual(
+      expect.arrayContaining(["art-living", "art-mat", "art-fx1", "art-pending"]),
+    );
+    expect(assembled.report.inspectIds).toEqual(["art-living", "art-mat"]);
+    expect(assembled.report.dropped).toContain("inspect:art-fx1:over_budget");
+    expect(assembled.report.dropped).toContain("inspect:art-pending:pending");
+    // 旁路：不进装配正文
+    expect(assembled.text).not.toContain("assembly_report");
+    expect(assembled.text).not.toContain("inspect:art-fx1:over_budget");
+  });
+
+  it("assembly_report marks snapshot_unavailable", () => {
+    const assembled = assembleDeskContext(null, []);
+    expect(assembled.report.dropped).toContain("snapshot_unavailable");
+    expect(assembled.report.modes).toEqual(["survey"]);
+  });
+
   it("C1: off-desk artifact still in artifacts[] never enters survey catalog", () => {
     // art-mat 仍在 artifacts，但不在 desk_state.objects（已从桌移除 / 历史幽灵）
     const desk = snapshot({

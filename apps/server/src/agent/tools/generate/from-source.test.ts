@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createGenerateFromDeskTool } from "./generate-from-desk.js";
-import type { ToolContext } from "./shared.js";
+import { createGenerateFromDeskTool } from "./from-source.js";
+import type { ToolContext } from "../shared.js";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }) {
   return result.content.map((part) => ("text" in part ? part.text : "")).join("");
@@ -18,7 +18,7 @@ function baseCtx(overrides: Partial<ToolContext> & { deps: ToolContext["deps"] }
   } as ToolContext;
 }
 
-describe("generate_from_desk (async job)", () => {
+describe("generate_from_desk (beside)", () => {
   it("fails when no source is selected or provided", async () => {
     const ctx = baseCtx({
       selectedArtifactIds: () => [],
@@ -55,7 +55,6 @@ describe("generate_from_desk (async job)", () => {
       work: (ctx: { signal: AbortSignal }) => Promise<unknown>;
     }) => {
       await opts.prepare("job-1");
-      // 不 await work：模拟 runner 后台启动
       void opts.work({ signal: new AbortController().signal });
       return {
         text: "已开始",
@@ -81,7 +80,12 @@ describe("generate_from_desk (async job)", () => {
     const result = await tool.execute("call-2", { prompt: " 改成暖色 " }, undefined, undefined, {} as never);
 
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
-      input: expect.objectContaining({ origin: "agent_chat", source_artifact_id: "img-1" }),
+      input: expect.objectContaining({
+        origin: "agent_chat",
+        source_artifact_id: "img-1",
+        placement: "beside",
+        tool: "generate_from_desk",
+      }),
     }));
     expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
       projectId: "p1",
@@ -90,6 +94,7 @@ describe("generate_from_desk (async job)", () => {
       source: "agent_chat",
       createdBy: "agent",
     }));
+    expect(prepare).toHaveBeenCalledWith(expect.not.objectContaining({ targetArtifactId: expect.anything() }));
     expect(textOf(result)).toContain("已开始");
     expect(result.details).toMatchObject({
       ok: true,
@@ -97,6 +102,7 @@ describe("generate_from_desk (async job)", () => {
       status: "accepted",
       task_id: "job-1",
       artifact_id: "fx-1",
+      placement: "beside",
     });
     await vi.waitFor(() => expect(complete).toHaveBeenCalled());
   });

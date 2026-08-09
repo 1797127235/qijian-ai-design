@@ -50,8 +50,20 @@ export function DeskWorkbench({
   setObjects: React.Dispatch<React.SetStateAction<DeskObject[]>>;
   refreshDesk: (projectId: string) => Promise<DeskSnapshot>;
   activeProjectRef: MutableRefObject<string | undefined>;
-  composerHandoff?: { text?: string; files?: File[] };
-  setComposerHandoff: (v: { text?: string; files?: File[] } | undefined) => void;
+  composerHandoff?: {
+    id: string;
+    text?: string;
+    files?: File[];
+    selectedArtifactIds?: string[];
+    autoSend?: boolean;
+  };
+  setComposerHandoff: (v: {
+    id: string;
+    text?: string;
+    files?: File[];
+    selectedArtifactIds?: string[];
+    autoSend?: boolean;
+  } | undefined) => void;
   hasAttachmentDraftRef: MutableRefObject<boolean>;
   onProjectRenamed: (projectId: string, name: string) => void;
   onRenameProject: (project: { id: string }, name: string) => Promise<void>;
@@ -174,7 +186,8 @@ export function DeskWorkbench({
   }, [chat.connection, chat.activeChatThreadId, chat.reconnectChat, projectId, activeProjectRef]);
 
   useEffect(() => {
-    setSelectedIds([]);
+    const seedIds = composerHandoff?.selectedArtifactIds;
+    setSelectedIds(seedIds?.length ? seedIds : []);
     setSelectedConnectionId(undefined);
     setTopbarRenaming(false);
     setInpaintSourceId(undefined);
@@ -564,8 +577,11 @@ export function DeskWorkbench({
           threads={chat.chatThreads}
           activeThreadId={chat.activeChatThreadId}
           threadChanging={chat.threadChanging}
+          handoffId={composerHandoff?.id}
           initialText={composerHandoff?.text}
           initialFiles={composerHandoff?.files}
+          autoSend={composerHandoff?.autoSend}
+          seedSelectedArtifactIds={composerHandoff?.selectedArtifactIds}
           submissionOutcome={chat.submissionOutcome}
           selectedObjects={selectedIds
             .map((id) => objects.find((item) => item.id === id))

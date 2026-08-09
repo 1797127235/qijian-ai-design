@@ -2,7 +2,7 @@
  * Job 终态 → Agent 轨迹回注（方案 3 / 书中异步事件）。
  *
  *  - 仅 agent 路径（有 threadId）且 kind 在 WAKEABLE 白名单
- *  - 一 job 一 wake（appendPrompt externalId 幂等）
+ *  - 短窗合并同 thread 多 job → 一条 wake（防 10 段刷屏）
  *  - thread busy 时入队，run 结束后 drain
  *  - 不 await 调用方（finalize 热路径）；错误只打日志
  */
@@ -10,7 +10,9 @@ import { AppError } from "../../lib/errors.js";
 import type { ChatService } from "../../services/chat-service.js";
 import type { AgentJobDto } from "./types.js";
 import {
+  formatJobWakeBatchPrompt,
   formatJobWakePrompt,
+  jobWakeBatchExternalId,
   jobWakeExternalId,
   shouldWakeAgentForJob,
 } from "./job-event.js";
@@ -29,18 +31,26 @@ export type JobWakeDeliver = (args: {
 
 export type JobWakeBusyCheck = (projectId: string, threadId: string) => boolean;
 
+/** 同 thread 终态短窗合并（ms）。单 job 也会等满窗，略增延迟换可合并。 */
+export const JOB_WAKE_BATCH_MS = 800;
+
 export class JobWakeService {
   private readonly queues = new Map<string, AgentJobDto[]>();
   private readonly draining = new Set<string>();
   private readonly inFlight = new Set<string>();
+  private readonly flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly batchMs: number;
 
   constructor(
     private readonly chats: ChatService,
     private readonly deliver: JobWakeDeliver,
     private readonly isBusy: JobWakeBusyCheck = () => false,
-  ) {}
+    batchMs = JOB_WAKE_BATCH_MS,
+  ) {
+    this.batchMs = batchMs;
+  }
 
-  /** finalize 后调用：同步入队，异步 drain。 */
+  /** finalize 后调用：同步入队，debounce 后 drain。 */
   onJobTerminal(job: AgentJobDto): void {
     if (!shouldWakeAgentForJob(job)) return;
     if (!job.threadId) return;
@@ -49,12 +59,28 @@ export class JobWakeService {
     if (q.some((j) => j.id === job.id) || this.inFlight.has(job.id)) return;
     q.push(job);
     this.queues.set(key, q);
+    this.scheduleFlush(key);
+  }
+
+  /** 某 thread 的 chat run 结束后调用，推进排队 wake（立即尝试，不再等窗）。 */
+  notifyThreadIdle(projectId: string, threadId: string): void {
+    const key = `${projectId}:${threadId}`;
+    const t = this.flushTimers.get(key);
+    if (t) {
+      clearTimeout(t);
+      this.flushTimers.delete(key);
+    }
     void this.drain(key);
   }
 
-  /** 某 thread 的 chat run 结束后调用，推进排队 wake。 */
-  notifyThreadIdle(projectId: string, threadId: string): void {
-    void this.drain(`${projectId}:${threadId}`);
+  private scheduleFlush(key: string): void {
+    const existing = this.flushTimers.get(key);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.flushTimers.delete(key);
+      void this.drain(key);
+    }, this.batchMs);
+    this.flushTimers.set(key, timer);
   }
 
   private async drain(key: string): Promise<void> {
@@ -67,20 +93,35 @@ export class JobWakeService {
           this.queues.delete(key);
           return;
         }
-        const job = q[0];
-        const threadId = job.threadId!;
-        if (this.isBusy(job.projectId, threadId)) return;
+        const head = q[0];
+        const threadId = head.threadId!;
+        if (this.isBusy(head.projectId, threadId)) return;
 
-        q.shift();
-        if (q.length === 0) this.queues.delete(key);
-        else this.queues.set(key, q);
+        // 一次取走当前队列全部，合并为一条 wake。
+        // 已在 inFlight 的不 shift（避免丢终态）；其余进 batch。
+        const batch: AgentJobDto[] = [];
+        const deferred: AgentJobDto[] = [];
+        while (q.length > 0) {
+          const job = q.shift()!;
+          if (this.inFlight.has(job.id)) deferred.push(job);
+          else batch.push(job);
+        }
+        if (deferred.length > 0) {
+          this.queues.set(key, deferred);
+        } else {
+          this.queues.delete(key);
+        }
 
-        if (this.inFlight.has(job.id)) continue;
-        this.inFlight.add(job.id);
+        if (batch.length === 0) {
+          // 仅有 deferred：等当前 deliver 结束后再 drain（notifyThreadIdle / 下一终态）
+          return;
+        }
+
+        for (const job of batch) this.inFlight.add(job.id);
         try {
-          await this.deliverOne(job);
+          await this.deliverBatch(batch);
         } finally {
-          this.inFlight.delete(job.id);
+          for (const job of batch) this.inFlight.delete(job.id);
         }
       }
     } finally {
@@ -88,14 +129,20 @@ export class JobWakeService {
     }
   }
 
-  private async deliverOne(job: AgentJobDto): Promise<void> {
+  private async deliverBatch(jobs: AgentJobDto[]): Promise<void> {
+    const job = jobs[0];
+    if (!job) return;
     const threadId = job.threadId;
     if (!threadId) return;
-    const externalId = jobWakeExternalId(job.id);
-    const text = formatJobWakePrompt(job);
+
+    const externalId = jobs.length === 1
+      ? jobWakeExternalId(job.id)
+      : jobWakeBatchExternalId(jobs.map((j) => j.id));
+    const text = jobs.length === 1
+      ? formatJobWakePrompt(job)
+      : formatJobWakeBatchPrompt(jobs);
 
     try {
-      // 幂等：已投递过则跳过（created=false）
       const saved = await this.chats.appendPrompt(
         job.projectId,
         threadId,
@@ -116,17 +163,16 @@ export class JobWakeService {
       });
     } catch (error) {
       if (error instanceof AppError && error.code === "ATTACHMENT_BUSY") {
-        // 竞态：再入队尾部稍后重试
         const key = `${job.projectId}:${threadId}`;
         const q = this.queues.get(key) ?? [];
-        if (!q.some((j) => j.id === job.id)) {
-          q.push(job);
-          this.queues.set(key, q);
+        for (const j of jobs) {
+          if (!q.some((x) => x.id === j.id)) q.push(j);
         }
+        this.queues.set(key, q);
         return;
       }
       console.warn(
-        `[job-wake] deliver failed task=${job.id}:`,
+        `[job-wake] deliver failed tasks=${jobs.map((j) => j.id).join(",")}:`,
         error instanceof Error ? error.message : error,
       );
     }

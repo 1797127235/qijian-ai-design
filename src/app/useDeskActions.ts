@@ -77,10 +77,16 @@ export function useDeskActions(options: {
     (viewport: { x: number; y: number; zoom: number }) => {
       const { projectId, snapshot, activeProjectRef, refreshDesk, setChatItems } = depsRef.current;
       if (!projectId || snapshot?.project.id !== projectId) return;
+      // 与服务端 zoom 0.1–4 对齐，避免历史态/边界缩放触发 400
+      const safe = {
+        x: Number.isFinite(viewport.x) ? viewport.x : 40,
+        y: Number.isFinite(viewport.y) ? viewport.y : 20,
+        zoom: Math.min(4, Math.max(0.1, Number.isFinite(viewport.zoom) ? viewport.zoom : 0.62)),
+      };
       window.clearTimeout(persistViewport.current);
       persistViewport.current = window.setTimeout(() => {
         void api
-          .setViewport(projectId, viewport)
+          .setViewport(projectId, safe)
           .then(() => {
             viewportSaveFailed.current = false;
           })

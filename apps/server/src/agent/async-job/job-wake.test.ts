@@ -29,6 +29,7 @@ describe("JobWakeService", () => {
       { appendPrompt } as never,
       deliver,
       () => false,
+      0,
     );
     svc.onJobTerminal(job());
     await vi.waitFor(() => expect(deliver).toHaveBeenCalled());
@@ -49,7 +50,7 @@ describe("JobWakeService", () => {
   it("skips panel jobs without thread", async () => {
     const appendPrompt = vi.fn();
     const deliver = vi.fn();
-    const svc = new JobWakeService({ appendPrompt } as never, deliver, () => false);
+    const svc = new JobWakeService({ appendPrompt } as never, deliver, () => false, 0);
     svc.onJobTerminal(job({ threadId: undefined }));
     await new Promise((r) => setTimeout(r, 20));
     expect(appendPrompt).not.toHaveBeenCalled();
@@ -67,6 +68,7 @@ describe("JobWakeService", () => {
       { appendPrompt } as never,
       deliver,
       () => busy,
+      0,
     );
     svc.onJobTerminal(job());
     await new Promise((r) => setTimeout(r, 20));
@@ -82,7 +84,7 @@ describe("JobWakeService", () => {
       message: { text: "old" },
     });
     const deliver = vi.fn();
-    const svc = new JobWakeService({ appendPrompt } as never, deliver, () => false);
+    const svc = new JobWakeService({ appendPrompt } as never, deliver, () => false, 0);
     svc.onJobTerminal(job());
     await vi.waitFor(() => expect(appendPrompt).toHaveBeenCalled());
     expect(deliver).not.toHaveBeenCalled();
@@ -96,16 +98,62 @@ describe("JobWakeService", () => {
       return { created: true, run: { id: "r" }, message: { text: "ok" } };
     });
     const deliver = vi.fn().mockResolvedValue(undefined);
-    let busy = false;
     const svc = new JobWakeService(
       { appendPrompt } as never,
       deliver,
-      () => busy,
+      () => false,
+      0,
     );
     svc.onJobTerminal(job());
     await vi.waitFor(() => expect(appendPrompt).toHaveBeenCalled());
-    // first attempt failed busy — still in queue; force drain
     svc.notifyThreadIdle("p1", "t1");
     await vi.waitFor(() => expect(deliver).toHaveBeenCalled());
+  });
+
+  it("merges multiple terminal jobs into one wake", async () => {
+    const appendPrompt = vi.fn().mockResolvedValue({
+      created: true,
+      run: { id: "run-b" },
+      message: { text: "batch" },
+    });
+    const deliver = vi.fn().mockResolvedValue(undefined);
+    const svc = new JobWakeService({ appendPrompt } as never, deliver, () => false, 30);
+    svc.onJobTerminal(job({ id: "job-a", status: "succeeded" }));
+    svc.onJobTerminal(job({ id: "job-b", status: "cancelled", artifactId: "fx-2" }));
+    await vi.waitFor(() => expect(appendPrompt).toHaveBeenCalledTimes(1));
+    expect(appendPrompt.mock.calls[0][2]).toContain("[JOB_EVENT_BATCH]");
+    expect(appendPrompt.mock.calls[0][3]).toMatch(/^job-wake-batch:/);
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not drop queued jobs that are already inFlight", async () => {
+    let resolveFirst!: () => void;
+    const firstGate = new Promise<void>((r) => {
+      resolveFirst = r;
+    });
+    let deliverCount = 0;
+    const appendPrompt = vi.fn().mockResolvedValue({
+      created: true,
+      run: { id: "run-x" },
+      message: { text: "w" },
+    });
+    const deliver = vi.fn().mockImplementation(async () => {
+      deliverCount += 1;
+      if (deliverCount === 1) await firstGate;
+    });
+    const svc = new JobWakeService({ appendPrompt } as never, deliver, () => false, 0);
+
+    svc.onJobTerminal(job({ id: "job-slow", status: "succeeded" }));
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(1));
+
+    // second terminal while first deliver still running
+    svc.onJobTerminal(job({ id: "job-queued", status: "failed", artifactId: "fx-q" }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(appendPrompt).toHaveBeenCalledTimes(1);
+
+    resolveFirst();
+    svc.notifyThreadIdle("p1", "t1");
+    await vi.waitFor(() => expect(appendPrompt).toHaveBeenCalledTimes(2));
+    expect(appendPrompt.mock.calls[1][3]).toBe("job-wake:job-queued");
   });
 });

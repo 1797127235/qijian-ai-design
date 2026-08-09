@@ -5,7 +5,6 @@
 import type { ArtifactSnapshot, DeskSnapshot } from "../domain/types.js";
 import { formatCaptionLine } from "../services/image-caption-sanitize.js";
 
-export const MAX_DESK_STATUS_OBJECTS = 40;
 export const DESK_GRID_CELL = 400;
 export const MAX_INSPECT_IMAGES = 4;
 export const MAX_FOCUS_HOP_EXTRAS = 12;
@@ -15,7 +14,6 @@ export type Lifecycle = "empty" | "pending" | "failed" | "ready";
 export type DeskContextOptions = {
   fileNames?: Record<string, string>;
   maxInspect?: number;
-  maxSurveyObjects?: number;
   /** 用户原文，用于指代消解 */
   userText?: string;
   /**
@@ -59,13 +57,38 @@ export type ReferenceResolution = {
   basis: string;
 };
 
+/**
+ * 装配旁路报告：供日志 / L-A 评测，默认不注入模型。
+ * dropped 形如 inspect:{id}:{reason} | focus_hop:{id}:over_budget | snapshot_unavailable
+ */
+export type AssemblyMode = "survey" | "focus" | "inspect" | "resolution";
+
+export type AssemblyReport = {
+  modes: AssemblyMode[];
+  focusIds: string[];
+  hop1Ids: string[];
+  inspectIds: string[];
+  dropped: string[];
+};
+
 export type AssembledDeskContext = {
   text: string;
   inspectPlan: InspectPlan;
   resolution: ReferenceResolution | null;
   objects: DeskObjectView[];
   revision: string;
+  report: AssemblyReport;
 };
+
+export function emptyAssemblyReport(partial: Partial<AssemblyReport> = {}): AssemblyReport {
+  return {
+    modes: partial.modes ?? [],
+    focusIds: partial.focusIds ?? [],
+    hop1Ids: partial.hop1Ids ?? [],
+    inspectIds: partial.inspectIds ?? [],
+    dropped: partial.dropped ?? [],
+  };
+}
 
 // —— 基础 ——
 
@@ -236,7 +259,6 @@ export function buildDeskStatusBlock(
   const objects = compileDeskObjects(snapshot, options.fileNames ?? {});
   const byId = new Map(objects.map((o) => [o.id, o]));
   const connections = snapshot.deskState.connections ?? [];
-  const maxSurvey = options.maxSurveyObjects ?? MAX_DESK_STATUS_OBJECTS;
   const rev = revisionOf(snapshot);
 
   const header = [
@@ -261,11 +283,10 @@ export function buildDeskStatusBlock(
     }
   }
 
-  const listed = objects.slice(0, maxSurvey);
-  const objectLines = listed.length === 0
+  // Survey 列全桌：无硬编码件数上限；大桌靠 look_at / 工具按需升采样，不在此截断目录。
+  const objectLines = objects.length === 0
     ? ["（空桌）"]
-    : listed.map((o) => `- ${o.alias} ${o.type} ${o.id}「${o.label}」 ${o.lifecycle} ${o.grid}`);
-  if (objects.length > maxSurvey) objectLines.push(`…共 ${objects.length} 件`);
+    : objects.map((o) => `- ${o.alias} ${o.type} ${o.id}「${o.label}」 ${o.lifecycle} ${o.grid}`);
 
   const lines = [header, ...selectedLines, "桌上物件：", ...objectLines];
 
@@ -278,10 +299,9 @@ export function buildDeskStatusBlock(
     }
   }
 
-  // alias 索引便于指代
   if (objects.length > 0) {
     lines.push("编号：");
-    for (const o of objects.slice(0, maxSurvey)) {
+    for (const o of objects) {
       lines.push(`- ${o.alias}=${o.id}`);
     }
   }
@@ -418,29 +438,38 @@ function focusIdSet(
   return ordered;
 }
 
-function expandHop1(coreIds: string[], objects: DeskObjectView[]): string[] {
+/** 一跳邻接；超 MAX_FOCUS_HOP_EXTRAS 的邻居进 dropped（仍扫全边，便于 report）。 */
+export function expandHop1(
+  coreIds: string[],
+  objects: DeskObjectView[],
+  maxExtras: number = MAX_FOCUS_HOP_EXTRAS,
+): { hop1: string[]; droppedOverBudget: string[] } {
   const byId = new Map(objects.map((o) => [o.id, o]));
   const extra: string[] = [];
+  const droppedOverBudget: string[] = [];
+  const seen = new Set(coreIds);
   for (const id of coreIds) {
     const obj = byId.get(id);
     if (!obj) continue;
     for (const n of [...obj.edgesIn, ...obj.edgesOut]) {
-      if (coreIds.includes(n) || extra.includes(n)) continue;
-      extra.push(n);
-      if (extra.length >= MAX_FOCUS_HOP_EXTRAS) return extra;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      if (extra.length < maxExtras) extra.push(n);
+      else droppedOverBudget.push(n);
     }
   }
-  return extra;
+  return { hop1: extra, droppedOverBudget };
 }
 
 export function formatFocusBlock(
   objects: DeskObjectView[],
   coreIds: string[],
   captions: Record<string, string> = {},
+  hop1Ids?: string[],
 ): string {
   if (coreIds.length === 0) return "";
   const byId = new Map(objects.map((o) => [o.id, o]));
-  const hop1 = expandHop1(coreIds, objects);
+  const hop1 = hop1Ids ?? expandHop1(coreIds, objects).hop1;
   const lines = ["[FOCUS]"];
   const coreSet = new Set(coreIds);
 
@@ -608,21 +637,64 @@ export function formatResolutionBlock(resolution: ReferenceResolution, objects: 
 
 // —— 总装配 ——
 
+/** 由 inspect / focus 裁切结果汇总旁路 report（不进模型文本）。 */
+export function buildAssemblyReport(input: {
+  snapshotOk: boolean;
+  focusIds: string[];
+  hop1Ids: string[];
+  hop1DroppedIds: string[];
+  resolution: ReferenceResolution | null;
+  inspectPlan: InspectPlan;
+}): AssemblyReport {
+  const modes: AssemblyMode[] = ["survey"];
+  if (input.resolution) modes.push("resolution");
+  if (input.focusIds.length > 0) modes.push("focus");
+  if (input.inspectPlan.included.length > 0 || input.inspectPlan.skipped.length > 0) {
+    modes.push("inspect");
+  }
+
+  const dropped: string[] = [];
+  if (!input.snapshotOk) dropped.push("snapshot_unavailable");
+  for (const id of input.hop1DroppedIds) {
+    dropped.push(`focus_hop:${id}:over_budget`);
+  }
+  for (const s of input.inspectPlan.skipped) {
+    dropped.push(`inspect:${s.artifactId}:${s.reason}`);
+  }
+
+  return {
+    modes,
+    focusIds: [...input.focusIds],
+    hop1Ids: [...input.hop1Ids],
+    inspectIds: input.inspectPlan.included.map((i) => i.artifactId),
+    dropped,
+  };
+}
+
 export function assembleDeskContext(
   snapshot: DeskSnapshot | null | undefined,
   selectedArtifactIds: string[] = [],
   options: DeskContextOptions = {},
 ): AssembledDeskContext {
   if (!snapshot) {
+    const inspectPlan: InspectPlan = { included: [], skipped: [] };
     return {
       text: [
         "[DESK_CONTEXT current=true revision=unknown objects=0 connections=0]",
         "桌面状态暂不可用",
       ].join("\n"),
-      inspectPlan: { included: [], skipped: [] },
+      inspectPlan,
       resolution: null,
       objects: [],
       revision: "unknown",
+      report: buildAssemblyReport({
+        snapshotOk: false,
+        focusIds: [],
+        hop1Ids: [],
+        hop1DroppedIds: [],
+        resolution: null,
+        inspectPlan,
+      }),
     };
   }
 
@@ -632,13 +704,14 @@ export function assembleDeskContext(
     ? resolveDeskReferences(options.userText, objects)
     : null;
   const coreIds = focusIdSet(selectedArtifactIds, resolution, objects);
-  const focus = formatFocusBlock(objects, coreIds, options.captions ?? {});
+  const hop = expandHop1(coreIds, objects);
+  const focus = formatFocusBlock(objects, coreIds, options.captions ?? {}, hop.hop1);
   // Inspect 计划：选中 + 唯一消解结果
-  const inspectIds = [
+  const inspectCandidateIds = [
     ...selectedArtifactIds,
     ...(resolution?.unique ? resolution.resolvedIds : []),
   ];
-  const inspectPlan = planInspectSelection(snapshot, inspectIds, {
+  const inspectPlan = planInspectSelection(snapshot, inspectCandidateIds, {
     maxInspect: options.maxInspect,
   });
 
@@ -653,5 +726,13 @@ export function assembleDeskContext(
     resolution,
     objects,
     revision: revisionOf(snapshot),
+    report: buildAssemblyReport({
+      snapshotOk: true,
+      focusIds: coreIds,
+      hop1Ids: hop.hop1,
+      hop1DroppedIds: hop.droppedOverBudget,
+      resolution,
+      inspectPlan,
+    }),
   };
 }

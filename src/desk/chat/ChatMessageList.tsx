@@ -2,7 +2,7 @@ import type React from "react";
 import { FileText, Paperclip } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, type ChatAttachment } from "../../lib/api";
+import { api, isInternalSystemChatMessage, type ChatAttachment } from "../../lib/api";
 import { safeMarkdownUrl } from "../markdown";
 import type { ChatItem } from "../types";
 import { ProcessPanel } from "./ProcessPanel";
@@ -115,6 +115,8 @@ export function ChatMessageList({
         if (m.role === "process") {
           return <ProcessPanel key={m.id} process={m.process} />;
         }
+        // 双保险：job-wake 系统回注不应出现在用户气泡（含历史里未过滤的脏数据）
+        if (m.role === "user" && isInternalSystemChatMessage({ text: m.text })) return null;
         return (
           <div key={m.id} className={`msg ${m.role}`}>
             {m.role === "agent" ? <MarkdownMessage text={m.text} /> : m.text ? <PlainMessageText text={m.text} /> : null}

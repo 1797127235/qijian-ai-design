@@ -11,6 +11,10 @@ export type GoldenExpect = {
   inspectIncluded?: string[];
   inspectExcluded?: string[];
   inspectSkipped?: Array<{ artifactId: string; reason: string }>;
+  /** report.dropped 须包含的条目（如 inspect:id:over_budget） */
+  reportDroppedIncludes?: string[];
+  /** report.modes 须包含 */
+  reportModesIncludes?: Array<"survey" | "focus" | "inspect" | "resolution">;
   resolution?: {
     unique?: boolean;
     resolvedIds?: string[];

@@ -93,8 +93,13 @@ function generationPayloadFields(input: {
  *  - 失败 best-effort 写一版 payload.error，前端就能看到红色失败状态
  */
 const EFFECT_WIDTH = 220;
+/** 与前端 nodeSize 默认高宽比一致（220×160）。 */
+const EFFECT_HEIGHT = 160;
 const PLACE_GAP = 60;
 const GENERATE_TIMEOUT_MS = 120_000;
+/** 服务端无 DOM 时估算视口中心用的逻辑屏尺寸。 */
+const ASSUMED_VIEW_W = 1200;
+const ASSUMED_VIEW_H = 800;
 
 /**
  * 对用户/落库可见的错误文案：去掉路径、URL、堆栈等内部细节，
@@ -129,16 +134,26 @@ export type GenerateCreatedBy = "designer" | "agent";
 
 export interface GenerateFromCanvasInput {
   projectId: string;
-  sourceArtifactId: string;
+  /**
+   * 主源 artifact id（参考像素与落点旁的连线 from）。
+   * 省略时为无源 spawn（文生图落桌）；不可与 targetArtifactId 同用。
+   */
+  sourceArtifactId?: string;
   prompt: string;
   clientOpId: string;
   /**
-   * 重试时传入已有失败/待生成的 effect_image id，或空占位 canvas_image id（生成结果直接填回该卡），
-   * 在原卡上 append，不新建。省略则 createPlaced 新卡。
+   * 填回目标：已有 effect_image / canvas_image id，在原卡 append 新版本，不 createPlaced。
+   * 可与 source 相同（原图重生替换）；也可为失败/空占位卡 id。省略则在主源右侧新建。
+   * 无 source 时禁止使用。
    */
   targetArtifactId?: string;
   /** 额外参考物件（不含主源）；与主源入边合并去重 */
   referenceArtifactIds?: string[];
+  /**
+   * 无源 spawn 时的首选落点（世界坐标）。
+   * 有 source 时忽略。与现有物件重叠时仍会平移找空位。
+   */
+  spawnAt?: { x: number; y: number };
   /** 默认 canvas_panel；Agent 工具传 agent_chat */
   source?: GenerateSource;
   createdBy?: GenerateCreatedBy;
@@ -152,6 +167,97 @@ export interface GenerateFromCanvasInput {
   model?: string;
   /** 外部取消（agent stop / 工具 AbortSignal） */
   signal?: AbortSignal;
+}
+
+type DeskBox = { x: number; y: number; w: number; h: number };
+
+function layoutBox(obj: Pick<DeskLayoutObject, "x" | "y" | "w">): DeskBox {
+  const w = obj.w && obj.w > 0 ? obj.w : EFFECT_WIDTH;
+  const h = Math.round(w * (EFFECT_HEIGHT / EFFECT_WIDTH));
+  return { x: obj.x, y: obj.y, w, h };
+}
+
+function boxesOverlap(a: DeskBox, b: DeskBox, gap: number): boolean {
+  return !(
+    a.x + a.w + gap <= b.x
+    || b.x + b.w + gap <= a.x
+    || a.y + a.h + gap <= b.y
+    || b.y + b.h + gap <= a.y
+  );
+}
+
+function viewportCenterWorld(viewport: { x: number; y: number; zoom: number }): { x: number; y: number } {
+  const zoom = Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1;
+  return {
+    x: (ASSUMED_VIEW_W / 2 - viewport.x) / zoom,
+    y: (ASSUMED_VIEW_H / 2 - viewport.y) / zoom,
+  };
+}
+
+/**
+ * complete 互斥键：替换锁 target；旁落/文生锁新建卡 id。
+ * 禁止旁落用主源 id（同主源多旁落会互 abort）。
+ */
+export function deskGenerateLockKey(
+  projectId: string,
+  opts: { targetArtifactId?: string; pendingArtifactId: string },
+): string {
+  const target = opts.targetArtifactId?.trim();
+  const pending = opts.pendingArtifactId.trim();
+  return `${projectId}:${target || pending}`;
+}
+
+/**
+ * 无源落点：锚点起找空位，避免盖住已有卡。
+ * 扫描：锚点 → 右/下/右下格；仍挤则全桌包围盒右侧。
+ */
+export function findFreeDeskPlacement(input: {
+  objects: Array<Pick<DeskLayoutObject, "x" | "y" | "w">>;
+  viewport: { x: number; y: number; zoom: number };
+  preferred?: { x: number; y: number };
+  cardW?: number;
+  cardH?: number;
+  gap?: number;
+}): { x: number; y: number; w: number } {
+  const cardW = input.cardW ?? EFFECT_WIDTH;
+  const cardH = input.cardH ?? EFFECT_HEIGHT;
+  const gap = input.gap ?? PLACE_GAP;
+  const occupied = input.objects.map(layoutBox);
+  const anchor = input.preferred ?? viewportCenterWorld(input.viewport);
+  const stepX = cardW + gap;
+  const stepY = cardH + gap;
+
+  const tryPlace = (x: number, y: number) => {
+    const candidate: DeskBox = { x: Math.round(x), y: Math.round(y), w: cardW, h: cardH };
+    if (occupied.some((box) => boxesOverlap(candidate, box, gap))) return null;
+    return { x: candidate.x, y: candidate.y, w: cardW };
+  };
+
+  const atAnchor = tryPlace(anchor.x - cardW / 2, anchor.y - cardH / 2);
+  if (atAnchor) return atAnchor;
+
+  for (let ring = 1; ring <= 12; ring++) {
+    for (let dy = 0; dy <= ring; dy++) {
+      for (let dx = 0; dx <= ring; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const hit = tryPlace(anchor.x - cardW / 2 + dx * stepX, anchor.y - cardH / 2 + dy * stepY);
+        if (hit) return hit;
+      }
+    }
+  }
+
+  if (occupied.length === 0) {
+    return { x: Math.round(anchor.x - cardW / 2), y: Math.round(anchor.y - cardH / 2), w: cardW };
+  }
+  let maxRight = -Infinity;
+  let minY = Infinity;
+  for (const box of occupied) {
+    maxRight = Math.max(maxRight, box.x + box.w);
+    minY = Math.min(minY, box.y);
+  }
+  const fallback = tryPlace(maxRight + gap, Number.isFinite(minY) ? minY : anchor.y);
+  if (fallback) return fallback;
+  return { x: Math.round(maxRight + gap), y: Math.round(Number.isFinite(minY) ? minY : anchor.y), w: cardW };
 }
 
 export interface GenerateFromCanvasResult {
@@ -224,10 +330,12 @@ export class CanvasGenerateService {
 
   /**
    * 仅落 pending 卡 + 连线（同步）。Agent async 路径先调此方法再 return accepted。
+   * 无 sourceArtifactId：无源 spawn（文生图）；禁止 targetArtifactId。
    */
   async prepare(input: GenerateFromCanvasInput): Promise<PreparedGenerate> {
     const origin = input.source ?? "canvas_panel";
     const createdBy = input.createdBy ?? "designer";
+    const sourceId = input.sourceArtifactId?.trim() || "";
 
     if (input.referenceFileId) {
       const [row] = await this.db
@@ -237,13 +345,23 @@ export class CanvasGenerateService {
       if (!row) throw new HttpError(422, "参考图不存在于本项目中");
     }
 
+    if (!sourceId) {
+      if (input.targetArtifactId) {
+        throw new HttpError(422, "无主源文生图不能指定 targetArtifactId");
+      }
+      if (input.region) {
+        throw new HttpError(422, "无主源文生图不支持局部重绘");
+      }
+      return this.prepareSpawn(input, origin, createdBy);
+    }
+
     const snapshot = await this.desks.snapshot(input.projectId);
-    const source = snapshot.artifacts.find((a) => a.id === input.sourceArtifactId);
-    const sourceLayout = snapshot.deskState.objects.find((o) => o.artifact_id === input.sourceArtifactId);
+    const source = snapshot.artifacts.find((a) => a.id === sourceId);
+    const sourceLayout = snapshot.deskState.objects.find((o) => o.artifact_id === sourceId);
     if (!source || !sourceLayout) throw new HttpError(404, "源物件不在桌面上");
 
-    const inbound = snapshot.deskState.connections.filter((c) => c.to === input.sourceArtifactId);
-    const extraRefIds = [...new Set((input.referenceArtifactIds ?? []).filter((id) => id && id !== input.sourceArtifactId))];
+    const inbound = snapshot.deskState.connections.filter((c) => c.to === sourceId);
+    const extraRefIds = [...new Set((input.referenceArtifactIds ?? []).filter((id) => id && id !== sourceId))];
     const { referenceFileIds } = this.collectReferences(snapshot, source, inbound, extraRefIds);
     const userPrompt = stripInpaintPrefix(input.prompt);
     const composedPrompt = composeCanvasPrompt({
@@ -263,8 +381,23 @@ export class CanvasGenerateService {
     });
 
     const preparedTarget = input.targetArtifactId
-      ? await this.prepareRetryTarget(input, snapshot, referenceFileIds, createdBy, extraRefIds, payloadFields)
-      : await this.prepareNewTarget(input, sourceLayout, referenceFileIds, createdBy, extraRefIds, payloadFields);
+      ? await this.prepareRetryTarget(
+        { ...input, sourceArtifactId: sourceId },
+        snapshot,
+        referenceFileIds,
+        createdBy,
+        extraRefIds,
+        payloadFields,
+      )
+      : await this.prepareNewTarget(
+        { ...input, sourceArtifactId: sourceId },
+        sourceLayout,
+        snapshot.deskState.objects,
+        referenceFileIds,
+        createdBy,
+        extraRefIds,
+        payloadFields,
+      );
 
     const pending: GenerateFromCanvasResult = {
       artifact: { id: preparedTarget.artifactId },
@@ -285,8 +418,117 @@ export class CanvasGenerateService {
       referenceFileIds,
       origin,
       createdBy,
-      lockKey: `${input.projectId}:${input.targetArtifactId ?? input.sourceArtifactId}`,
+      // 旁落锁在新卡，避免同主源多旁落互杀；替换锁在 target（同卡互斥）。
+      lockKey: deskGenerateLockKey(input.projectId, {
+        targetArtifactId: input.targetArtifactId,
+        pendingArtifactId: preparedTarget.artifactId,
+      }),
       region: input.region,
+      referenceFileId: input.referenceFileId,
+      size: input.size,
+      model: input.model,
+    };
+  }
+
+  /** 无主源：新建 effect_image，落在视口空位；可选参考物件连线。 */
+  private async prepareSpawn(
+    input: GenerateFromCanvasInput,
+    origin: GenerateSource,
+    createdBy: GenerateCreatedBy,
+  ): Promise<PreparedGenerate> {
+    const snapshot = await this.desks.snapshot(input.projectId);
+    const extraRefIds = [...new Set((input.referenceArtifactIds ?? []).filter(Boolean))];
+    const referenceFileIds: string[] = [];
+    for (const id of extraRefIds) {
+      const art = snapshot.artifacts.find((a) => a.id === id);
+      if (!art) continue;
+      if (
+        (art.artifactType === "canvas_image" || art.artifactType === "effect_image")
+        && typeof art.payload.file_id === "string"
+        && art.payload.file_id
+        && !referenceFileIds.includes(art.payload.file_id)
+      ) {
+        referenceFileIds.push(art.payload.file_id);
+      }
+    }
+
+    const userPrompt = stripInpaintPrefix(input.prompt);
+    const composedPrompt = composeCanvasPrompt({
+      userPrompt,
+      missingRef: false,
+      hasReferenceFile: Boolean(input.referenceFileId),
+    });
+    const payloadFields = generationPayloadFields({
+      composedPrompt,
+      userPrompt,
+      origin,
+      referenceFileId: input.referenceFileId,
+      size: input.size,
+      model: input.model,
+    });
+
+    const free = findFreeDeskPlacement({
+      objects: snapshot.deskState.objects,
+      viewport: snapshot.deskState.viewport,
+      preferred: input.spawnAt,
+    });
+    const layout: Omit<DeskLayoutObject, "artifact_id"> = {
+      kind: "effect_image",
+      x: free.x,
+      y: free.y,
+      rot: 0,
+      w: free.w,
+    };
+    const placed = await this.artifacts.createPlaced(
+      input.projectId,
+      "effect_image",
+      {
+        payload: { pending: true, ...payloadFields },
+        inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
+        status: "draft",
+        createdBy,
+      },
+      layout,
+      input.clientOpId,
+    );
+
+    let connection: DeskConnection | undefined;
+    for (let i = 0; i < extraRefIds.length; i++) {
+      const from = extraRefIds[i];
+      if (from === placed.artifact.id) continue;
+      const onDesk = snapshot.deskState.objects.some((o) => o.artifact_id === from);
+      if (!onDesk) continue;
+      const conn = await this.desks.createConnection(
+        input.projectId,
+        from,
+        placed.artifact.id,
+        `${input.clientOpId}:spawn-conn:${i}`,
+      );
+      if (!connection) connection = conn;
+    }
+
+    const pending: GenerateFromCanvasResult = {
+      artifact: { id: placed.artifact.id },
+      version: { id: placed.version.id, status: placed.version.status },
+      object: placed.object,
+      connection,
+      status: "pending",
+    };
+    this.recent.set(this.opKey(input.projectId, input.clientOpId), {
+      result: pending,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    return {
+      pending,
+      composedPrompt,
+      userPrompt,
+      referenceFileIds,
+      origin,
+      createdBy,
+      lockKey: deskGenerateLockKey(input.projectId, {
+        pendingArtifactId: placed.artifact.id,
+      }),
       referenceFileId: input.referenceFileId,
       size: input.size,
       model: input.model,
@@ -431,17 +673,28 @@ export class CanvasGenerateService {
   private async prepareNewTarget(
     input: GenerateFromCanvasInput,
     sourceLayout: DeskLayoutObject,
+    existingObjects: DeskLayoutObject[],
     referenceFileIds: string[],
     createdBy: GenerateCreatedBy,
     extraRefIds: string[],
     payloadFields: ReturnType<typeof generationPayloadFields>,
   ) {
+    // 默认「主源右侧」；已被占用则找空位，避免多旁落叠成一堆。
+    const preferred = {
+      x: sourceLayout.x + (sourceLayout.w ?? EFFECT_WIDTH) + PLACE_GAP + EFFECT_WIDTH / 2,
+      y: sourceLayout.y + EFFECT_HEIGHT / 2,
+    };
+    const free = findFreeDeskPlacement({
+      objects: existingObjects,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      preferred,
+    });
     const layout: Omit<DeskLayoutObject, "artifact_id"> = {
       kind: "effect_image",
-      x: Math.round(sourceLayout.x + (sourceLayout.w ?? EFFECT_WIDTH) + PLACE_GAP),
-      y: Math.round(sourceLayout.y),
+      x: free.x,
+      y: free.y,
       rot: 0,
-      w: EFFECT_WIDTH,
+      w: free.w,
     };
     const placed = await this.artifacts.createPlaced(
       input.projectId,
@@ -455,10 +708,11 @@ export class CanvasGenerateService {
       layout,
       input.clientOpId,
     );
+    const sourceArtifactId = input.sourceArtifactId!;
     const connection = await this.linkInputsToEffect(
       input.projectId,
       placed.artifact.id,
-      input.sourceArtifactId,
+      sourceArtifactId,
       extraRefIds,
       input.clientOpId,
     );
@@ -480,6 +734,7 @@ export class CanvasGenerateService {
     payloadFields: ReturnType<typeof generationPayloadFields>,
   ) {
     const targetId = input.targetArtifactId!;
+    const sourceArtifactId = input.sourceArtifactId!;
     const target = snapshot.artifacts.find((a) => a.id === targetId);
     const targetLayout = snapshot.deskState.objects.find((o) => o.artifact_id === targetId);
     if (!target || !targetLayout) throw new HttpError(404, "重试目标不在桌面上");
@@ -490,7 +745,7 @@ export class CanvasGenerateService {
     const connection = await this.linkInputsToEffect(
       input.projectId,
       targetId,
-      input.sourceArtifactId,
+      sourceArtifactId,
       extraRefIds,
       input.clientOpId,
     );

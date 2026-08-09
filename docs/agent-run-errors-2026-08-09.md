@@ -5,7 +5,7 @@
 `data/agent-sessions/8fcfa7ef-…/18df67fa-…/2026-08-08T10-04-35-918Z_….jsonl`  
 **范围会话：** 项目「别墅设计」`8fcfa7ef-33e7-430c-8ec3-ac631a1b8c2a` · 线程 `18df67fa-9891-46ee-80d8-e287e9a04ecb`  
 **对话模型：** `codex2api/grok-4.5-latest`  
-**相关：** [system-prompt](../apps/server/src/agent/system-prompt.ts)、[generate_from_desk](../apps/server/src/agent/tools/generate-from-desk.ts)、[desk-context](../apps/server/src/agent/desk-context.ts)、[ADR 0013](adr/0013-agent-generate-from-desk.md)
+**相关：** [system-prompt](../apps/server/src/agent/system-prompt.ts)、[generate tools](../apps/server/src/agent/tools/generate/)、[desk-context](../apps/server/src/agent/desk-context.ts)、[ADR 0013](adr/0013-agent-generate-from-desk.md)
 
 ---
 

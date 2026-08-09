@@ -41,6 +41,8 @@ export type AgentInnerEvent = {
   args?: unknown;
   result?: unknown;
   isError?: boolean;
+  /** agent_end：是否还有自动续跑 */
+  willRetry?: boolean;
   assistantMessageEvent?: { type?: string; delta?: string };
 };
 
@@ -86,8 +88,14 @@ export function applyAgentInnerEvent(
     return { process: emptyProcess(), chatItems: "upsert", busy: true };
   }
 
-  if (inner.type === "agent_settled") {
+  // agent_settled = 队列排空；agent_end = 本轮模型循环结束（可能还有 willRetry）。
+  // 两者都释放 busy，避免只收到 end、settled 丢失时发送钮永久锁死。
+  if (inner.type === "agent_settled" || inner.type === "agent_end") {
     if (!process) return { process: null, busy: false };
+    // willRetry 时 agent_end 先到，settled 后到；end 时若仍 willRetry 则保持 process 不 finalize
+    if (inner.type === "agent_end" && inner.willRetry) {
+      return { process, busy: true };
+    }
     const failed = process.steps.some((s) => s.kind === "tool" && s.status === "failed");
     process.status = failed ? "failed" : "done";
     process.endedAt = now();

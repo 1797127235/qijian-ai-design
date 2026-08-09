@@ -3,7 +3,9 @@
 **状态：** 调研结论（供决策，非 ADR）  
 **日期：** 2026-08-06  
 **范围：** 从 Agent 架构视角审视砌间设计桌面；对照 2025–2026 主流实践与《深入理解 AI Agent》（李博杰），给出分阶段路线。  
-**相关：** [ADR 0012](adr/0012-agent-analysis-only.md)、[画布工作台设计](canvas-workbench-design.md)、[后端重写设计](implementation/agent-backend-redesign.md)
+**状态：历史审查（2026-08 前后），非现行规格。** 写桌以 [ADR 0013](adr/0013-agent-generate-from-desk.md) 为准。  
+
+**相关：** [ADR 0012](adr/0012-agent-analysis-only.md)（已部分覆盖）、[ADR 0013](adr/0013-agent-generate-from-desk.md)
 
 ---
 

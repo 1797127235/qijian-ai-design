@@ -50,7 +50,7 @@ describe("system prompt", () => {
     expect(prompt).toContain("对话模型（权威事实）：codex2api/grok-4.5-latest");
     expect(prompt).toContain("禁止声称自己是 Cursor");
     expect(prompt).toContain("Auto");
-    expect(prompt).toContain("出图像素由 generate_from_desk");
+    expect(prompt).toContain("出图像素由桌面生图工具");
     expect(prompt).not.toContain("Cursor 里的 Auto");
   });
 
@@ -61,11 +61,14 @@ describe("system prompt", () => {
     expect(prompt).toContain("禁止默默用默认引擎");
   });
 
-  it("teaches JOB_EVENT wake and forbids get_task busy-wait", () => {
+  it("teaches JOB_EVENT wake and generate tools including text-to-desk", () => {
     const prompt = deskSystemPrompt();
     expect(prompt).toContain("[JOB_EVENT]");
-    expect(prompt).toContain("不要循环调用 get_task");
-    expect(prompt).toContain("禁止自动再次 generate_from_desk");
+    expect(prompt).not.toContain("不要循环调用 get_task");
+    expect(prompt).toContain("禁止自动再次调用生图工具");
+    expect(prompt).toContain("replace_on_desk");
+    expect(prompt).toContain("text_to_image_on_desk");
+    expect(prompt).toContain("remove_from_desk");
   });
 
   it("falls back without inventing a model name when config is missing", () => {

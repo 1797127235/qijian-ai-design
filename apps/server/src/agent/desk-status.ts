@@ -3,7 +3,6 @@
  * 既有 import 路径保持可用。
  */
 export {
-  MAX_DESK_STATUS_OBJECTS,
   DESK_GRID_CELL,
   MAX_INSPECT_IMAGES,
   buildDeskStatusBlock,
@@ -14,6 +13,8 @@ export {
   formatFocusBlock,
   resolveDeskReferences,
   assembleDeskContext,
+  buildAssemblyReport,
+  emptyAssemblyReport,
   compileDeskObjects,
   lifecycleOf,
   revisionOf,
@@ -25,6 +26,8 @@ export {
   type InspectImageRef,
   type ReferenceResolution,
   type AssembledDeskContext,
+  type AssemblyReport,
+  type AssemblyMode,
   type DeskObjectView,
 } from "./desk-context.js";
 

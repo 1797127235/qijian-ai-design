@@ -38,6 +38,13 @@ import { deskSystemPrompt } from "./system-prompt.js";
 import { createDeskTools } from "./tools/index.js";
 import type { TraceRegistry } from "./tracing/index.js";
 import { capJson, mapErrorFromUnknown } from "./tracing/index.js";
+import {
+  addUsageSample,
+  emptyUsageAggregate,
+  formatUsageLogLine,
+  isUsageLogEnabled,
+  sampleFromMessageEndEvent,
+} from "./usage-metrics.js";
 
 export interface SessionFactoryDependencies {
   artifacts: ArtifactService;
@@ -166,10 +173,10 @@ export class SessionFactory {
         }
         this.writes.track(projectId, persistToolEvent(this.deps.chats, runId, event), runId);
       }
-      // model.turn：message_start / message_end 粗粒度
-      if (ctx && event && typeof event === "object") {
+      // model.turn + usage/cache 采集（L1 日志 / L2 span+root）
+      if (event && typeof event === "object") {
         const et = (event as { type?: string }).type;
-        if (et === "message_start" && (event as { message?: { role?: string } }).message?.role === "assistant") {
+        if (ctx && et === "message_start" && (event as { message?: { role?: string } }).message?.role === "assistant") {
           if (!ctx.modelSpan) {
             ctx.modelSpan = traces!.startSpan(runId, {
               name: "model.turn",
@@ -180,9 +187,33 @@ export class SessionFactory {
             });
           }
         }
-        if (et === "message_end" && ctx.modelSpan) {
-          traces!.end(ctx.modelSpan, { status: "ok" });
-          ctx.modelSpan = undefined;
+        if (et === "message_end") {
+          const sample = sampleFromMessageEndEvent(event);
+          if (sample) {
+            if (ctx) {
+              ctx.usageTotals = addUsageSample(
+                ctx.usageTotals ?? emptyUsageAggregate(),
+                sample,
+              );
+            }
+            if (isUsageLogEnabled()) {
+              console.info(formatUsageLogLine({
+                projectId,
+                threadId,
+                runId,
+                model: `${this.deps.config.agentProvider}/${this.deps.config.agentModel}`,
+                sample,
+                aggregate: ctx?.usageTotals,
+              }));
+            }
+          }
+          if (ctx?.modelSpan) {
+            traces!.end(ctx.modelSpan, {
+              status: "ok",
+              outputs: sample ? { usage: sample } : undefined,
+            });
+            ctx.modelSpan = undefined;
+          }
         }
       }
       const text = assistantTextFromEvent(event);

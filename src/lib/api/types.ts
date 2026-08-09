@@ -81,6 +81,19 @@ export interface StoredChatMessage {
   text: string;
   attachments: ChatAttachment[];
   createdAt: string;
+  /** job-wake:* 等系统回注；前端不展示为用户气泡 */
+  externalId?: string;
+}
+
+/** 异步 job wake 等内部消息：协议上是 user，UI 必须隐藏。 */
+export function isInternalSystemChatMessage(
+  message: Pick<StoredChatMessage, "text" | "externalId"> | { text: string; externalId?: string | null },
+): boolean {
+  if (typeof message.externalId === "string" && message.externalId.startsWith("job-wake:")) return true;
+  const text = (message.text ?? "").replace(/^\uFEFF/, "").trimStart();
+  return text.includes("[JOB_EVENT]")
+    || text.includes("[系统事件")
+    || text.startsWith("source=agent_job");
 }
 
 // 聊天会话线程

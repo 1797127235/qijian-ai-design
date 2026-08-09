@@ -22,8 +22,9 @@ import {
 import type { DeskConnection, DeskObject } from "./types";
 import { useExitTransition } from "./useExitTransition";
 
-const ZOOM_MIN = 0.05;
-const ZOOM_MAX = 5;
+/** 与服务端 PATCH /desk viewport.zoom 一致（apps/server desk 路由 z.number().min(0.1).max(4)） */
+const ZOOM_MIN = 0.1;
+const ZOOM_MAX = 4;
 
 export type SelectOpts = { panel?: boolean; toggle?: boolean };
 
@@ -137,11 +138,10 @@ export function Desk({
     return () => observer.disconnect();
   }, []);
 
+  // 仅应用服务端/父级视口到本地 view；禁止 onViewportChange，避免 bootstrap 或远端内容刷新触发视口回写。
   useEffect(() => {
     if (initialViewport) {
-      const clamped = { ...initialViewport, zoom: clampZoom(initialViewport.zoom) };
-      setView(clamped);
-      onViewportChange?.(clamped);
+      setView({ ...initialViewport, zoom: clampZoom(initialViewport.zoom) });
     }
   }, [initialViewport?.x, initialViewport?.y, initialViewport?.zoom]);
 

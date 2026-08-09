@@ -11,6 +11,6 @@ export type {
   StoredFile,
   StoredToolCall,
 } from "./api/types";
-export { ApiError } from "./api/types";
+export { ApiError, isInternalSystemChatMessage } from "./api/types";
 export { api } from "./api/http";
 export { connectChat } from "./api/chat-socket";

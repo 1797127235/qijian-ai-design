@@ -1,0 +1,24 @@
+{
+  "id": "GT-15",
+  "title": "Inspect 张数裁切写入 assembly_report.dropped",
+  "desk": "s1",
+  "fileNames": "s1",
+  "selection": ["art-living", "art-mat", "art-fx1", "art-pending", "art-empty"],
+  "userText": "看看选中的图",
+  "expect": {
+    "codes": ["B2", "I4"],
+    "hasBlocks": ["FOCUS"],
+    "inspectIncluded": ["art-living", "art-mat", "art-fx1"],
+    "inspectExcluded": ["art-pending", "art-empty"],
+    "inspectSkipped": [
+      { "artifactId": "art-pending", "reason": "pending" },
+      { "artifactId": "art-empty", "reason": "empty" }
+    ],
+    "reportModesIncludes": ["survey", "focus", "inspect"],
+    "reportDroppedIncludes": [
+      "inspect:art-pending:pending",
+      "inspect:art-empty:empty"
+    ],
+    "note": "s1 仅 3 ready；pending/empty 进 dropped。over_budget 见 desk-status unit（maxInspect=2）。"
+  }
+}

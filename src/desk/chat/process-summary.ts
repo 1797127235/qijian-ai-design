@@ -12,6 +12,7 @@ function hasThinking(process: ProcessSnapshot): boolean {
 
 const TOOL_LABELS: Record<string, string> = {
   generate_from_desk: "桌面生图",
+  replace_on_desk: "原卡替换",
   look_at: "细看物件",
   look_at_desk: "桌面总览",
 };

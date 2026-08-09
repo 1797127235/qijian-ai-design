@@ -1,17 +1,17 @@
 # Agent 桌面上下文：装配规则
 
 **状态：** 目标态装配规格（非实现、非 ADR）  
-**实现进度（2026-08-09）：** Survey L0 / Focus / 选中 Inspect / 基础指代 / caption 已落地。桌面总览为按需工具 `look_at_desk`（`role=desk_overview`，非每轮默认注入）。主动细看 `look_at(ids|alias)` 已落地（toolResult，算 Inspect）。未做：几何「左边」、`relative_hints` 文本（不做）、Compare、装配 `report.dropped`、Inspect 超限裁切夹具。  
+**实现进度（2026-08-10）：** Survey L0 全量目录（无件数硬上限）/ Focus / 选中 Inspect / 基础指代 / caption 已落地。桌面总览为按需工具 `look_at_desk`（`role=desk_overview`，非每轮默认注入）。主动细看 `look_at(ids|alias)` 已落地（toolResult，算 Inspect）。**产品决定不做：** 几何「左边」指代、`relative_hints` 文本、**Compare 对照块**（多选对比用 Focus+Inspect）。**已落地：** `assembly_report`（modes / focusIds / hop1Ids / inspectIds / dropped；默认不进模型）。未做：字符软预算、GT-16 overview 夹具等。  
 **日期：** 2026-08-08  
 **上游：** [agent-desk-perception-goals.md](agent-desk-perception-goals.md)、[agent-desk-world-model-fields.md](agent-desk-world-model-fields.md)  
-**范围：** Survey / Focus / Inspect / Compare 何时触发、装什么、预算多少、如何降级与失败  
+**范围：** Survey / Focus / Inspect 何时触发、装什么、预算多少、如何降级与失败  
 **非范围：** 字段定义（见字段表）；工具 ACI 细节；具体 system prompt 文案
 
 ---
 
 ## 1. 一句话
 
-**每轮上下文 = 固定骨架 + 桌面投影（必有 Survey）+ 按任务叠加的 Focus / Inspect / Compare；超预算按纪律丢细节，不丢当前性与可指认目录。**
+**每轮上下文 = 固定骨架 + 桌面投影（必有 Survey）+ 按任务叠加的 Focus / Inspect；超预算按纪律丢细节，不丢当前性与可指认目录。**
 
 ---
 
@@ -36,7 +36,7 @@
 | `images[]` | `{ index, role, alias?, artifact_id?, bytes_or_ref }` |
 | `focus_ids` | 本轮焦点集合 |
 | `inspect_ids` | 本轮已提供 L3 的 id |
-| `assembly_report` | 启用了哪些模式、降级了什么（供日志/评测，默认不进模型） |
+| `assembly_report` | **已实现** `report`：modes / focusIds / hop1Ids / inspectIds / dropped（日志/评测，默认不进模型） |
 
 规则：装配器**只投影**，不写业务事实；不发明桌面上不存在的 id。
 
@@ -50,10 +50,10 @@
 3. [DESK_CONTEXT ...]         — Survey 文本（必有；失败见 §9）
 4. [FOCUS ...]                — 可选
 5. [INSPECT / image index]    — 可选；与 images[] 对齐
-6. [COMPARE ...]              — 可选
-7. [JOBS / 最近变更]          — 可并入 DESK 或独立短块
-8. [RESOLUTION ...]           — 可选：指代结果或候选
+6. [JOBS / 最近变更]          — 可并入 DESK 或独立短块
+7. [RESOLUTION ...]           — 可选：指代结果或候选
 ```
+（**无** `[COMPARE]`：产品决定不做独立对照块。）
 
 约束：
 
@@ -63,14 +63,14 @@
 
 ---
 
-## 4. 四种模式总表
+## 4. 看见模式总表
 
 | 模式 | 目的 | 默认触发 | 文本 | 视觉 | 可否单独出现 |
 |------|------|----------|------|------|--------------|
 | **Survey** | 不盲、可指认 | **每轮必开** | 全桌 L0 + 关系 + 状态 | 可选 overview | 是（仅 Survey） |
 | **Focus** | 任务相关细节 | 有焦点集合 | 焦点 L2 + 一跳 | 无（除非叠加 Inspect） | 否，叠在 Survey 上 |
 | **Inspect** | 画面判断 / 改图前 | 策略或工具 | 短声明 + image index | L3 像素 | 否，叠在 Survey 上 |
-| **Compare** | 多件对照 | ≥2 焦点且任务像对比 | 对照表 | L2 或 L3 子集 | 否，叠在 Survey 上 |
+| **Compare** | — | **产品决定不做** | — | — | 多选对比 → Focus + Inspect |
 
 模式可叠加：例如 `Survey + Focus + Inspect`。  
 **Survey 永远是底座**；其余是升采样。
@@ -85,8 +85,6 @@
 2. **Resolution**：`resolution.unique === true` 时的 `resolved_ids`  
 3. **Explicit tool**：本轮已请求 look/inspect 的 id  
 4. **Task seed（可选，保守）**：用户文本中显式 UUID / alias（A01）  
-5. **Compare set**：用户或系统指定的对照列表  
-
 不自动把「全桌」或「任意 caption 相似」并入焦点。
 
 ### 5.2 空焦点
@@ -133,7 +131,8 @@
 | 项 | 默认建议 | 条件 |
 |----|----------|------|
 | L1 roles / lineage 简表 | **开**（近默认） | 非 stale；超预算可关 |
-| `relative_hints` 全局 | **关（产品决定不做）** | 不注入 Focus 旁注；空间口语若做则走指代消解，不靠 hints 文本 |
+| `relative_hints` 全局 | **关（产品决定不做）** | 不注入 Focus 旁注 |
+| 几何「左边」等相对选中消解 | **关（产品决定不做）** | 不靠 pose 消解口语方位；用户点选 / A0x / 可区分名称 |
 | `overview_image` | **按需工具，非每轮默认** | 助手调用 `look_at_desk`；失败/未调用则纯文本 Survey |
 | alias 稳定跨轮 | 不要求 | 单轮块内必须自洽 |
 
@@ -149,15 +148,11 @@
 4. overview **不计入** `inspect_ids`。  
 5. 无 ready 像素 / 超时 / 超字节 → 整工具失败，不塞半张图。
 
-### 6.5 Survey 截断
+### 6.5 Survey 目录（无硬编码件数上限）
 
-| 项 | 建议默认 |
-|----|----------|
-| `max_survey_objects` | 40 |
-| 超出 | 先列 **焦点 + 一跳**，再列其余按某种稳定序的前 N，末行 `…共 N 件，其余仅 id 索引` |
-| 索引行 | 可缩为 `alias id type lifecycle` 更短格式 |
-
-截断**不得**丢掉：头、`revision`、选中列表、焦点物件的完整 L0 行。
+- Survey **列出桌上全部物件与编号表**；`objects=N` 与列表一致，**禁止** `max_survey_objects` 一类硬截断。
+- 大桌成本靠：短 L0 行、Focus/Inspect 升采样、`look_at_desk` / `look_at` 按需拉视觉——**不靠砍目录**。
+- 若未来因 token 必须压缩：用 token/字节预算 + **焦点优先 + 短索引兜底**，不得静默丢掉选中/焦点/任意 alias 的可指认性。
 
 ---
 
@@ -186,7 +181,7 @@
 
 ### 7.4 一跳扩展
 
-- 沿 **显式连线** 取父母/子女；可选几何「最近邻 1 个」仅当预算宽裕。  
+- 沿 **显式连线** 取父母/子女；**不做**几何最近邻自动并入焦点。  
 - 扩展物件默认 **L1 + 短 L2（仅 label/lifecycle/intent 一行）**；只有仍在 `focus_ids` 核心集才给满 L2。
 
 ---
@@ -229,25 +224,13 @@
 
 ---
 
-## 9. Compare（对比）
+## 9. Compare（对比）— **不做**
 
-### 9.1 触发（建议启发式，可后调）
+**产品决定不做**独立 `[COMPARE]` 装配模式与 `max_compare_items`。
 
-- `focus_ids.length ≥ 2`，且  
-- 用户话含对比意图（「哪个更…」「对比」「上一版还是」）或显式 compare 列表  
-- 或 同一 lineage 下多 `generated_variant` 被同时选中  
-
-### 9.2 必装内容
-
-- 对照表：每行 alias、label、lifecycle、intent 摘要、caption 一行（标 source）  
-- 视觉：优先各 1 张 L3；预算不够则 **全员 L2 无图** 或 **只 L3 两张最优先**  
-
-### 9.3 上限
-
-| 项 | 建议默认 |
-|----|----------|
-| `max_compare_items` | 4 |
-| 超出 | 只对比前 4，其余列 id |
+- 用户多选多张、话术像「对比 / 哪个更…」时：**不**额外生成对照表。  
+- **现行路径：** 多 id 进入 Focus core + 预算内 Inspect；由模型基于 Focus/Inspect 自行比较。  
+- 历史规格中的对照表触发/字段仅作归档理解，**不作为实现目标**。
 
 ---
 
@@ -257,7 +240,7 @@
 
 | 预算 | 建议默认（目标量级，实现可配置） | 计量 |
 |------|----------------------------------|------|
-| `max_desk_text_tokens` | 3k–6k | DESK+FOCUS+COMPARE 文本 |
+| `max_desk_text_tokens` | 3k–6k | DESK+FOCUS 文本（可选软预算；无件数硬上限） |
 | `max_images` | 1 overview + 4 inspect | 张数 |
 | `max_image_bytes` | 按现有 agent 图像加载上限对齐 | 解码前/后与实现一致即可 |
 
@@ -267,9 +250,9 @@
 
 触顶时**按序丢弃**（先丢的在前）：
 
-1. Compare 的 L3 → 改为 L2 表  
-2. 非焦点 hop=1 的 L2 visual  
-3. 非焦点 L1 relative_hints / cluster  
+1. 非焦点 hop=1 的 L2 visual  
+2. 非焦点细节（caption 等）  
+3. （已取消）Compare / relative_hints — 产品不做  
 4. **overview_image**  
 5. 非焦点 L1 roles / lineage 详情（保留连线表精简版）  
 6. Survey 非焦点物件改为超短索引行  
@@ -278,8 +261,18 @@
 
 ### 10.2 降级必须可观测
 
-`assembly_report.dropped = ["overview", "inspect:A05", …]`  
-评测与日志使用；默认不注入模型（避免噪音）。若丢了 Inspect，文本中对人说清「未附原图」。
+`AssembledDeskContext.report`（`buildAssemblyReport`）：
+
+```text
+modes: survey | resolution? | focus? | inspect?
+focusIds / hop1Ids / inspectIds
+dropped:
+  - snapshot_unavailable
+  - focus_hop:{artifactId}:over_budget
+  - inspect:{artifactId}:{pending|empty|failed|over_budget|…}
+```
+
+评测与日志使用；**默认不注入模型**。若丢了 Inspect，文本 `[INSPECT]` 仍写「未附原图」。
 
 ---
 
@@ -330,12 +323,13 @@ system 纪律应包含：以本轮 `current=true` 的 DESK 为准。
 | 每轮 Survey L0 | 已落地：alias、可区分 label、lifecycle、grid、连线、revision 头 |
 | Focus L2 | 已落地：intent、一跳、caption（cache hit） |
 | Inspect | 选中自动 + `image_N` index；pending 不进 L3 |
-| Compare | 无 |
+| Compare | **不做**（多选 → Focus+Inspect） |
 | overview | **按需** `look_at_desk`（desk_overview）；非每轮默认 |
 | revision 头 | 已有 |
-| 预算降级 | Survey 截断有；`report.dropped` / Inspect 超限裁切夹具未齐 |
+| 预算降级 | Survey **无**件数硬截断（全量 L0）；`report.dropped` **已有**；字符软预算未做 |
+| 几何「左边」指代 | **不做**（与 `relative_hints` 同） |
 
-演进方向（余量）：指代权威（GT-09）、Inspect 预算与 report、Compare；几何「左边」可选；不做 `relative_hints` 文本。
+演进方向（余量）：指代权威（GT-09）、字符软预算、GT-16。**不做：** 几何方位消解、`relative_hints`、Compare 对照块。
 
 ---
 
@@ -356,17 +350,17 @@ system 纪律应包含：以本轮 `current=true` 的 DESK 为准。
 ## 16. 配置面（实现时可做成常量/配置）
 
 ```text
-max_survey_objects = 40
+// Survey：全桌目录，无 max_survey_objects 硬上限
 max_focus_ids = 8
 max_focus_hop = 1
 max_hop_extras = 12
 max_inspect_images = 4
-max_compare_items = 4
+// max_compare_items — 不做 Compare
 overview_mode = on_demand_tool   // look_at_desk；非 per_turn_survey
 // overview_enabled = true       // 旧「每轮优先尝试」已弃用
 auto_inspect_selection = true
 auto_inspect_resolved_on_edit_intent = true  // 启发式，可关
-max_desk_text_tokens = 4096
+// max_desk_text_tokens：可选预算钩子；触发时焦点优先+短索引，禁止砍可指认目录
 ```
 
 ---
@@ -381,4 +375,4 @@ max_desk_text_tokens = 4096
 
 ## 18. 一句话
 
-**装配 = 每轮强制 Survey 底座 + 焦点驱动的 Focus/Inspect/Compare 升采样；预算先砍总览与非焦点细节，永不砍当前 revision 与可指认目录；没进 Inspect 的图就不能装成「看过」。**
+**装配 = 每轮强制 Survey 底座 + 焦点驱动的 Focus/Inspect 升采样；预算先砍总览与非焦点细节，永不砍当前 revision 与可指认目录；没进 Inspect 的图就不能装成「看过」。无独立 Compare 块。**

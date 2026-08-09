@@ -11,6 +11,7 @@ import { loadAttachmentMap, messageReferencesFile } from "./chat/attachment-map.
 import {
   formatChatContext,
   runStatusMessage,
+  isInternalSystemChatMessage,
   toMessageDto,
   toRunDto,
   toThreadDto,
@@ -34,7 +35,7 @@ export type {
   ChatToolCallDto,
   ChatToolCallStatus,
 } from "./chat/types.js";
-export { formatChatContext, runStatusMessage } from "./chat/types.js";
+export { formatChatContext, isInternalSystemChatMessage, runStatusMessage } from "./chat/types.js";
 
 /**
  * 聊天服务：thread/message/run/tool_call 的 CRUD 与协作语义。
@@ -274,11 +275,15 @@ export class ChatService {
         };
       });
       const now = new Date();
+      // job-wake 等系统回注不要抢线程标题
+      const isSystem = isInternalSystemChatMessage({ text: trimmed, externalId });
       const titleSource = trimmed || attachments[0]?.originalFilename || "新对话";
       await tx
         .update(chatThreads)
         .set({
-          title: thread.title === "新对话" ? titleSource.replace(/\s+/g, " ").slice(0, 28) : thread.title,
+          title: !isSystem && thread.title === "新对话"
+            ? titleSource.replace(/\s+/g, " ").slice(0, 28)
+            : thread.title,
           updatedAt: now,
         })
         .where(eq(chatThreads.id, thread.id));

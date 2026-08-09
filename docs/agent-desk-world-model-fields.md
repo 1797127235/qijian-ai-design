@@ -1,11 +1,11 @@
 # Agent 桌面世界模型：字段表
 
 **状态：** 目标态字段规格（非实现、非 ADR）  
-**实现进度（2026-08-08）：** 字段中 L0 Survey、Focus intent/caption、Inspect 已用；`overview_image` 由按需工具 `look_at_desk` 提供（非每轮装配默认）。`relative_hints` 文本产品决定**不做**。  
+**实现进度（2026-08-10）：** 字段中 L0 Survey、Focus intent/caption、Inspect 已用；`overview_image` 由按需工具 `look_at_desk` 提供（非每轮装配默认）。**产品决定不做：** `relative_hints` 文本；几何「左边」等相对选中指代消解；独立 **Compare** 装配块。  
 **日期：** 2026-08-08  
 **上游：** [agent-desk-perception-goals.md](agent-desk-perception-goals.md)  
 **范围：** 桌面感知读模型的字段定义——来源、权威、更新、失效、进哪一层上下文  
-**非范围：** Survey/Focus/Inspect/Compare 的装配预算与降级细则（见 [agent-desk-context-assembly.md](agent-desk-context-assembly.md)）；工具 API 形状；具体 prompt 文案
+**非范围：** Survey/Focus/Inspect 的装配预算与降级细则（见 [agent-desk-context-assembly.md](agent-desk-context-assembly.md)）；工具 API 形状；具体 prompt 文案
 
 ---
 
@@ -177,7 +177,7 @@ unknown
 | `pose.rot` | number | system | absolute | fact | rotate | — | 总览/几何用 |
 | `pose.w` | number? | system | absolute | fact | resize | — | 几何用 |
 | `grid` | `{gx, gy}` | geometry | derived | ephemeral | 由 pose 与格子尺寸计算 | pose 变 | L0 文本 `@(-2,1)` |
-| `relative_hints` | `Derived<string>[]` | geometry | derived | ephemeral | 相对焦点：左/右/上/下/近（**产品决定不做文本注入**；若做空间指代则走消解 resolved_ids） | pose/selection 变 | （不做） |
+| `relative_hints` | `Derived<string>[]` | geometry | derived | ephemeral | 相对焦点：左/右/上/下/近（**产品决定不做**） | pose/selection 变 | （不做） |
 | `edges_in` | `{connection_id, from}[]` | system | absolute | fact | 连线 CRUD | — | L0/L1 |
 | `edges_out` | `{connection_id, to}[]` | system | absolute | fact | 连线 CRUD | — | L0/L1 |
 | `lineage` | 见下 | system/generation | derived | ephemeral | 由 connections + 生成记录归纳 | 图变 | L1 |
@@ -258,9 +258,10 @@ children: artifact_id[]    // 出边 to
 2. `display_name` 唯一命中  
 3. `fallback_name` / `label` 唯一命中  
 4. `standing_roles` / `task_roles` + 唯一  
-5. 空间关系（「左边」）相对焦点唯一  
-6. 连线血缘（「上一版」「源图」）唯一  
-7. vision caption 相似 → **仅候选，不静默**  
+5. 连线血缘（「上一版」「源图」）唯一  
+6. vision caption 相似 → **仅候选，不静默**  
+
+**不做：** 空间关系（「左边 / 右边」）相对焦点的 harness 消解（与 `relative_hints` 同，产品决定）。  
 
 ---
 
@@ -357,7 +358,7 @@ alias | artifact_id | artifact_type | label | lifecycle | grid | edges_in/out �
 
 ## 12. 下游文档
 
-1. **装配规则**：四种模式触发、token/图张数/字节预算、失败降级 → [agent-desk-context-assembly.md](agent-desk-context-assembly.md)  
+1. **装配规则**：Survey/Focus/Inspect 触发、token/图张数/字节预算、失败降级 → [agent-desk-context-assembly.md](agent-desk-context-assembly.md)  
 2. **黄金任务**：字段级断言（label 唯一、连线可见、stale 不采信、假 Inspect 禁止）→ [agent-desk-golden-tasks.md](agent-desk-golden-tasks.md)  
 3. **实现切片**：编译器模块边界、与 `desk-status.ts` 演进关系  
 

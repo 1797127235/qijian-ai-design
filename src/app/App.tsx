@@ -13,6 +13,7 @@ import { validateCanvasImageFile } from "../desk/attachments";
 import { mapConnections, mapSnapshot } from "../desk/map";
 import type { DeskConnection, DeskObject } from "../desk/types";
 import { DeskWorkbench } from "./DeskWorkbench";
+import { mergeDeskSnapshot } from "./mergeDeskSnapshot";
 import { useProjects } from "./useProjects";
 
 type AppView = { mode: "home" } | { mode: "desk"; projectId: string };
@@ -34,8 +35,14 @@ export function App() {
   const [snapshot, setSnapshot] = useState<DeskSnapshot>();
   const [objects, setObjects] = useState<DeskObject[]>([]);
   const [connections, setConnections] = useState<DeskConnection[]>([]);
-  /** Home 创建时带入的首条文案/附件，交给 ChatPanel 后清空。 */
-  const [composerHandoff, setComposerHandoff] = useState<{ text?: string; files?: File[] }>();
+  /** Home 创建时带入的首条文案/附件/落桌选中，交给 ChatPanel 后清空。id 用于 StrictMode 下去重。 */
+  const [composerHandoff, setComposerHandoff] = useState<{
+    id: string;
+    text?: string;
+    files?: File[];
+    selectedArtifactIds?: string[];
+    autoSend?: boolean;
+  }>();
   const activeProjectRef = useRef<string>();
   /** 丢弃过期 refresh：快速切项目时旧请求不得覆盖新桌面。 */
   const refreshSequence = useRef(0);
@@ -44,11 +51,15 @@ export function App() {
   const skipHistoryRef = useRef(false);
   const bootstrappedRef = useRef(false);
 
+  /**
+   * 拉取 desk 快照。同项目再次刷新时保留本 tab 已加载的 viewport，
+   * 避免 WS object_changed / 自回声把镜头拽走或触发视口回写。
+   */
   const refreshDesk = useCallback(async (projectId: string) => {
     const sequence = ++refreshSequence.current;
     const snap = await api.desk(projectId);
     if (activeProjectRef.current === projectId && refreshSequence.current === sequence) {
-      setSnapshot(snap);
+      setSnapshot((cur) => mergeDeskSnapshot(snap, cur));
       setObjects(mapSnapshot(snap));
       setConnections(mapConnections(snap));
     }
@@ -71,11 +82,29 @@ export function App() {
   }, []);
 
   const openProject = useCallback(
-    async (nextProjectId: string, options?: { initialText?: string; initialFiles?: File[]; history?: "push" | "replace" | "none" }) => {
+    async (nextProjectId: string, options?: {
+      initialText?: string;
+      initialFiles?: File[];
+      selectedArtifactIds?: string[];
+      autoSend?: boolean;
+      history?: "push" | "replace" | "none";
+    }) => {
       const historyMode = options?.history ?? "push";
       activeProjectRef.current = nextProjectId;
-      setComposerHandoff(options?.initialText || options?.initialFiles?.length
-        ? { text: options.initialText, files: options.initialFiles }
+      const hasHandoff = Boolean(
+        options?.initialText
+        || options?.initialFiles?.length
+        || options?.selectedArtifactIds?.length
+        || options?.autoSend,
+      );
+      setComposerHandoff(hasHandoff
+        ? {
+            id: crypto.randomUUID(),
+            text: options?.initialText,
+            files: options?.initialFiles,
+            selectedArtifactIds: options?.selectedArtifactIds,
+            autoSend: options?.autoSend,
+          }
         : undefined);
       setSnapshot(undefined);
       setObjects([]);
@@ -139,6 +168,7 @@ export function App() {
   /**
    * 新建项目：图片直接落桌为首个 canvas_image；
    * PDF 等非图附件走对话 handoff（首条消息附件）。
+   * 首页提交（文案和/或附件）进入桌面后自动展开助手并发出首条任务。
    */
   const createProject = useCallback(
     async (input: { name: string; files?: File[]; prompt?: string }) => {
@@ -146,21 +176,32 @@ export function App() {
       const files = input.files ?? [];
       const images = files.filter((file) => validateCanvasImageFile(file) === undefined);
       const others = files.filter((file) => validateCanvasImageFile(file) !== undefined);
-      await openProject(project.id, { initialText: input.prompt, initialFiles: others });
+      const placedIds: string[] = [];
       for (const [index, file] of images.entries()) {
         try {
           const stored = await api.uploadFile(project.id, file);
-          await api.createArtifact(project.id, {
+          const created = await api.createArtifact(project.id, {
             artifactType: "canvas_image",
             payload: { file_id: stored.id },
             inputRefs: [{ file_id: stored.id }],
             clientOpId: crypto.randomUUID(),
             layout: { kind: "canvas_image", x: 60 + index * 32, y: 60 + index * 32, rot: 0 },
           });
+          if (created.artifact?.id) placedIds.push(created.artifact.id);
         } catch {
           // 单个文件失败不阻断进入项目；用户可稍后拖放补上
         }
       }
+      const prompt = input.prompt?.trim();
+      const kickoffText = prompt
+        || (placedIds.length > 0 || others.length > 0 ? "参照桌面上的资料，开始为我设计" : undefined);
+      const shouldKickoff = Boolean(kickoffText || others.length > 0);
+      await openProject(project.id, {
+        initialText: kickoffText,
+        initialFiles: others,
+        selectedArtifactIds: placedIds.length > 0 ? placedIds : undefined,
+        autoSend: shouldKickoff,
+      });
       if (images.length > 0) await refreshDesk(project.id).catch(() => undefined);
     },
     [openProject, refreshDesk],

@@ -15,6 +15,16 @@ const DEFAULT_CHAT_WIDTH = 506;
 const MIN_CHAT_WIDTH = 360;
 const MAX_CHAT_WIDTH = 720;
 
+/**
+ * StrictMode 二次挂载：同一 handoff 只注入草稿一次；
+ * autoSend 意图与 seed 选中放模块级，remount 后仍能发出。
+ */
+const appliedHandoffIds = new Set<string>();
+const pendingAutoSendByHandoff = new Map<string, {
+  text: string;
+  seedSelectedIds: string[];
+}>();
+
 function storedChatWidth() {
   const stored = window.localStorage.getItem("qijian.chat.width");
   if (stored === null) return DEFAULT_CHAT_WIDTH;
@@ -40,8 +50,11 @@ export function ChatPanel({
   threads,
   activeThreadId,
   threadChanging,
+  handoffId,
   initialText,
   initialFiles,
+  autoSend = false,
+  seedSelectedArtifactIds,
   submissionOutcome,
   onSend,
   onStop,
@@ -61,8 +74,13 @@ export function ChatPanel({
   threads: ChatThread[];
   activeThreadId?: string;
   threadChanging: boolean;
+  handoffId?: string;
   initialText?: string;
   initialFiles?: File[];
+  /** 首页创建进入桌面：自动展开助手并发出首条任务 */
+  autoSend?: boolean;
+  /** 落桌图 id（桌面 snapshot 尚未映射前也能随首条消息带上选中） */
+  seedSelectedArtifactIds?: string[];
   submissionOutcome?: { clientMessageId: string; status: "acknowledged" | "rejected" };
   onSend: (input: {
     text: string;
@@ -95,19 +113,43 @@ export function ChatPanel({
   const panelWidthRef = useRef(panelWidth);
   const resizing = useRef<{ startX: number; startWidth: number }>();
   const submittedRef = useRef<{ clientMessageId: string; text: string; localIds: string[] }>();
+  const seedSelectedRef = useRef<string[]>([]);
+  const activeHandoffIdRef = useRef<string>();
   const [pendingClientMessageId, setPendingClientMessageId] = useState<string>();
+  const [autoSendArmed, setAutoSendArmed] = useState(false);
   const attachments = useAttachmentDraft(projectId);
   const draftLocked = Boolean(pendingClientMessageId);
   const attachmentsReady = attachments.items.every((item) => item.status === "uploaded");
   const hasContent = Boolean(input.trim()) || attachments.items.some((item) => item.status === "uploaded");
   const sendDisabled = busy || draftLocked || connection !== "connected" || !attachmentsReady;
 
+  // 首页 handoff：草稿注入去重；autoSend 状态进模块 Map，remount 后恢复 armed。
   useEffect(() => {
-    if (!initialText && !initialFiles?.length) return;
-    if (initialText) setInput(initialText);
+    if (!handoffId) return;
+    activeHandoffIdRef.current = handoffId;
+    const pending = pendingAutoSendByHandoff.get(handoffId);
+    if (pending) {
+      setInput((cur) => cur || pending.text);
+      seedSelectedRef.current = pending.seedSelectedIds;
+      setCollapsed(false);
+      setAutoSendArmed(true);
+    }
+    if (appliedHandoffIds.has(handoffId)) return;
+    if (!initialText && !initialFiles?.length && !autoSend && !seedSelectedArtifactIds?.length) return;
+    appliedHandoffIds.add(handoffId);
+    const text = initialText ?? "";
+    const seeds = seedSelectedArtifactIds?.length ? [...seedSelectedArtifactIds] : [];
+    if (text) setInput(text);
     if (initialFiles?.length) attachments.addFiles(initialFiles);
+    if (seeds.length) seedSelectedRef.current = seeds;
+    if (autoSend) {
+      pendingAutoSendByHandoff.set(handoffId, { text, seedSelectedIds: seeds });
+      setCollapsed(false);
+      setAutoSendArmed(true);
+      return;
+    }
     onInitialFilesConsumed?.();
-  }, [initialText, initialFiles, attachments.addFiles, onInitialFilesConsumed]);
+  }, [handoffId, initialText, initialFiles, autoSend, seedSelectedArtifactIds, attachments.addFiles, onInitialFilesConsumed]);
 
   useEffect(() => onDraftStateChange?.(attachments.items.length > 0), [attachments.items.length, onDraftStateChange]);
 
@@ -180,18 +222,39 @@ export function ChatPanel({
       && retry.localIds.every((id, index) => id === localIds[index])
       ? retry.clientMessageId
       : globalThis.crypto?.randomUUID?.() ?? `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    // 选中只在发送时带给后端；chip 本身是纯前端即时反馈
-    const selectedArtifactIds = selectedObjects.map((o) => o.id).slice(0, MAX_SELECTED_ARTIFACTS);
+    // 选中：桌面 chip 优先；首页 handoff 的落桌图 id 作 seed（snapshot 尚未映射时仍能指认）
+    const fromUi = selectedObjects.map((o) => o.id);
+    const fromSeed = seedSelectedRef.current;
+    const selectedArtifactIds = (fromUi.length > 0 ? fromUi : fromSeed).slice(0, MAX_SELECTED_ARTIFACTS);
     if (!onSend({
       text,
       attachmentIds: ready.map((item) => item.stored!.id),
       clientMessageId,
       ...(selectedArtifactIds.length > 0 ? { selectedArtifactIds } : {}),
     })) return;
+    const hid = activeHandoffIdRef.current;
+    if (hid && pendingAutoSendByHandoff.has(hid)) {
+      pendingAutoSendByHandoff.delete(hid);
+      setAutoSendArmed(false);
+      seedSelectedRef.current = [];
+      onInitialFilesConsumed?.();
+    }
     submittedRef.current = { clientMessageId, text, localIds };
     setPendingClientMessageId(clientMessageId);
     stickToBottom.current = true;
   };
+
+  // 首页创建 handoff：连接就绪且草稿齐后自动发出首条任务
+  useEffect(() => {
+    if (!autoSendArmed) return;
+    const hid = activeHandoffIdRef.current;
+    if (!hid || !pendingAutoSendByHandoff.has(hid)) return;
+    if (sendDisabled) return;
+    if (!input.trim() && !attachments.items.some((item) => item.status === "uploaded")) return;
+    if (attachments.items.some((item) => item.status === "queued" || item.status === "uploading" || item.status === "error")) return;
+    submit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- readiness-driven; submit closes over latest onSend/selection
+  }, [autoSendArmed, sendDisabled, input, attachments.items, connection, busy]);
 
   const discardDraftBefore = (action: () => void) => {
     if (attachments.items.length > 0 && !window.confirm("当前消息还有未发送的附件。离开后将丢弃这些附件，是否继续？")) return;

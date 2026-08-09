@@ -6,6 +6,7 @@
  *  - prepare 失败 → 立刻 finalize failed 并 rethrow（让 tool 拿到 fail）
  *  - work 失败/取消 → finalize failed/cancelled（runner 自己处理，tool 不知情）
  *  - 每个 job 一个 AbortController，cancelJob/cancelProject 走这里
+ *  - maxActive：同 project 串行化 create + 计数，避免并发帽竞态
  */
 import type { EventSink } from "../events.js";
 import type { TraceRegistry } from "../tracing/index.js";
@@ -14,6 +15,21 @@ import type { JobWakeService } from "./job-wake.js";
 import { acceptedDetails, acceptedToolText } from "./protocol.js";
 import type { AgentJobStore } from "./store.js";
 import type { AcceptedJobDetails, AgentJobDto, AgentJobStatus } from "./types.js";
+
+/** 桌面生图并发帽触发（与 tool 层 reason 对齐）。 */
+export class DeskGenerateCapError extends Error {
+  readonly reason = "desk_generate_concurrency_cap" as const;
+  constructor(
+    readonly active: number,
+    readonly max: number,
+  ) {
+    super(
+      `当前项目已有 ${active} 个桌面生图任务进行中（上限 ${max}）。`
+      + `请等完成后再开；全屋/多空间请分批（一次一张或少量），不要一次全部提交。`,
+    );
+    this.name = "DeskGenerateCapError";
+  }
+}
 
 export interface RunAsyncJobOptions {
   projectId: string;
@@ -24,6 +40,11 @@ export interface RunAsyncJobOptions {
   input: unknown;
   /** H7：tool_call_id 写入 job span metadata，parent 始终是 root */
   toolCallId?: string;
+  /**
+   * 创建前强制：该 project 上同 kind 的 active(accepted|running) < max。
+   * 与同 project 的 create 串行，避免双 tool 同时通过预检。
+   */
+  maxActive?: { kind: string; max: number };
   /** 同步世界副作用（pending 卡等），必须在 return accepted 前完成。 */
   prepare: (jobId: string) => Promise<{ artifactId?: string }>;
   /** 后台工作；勿在 tool execute 里 await。 */
@@ -36,6 +57,8 @@ export interface RunAsyncJobOptions {
 
 export class AgentJobRunner {
   private readonly controllers = new Map<string, AbortController>();
+  /** projectId → 上一段 create 链尾，串行化 cap 检查 + insert */
+  private readonly createTail = new Map<string, Promise<unknown>>();
   /** 方案 3：终态 wake（index 接线后注入；测试可省略） */
   wake?: JobWakeService;
 
@@ -44,6 +67,24 @@ export class AgentJobRunner {
     private readonly emit: EventSink,
     private readonly traces?: TraceRegistry,
   ) {}
+
+  /** 同 project 串行执行 cap 检查 + create，避免双 tool 同时通过预检。 */
+  private async withProjectCreateGate<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.createTail.get(projectId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = prev.then(() => gate, () => gate);
+    this.createTail.set(projectId, chain);
+    await prev.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.createTail.get(projectId) === chain) this.createTail.delete(projectId);
+    }
+  }
 
   /** 启动时把上次进程崩溃遗留的 accepted/running job 全部标 interrupted（防幽灵任务）。 */
   async interruptStaleOnBoot() {
@@ -72,16 +113,27 @@ export class AgentJobRunner {
     details: AcceptedJobDetails;
   }> {
     const ctx = this.traces?.get(opts.runId);
-    const job = await this.store.create({
-      projectId: opts.projectId,
-      threadId: opts.threadId,
-      runId: opts.runId,
-      kind: opts.kind,
-      input: opts.input,
-      traceRootId: ctx?.smithRunId,
-      // A2'：job 挂 root，parent 记 root id；tool_call_id 仅 metadata
-      traceParentId: ctx?.smithRunId,
-    });
+    const createJob = async () => {
+      if (opts.maxActive) {
+        const active = await this.store.countActiveByKind(opts.projectId, opts.maxActive.kind);
+        if (active >= opts.maxActive.max) {
+          throw new DeskGenerateCapError(active, opts.maxActive.max);
+        }
+      }
+      return this.store.create({
+        projectId: opts.projectId,
+        threadId: opts.threadId,
+        runId: opts.runId,
+        kind: opts.kind,
+        input: opts.input,
+        traceRootId: ctx?.smithRunId,
+        // A2'：job 挂 root，parent 记 root id；tool_call_id 仅 metadata
+        traceParentId: ctx?.smithRunId,
+      });
+    };
+    const job = opts.maxActive
+      ? await this.withProjectCreateGate(opts.projectId, createJob)
+      : await createJob();
     if (opts.runId) this.traces?.trackJob(opts.runId, job.id);
 
     let artifactId: string | undefined;

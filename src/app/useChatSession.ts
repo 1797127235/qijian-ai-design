@@ -7,7 +7,14 @@
  *  - 不持有 desk snapshot，只在 object_changed 时 refreshDesk
  */
 import { useCallback, useRef, useState, type MutableRefObject } from "react";
-import { api, connectChat, type ChatConnectionStatus, type ChatThread, type DeskSnapshot } from "../lib/api";
+import {
+  api,
+  connectChat,
+  isInternalSystemChatMessage,
+  type ChatConnectionStatus,
+  type ChatThread,
+  type DeskSnapshot,
+} from "../lib/api";
 import type { ChatItem, ProcessSnapshot } from "../desk/types";
 import { nextId } from "./ids";
 import {
@@ -20,6 +27,25 @@ import {
   type AgentInnerEvent,
   type ProcessApplyResult,
 } from "./chatProcess";
+
+function toVisibleChatItems(
+  messages: Array<{
+    id: string;
+    role: "user" | "assistant";
+    text: string;
+    attachments?: import("../lib/api").ChatAttachment[];
+    externalId?: string;
+  }>,
+): ChatItem[] {
+  return messages
+    .filter((message) => !isInternalSystemChatMessage(message))
+    .map((message) => ({
+      id: message.id,
+      role: message.role === "assistant" ? ("agent" as const) : ("user" as const),
+      text: message.text,
+      attachments: message.attachments,
+    }));
+}
 
 export function useChatSession(options: {
   activeProjectRef: MutableRefObject<string | undefined>;
@@ -67,6 +93,38 @@ export function useChatSession(options: {
   // 每次 chatThreads 变化同步到 ref，让回调可以从 ref 读取最新值，无需把它放进 deps
   chatThreadsRef.current = chatThreads;
 
+  const MAX_BUSY_RETRIES = 20;
+  const BUSY_RETRY_MS = 1500;
+  /** 本地 busy 兜底：agent_settled 丢失时避免发送按钮永久停在「停止」 */
+  const BUSY_WATCHDOG_MS = 3 * 60 * 1000;
+  const busyWatchdogRef = useRef<number>();
+
+  const clearBusyWatchdog = useCallback(() => {
+    window.clearTimeout(busyWatchdogRef.current);
+    busyWatchdogRef.current = undefined;
+  }, []);
+
+  const armBusyWatchdog = useCallback(() => {
+    window.clearTimeout(busyWatchdogRef.current);
+    busyWatchdogRef.current = window.setTimeout(() => {
+      if (!busyRef.current) return;
+      busyRef.current = false;
+      setBusy(false);
+      streamBuf.current = "";
+      setStreaming(undefined);
+      if (processRef.current) {
+        setChatItems((cur) => settleProcessError(cur, processRef.current, "任务状态同步超时，已解锁输入；可重试发送或点停止后继续。").items);
+        processRef.current = null;
+      } else {
+        setChatItems((cur) => [...cur, {
+          id: nextId(),
+          role: "agent",
+          text: "任务状态同步超时，已解锁输入；可重试发送。",
+        }]);
+      }
+    }, BUSY_WATCHDOG_MS);
+  }, []);
+
   /**
    * 纯函数结果 → React state。
    * finalize 时 processRef 置 null：下一轮 agent_start 从 emptyProcess 起，不污染已落历史的卡。
@@ -81,7 +139,12 @@ export function useChatSession(options: {
       streamBuf.current = "";
       setStreaming(undefined);
     }
-    if (result.busy !== undefined) setBusy(result.busy);
+    if (result.busy !== undefined) {
+      busyRef.current = result.busy;
+      setBusy(result.busy);
+      if (result.busy) armBusyWatchdog();
+      else clearBusyWatchdog();
+    }
     if (result.chatItems === "upsert" && result.process) {
       setChatItems((cur) => upsertProcessItem(cur, {
         ...result.process!,
@@ -93,11 +156,14 @@ export function useChatSession(options: {
     } else if (result.chatItems === "clear") {
       setChatItems((cur) => cur.filter((item) => item.id !== PROCESS_ITEM_ID));
     }
-  }, []);
+  }, [armBusyWatchdog, clearBusyWatchdog]);
 
-  const MAX_BUSY_RETRIES = 15;
-
-  /** 上一轮仍在执行时的安静重试：每 1.5s 看一次，忙则继续等，封顶后放弃 */
+  /**
+   * 上一轮服务端仍在跑（ATTACHMENT_BUSY）时的安静重试。
+   * 关键：不得用本地 busy 闸住重试——sendChat 在发出前会 setBusy(true)，
+   * 若此处再等 !busy，会永远空转直到封顶（表现为「再发就卡死」）。
+   * 服务端 running 才是真相；重试只负责再抛 prompt，幂等靠 externalId。
+   */
   const scheduleBusyRetry = (input: {
     text: string;
     attachmentIds: string[];
@@ -112,19 +178,21 @@ export function useChatSession(options: {
       pendingPromptIdRef.current = undefined;
       lastPromptRef.current = undefined;
       setSubmissionOutcome({ clientMessageId: input.clientMessageId, status: "rejected" });
+      busyRef.current = false;
       setBusy(false);
+      clearBusyWatchdog();
       setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: "上一轮任务长时间未结束，消息未发送，请稍后再试。" }]);
       return;
     }
     const timer = window.setTimeout(() => {
-      // 用户已切项目/线程，或该消息已被其他路径了结
       if (pendingPromptIdRef.current !== input.clientMessageId) return;
-      if (busyRef.current) {
+      const threadId = activeChatThreadRef.current;
+      if (!threadId) {
         scheduleBusyRetry(input);
         return;
       }
-      const threadId = activeChatThreadRef.current;
-      if (!threadId || !chatRef.current?.prompt(
+      // 本地 busy 可能仍为 true（上一轮 UI 状态）；仍尝试发送，服务端会再回 BUSY 或 ack
+      if (!chatRef.current?.prompt(
         input.text,
         threadId,
         input.clientMessageId,
@@ -134,8 +202,11 @@ export function useChatSession(options: {
         scheduleBusyRetry(input);
         return;
       }
+      // 已抛出；保持 draftLocked（pendingPromptId），busy 仅表示「在等本条被接受」
+      busyRef.current = true;
       setBusy(true);
-    }, 1500);
+      armBusyWatchdog();
+    }, BUSY_RETRY_MS);
     busyRetryRef.current = { clientMessageId: input.clientMessageId, attempts, timer };
   };
 
@@ -148,14 +219,16 @@ export function useChatSession(options: {
     setStreaming(undefined);
     streamBuf.current = "";
     processRef.current = null;
+    busyRef.current = false;
     setBusy(false);
+    clearBusyWatchdog();
     setSubmissionOutcome(undefined);
     pendingPromptIdRef.current = undefined;
     lastPromptRef.current = undefined;
     window.clearTimeout(busyRetryRef.current?.timer);
     busyRetryRef.current = undefined;
     threadLoadSequence.current += 1;
-  }, []);
+  }, [clearBusyWatchdog]);
 
   const closeChat = useCallback(() => {
     chatRef.current?.close();
@@ -179,6 +252,8 @@ export function useChatSession(options: {
       }
       if (event.type === "chat_message") {
         if (event.message.threadId !== activeChatThreadRef.current) return;
+        // job wake 等系统回注：协议 role=user 喂模型，UI 不展示、不抢线程标题
+        if (isInternalSystemChatMessage(event.message)) return;
         if (event.message.role === "assistant") {
           streamBuf.current = "";
           setStreaming(undefined);
@@ -260,7 +335,9 @@ export function useChatSession(options: {
         setStreaming(undefined);
         setChatItems((cur) => settleProcessError(cur, processRef.current, event.error.message).items);
         processRef.current = null;
+        busyRef.current = false;
         setBusy(false);
+        clearBusyWatchdog();
       }
     }, (status) => {
       if (status !== "connected" && pendingPromptIdRef.current) {
@@ -270,12 +347,14 @@ export function useChatSession(options: {
         window.clearTimeout(busyRetryRef.current?.timer);
         busyRetryRef.current = undefined;
         setSubmissionOutcome({ clientMessageId: pendingPromptId, status: "rejected" });
+        busyRef.current = false;
         setBusy(false);
+        clearBusyWatchdog();
       }
       setConnection(status);
     });
     chatRef.current = chat;
-  }, [activeProjectRef, commitProcessResult, refreshDesk]);
+  }, [activeProjectRef, armBusyWatchdog, clearBusyWatchdog, commitProcessResult, refreshDesk]);
 
   /** 打开项目：拉线程/历史 + 建 WS。项目可以没有任何对话，发首条消息时再建。 */
   const bindProjectChat = useCallback(async (projectId: string) => {
@@ -293,12 +372,7 @@ export function useChatSession(options: {
       if (activeProjectRef.current !== projectId || threadLoadSequence.current !== bindGen) return;
       setActiveChatThreadId(activeThread.id);
       activeChatThreadRef.current = activeThread.id;
-      setChatItems(history.messages.map((message) => ({
-        id: message.id,
-        role: message.role === "assistant" ? "agent" : "user",
-        text: message.text,
-        attachments: message.attachments,
-      })));
+      setChatItems(toVisibleChatItems(history.messages));
     }
     if (activeProjectRef.current !== projectId || threadLoadSequence.current !== bindGen) return;
     openChatSocket(projectId);
@@ -327,13 +401,17 @@ export function useChatSession(options: {
         // 先登记 pending，确保后续失败能通过 submissionOutcome 解锁 composer
         pendingPromptIdRef.current = input.clientMessageId;
         setSubmissionOutcome(undefined);
+        busyRef.current = true;
         setBusy(true);
+        armBusyWatchdog();
         void (async () => {
           try {
             const thread = await api.createChatThread(projectId);
             if (activeProjectRef.current !== projectId) {
               setSubmissionOutcome({ clientMessageId: input.clientMessageId, status: "rejected" });
+              busyRef.current = false;
               setBusy(false);
+              clearBusyWatchdog();
               return;
             }
             activeChatThreadRef.current = thread.id;
@@ -348,7 +426,9 @@ export function useChatSession(options: {
             )) {
               setChatItems((cur) => [...cur, { id: nextId(), role: "agent", text: "消息未发送，请等待连接恢复后重试。" }]);
               setSubmissionOutcome({ clientMessageId: input.clientMessageId, status: "rejected" });
+              busyRef.current = false;
               setBusy(false);
+              clearBusyWatchdog();
               return;
             }
           } catch (error) {
@@ -358,7 +438,9 @@ export function useChatSession(options: {
               text: `新建对话失败：${error instanceof Error ? error.message : "未知错误"}`,
             }]);
             setSubmissionOutcome({ clientMessageId: input.clientMessageId, status: "rejected" });
+            busyRef.current = false;
             setBusy(false);
+            clearBusyWatchdog();
           }
         })();
         return true;
@@ -375,10 +457,12 @@ export function useChatSession(options: {
       }
       pendingPromptIdRef.current = input.clientMessageId;
       setSubmissionOutcome(undefined);
+      busyRef.current = true;
       setBusy(true);
+      armBusyWatchdog();
       return true;
     },
-    [busy, connection, activeProjectRef],
+    [busy, connection, activeProjectRef, armBusyWatchdog, clearBusyWatchdog],
   );
 
   const stopChat = useCallback(() => {
@@ -403,12 +487,7 @@ export function useChatSession(options: {
       processRef.current = null;
       setStreaming(undefined);
       setBusy(false);
-      setChatItems(history.messages.map((message) => ({
-        id: message.id,
-        role: message.role === "assistant" ? "agent" : "user",
-        text: message.text,
-        attachments: message.attachments,
-      })));
+      setChatItems(toVisibleChatItems(history.messages));
     } catch (error) {
       setChatItems((current) => [...current, {
         id: nextId(),
@@ -474,12 +553,7 @@ export function useChatSession(options: {
       if (activeProjectRef.current !== currentProjectId || threadLoadSequence.current !== sequence) return;
       activeChatThreadRef.current = nextThread.id;
       setActiveChatThreadId(nextThread.id);
-      setChatItems(history.messages.map((message) => ({
-        id: message.id,
-        role: message.role === "assistant" ? "agent" : "user",
-        text: message.text,
-        attachments: message.attachments,
-      })));
+      setChatItems(toVisibleChatItems(history.messages));
     } catch (error) {
       setChatItems((current) => [...current, {
         id: nextId(),

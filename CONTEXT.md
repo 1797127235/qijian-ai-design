@@ -73,7 +73,7 @@ _避免_：文件（文件是承载形式，不是领域概念）、结果
 
 ## 反馈与确认
 
-**助手执行**：智能体可分析对话、附件与桌面状态；写桌目前经工具 `generate_from_desk`（异步 Job）生成 `effect_image` 并落源旁（见 ADR 0013）；可按需调用 `look_at_desk` 查看桌面总览、`look_at` 细看指定物件原图（算 Inspect）。工具在 `apps/server/src/agent/tools/`。**不得**在无工具成功结果时声称已修改桌面。
+**助手执行**：智能体可分析对话、附件与桌面状态；写桌生图经 `apps/server/src/agent/tools/generate/`：`generate_from_desk`（旁落新卡）、`replace_on_desk`（原卡覆盖）、`text_to_image_on_desk`（无主源文生落桌），共用异步 Job + `CanvasGenerateService`（见 ADR 0013）；可 `remove_from_desk` 删除桌面物件（同 HTTP 硬删）；可按需 `look_at_desk` / `look_at`。**不得**在无工具成功结果时声称已修改桌面。
 _避免_：助手权限、每步请示、把「有工具」说成任意桌面 CRUD
 
 **桌面连线**：物件之间的有向参考关系（from=参考源，to=目标）；面板生图与 Agent 生图会把连入图作为参考输入。

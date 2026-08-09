@@ -1,7 +1,7 @@
 # Agent 桌面感知：目标态
 
 **状态：** 目标定义（非实现规格、非 ADR）  
-**实现进度（2026-08-08）：** L0 Survey / Focus+caption / 选中 Inspect / 基础指代已落地；视觉总览落地为按需工具 `look_at_desk`（非每轮强制塞图）。详见 [装配规则](agent-desk-context-assembly.md)、[黄金任务](agent-desk-golden-tasks.md)。  
+**实现进度（2026-08-10）：** L0 Survey / Focus+caption / 选中 Inspect / 基础指代已落地；视觉总览落地为按需工具 `look_at_desk`（非每轮强制塞图）。**产品决定不做：** 几何「左边」类相对选中消解、`relative_hints` 文本、**Compare 对照块**。详见 [装配规则](agent-desk-context-assembly.md)、[黄金任务](agent-desk-golden-tasks.md)。  
 **日期：** 2026-08-08  
 **范围：** 助手如何「描述桌上物件」以及如何「组织上下文看见桌面」  
 **相关：** [CONTEXT.md](../CONTEXT.md)、[ADR 0013](adr/0013-agent-generate-from-desk.md)、[agent-harness-audit](agent-harness-audit.md)、[agent-design-frontier-review](agent-design-frontier-review.md)、[世界模型字段表](agent-desk-world-model-fields.md)、[上下文装配规则](agent-desk-context-assembly.md)
@@ -205,9 +205,9 @@ World state 是从 Artifact、桌面布局、显式关系和可重算派生信�
 | **Survey 扫视** | 默认每轮 | 全桌 L0 + 连线 + 状态 |
 | **Focus 聚焦** | 有选中 / 指代消解后 | 焦点物件 L2 + 邻接/血缘一跳 |
 | **Inspect 细看** | 要判断画面或准备改图 | 该物件 L3 像素 |
-| **Compare 对比** | 多版效果 / 多参考 | 2–N 件的 L2 或 L3 |
 
-「好组织」= 助手或装配器能在这四种模式间切换，而不是永远 Survey 或永远 Inspect。
+**不做 Compare：** 多版对比不单独开模式；多选 → Focus（多 core）+ Inspect。  
+「好组织」= 在 Survey / Focus / Inspect 间升采样，而不是永远 Survey 或永远 Inspect。
 
 ### 5.4 Survey 需要视觉总览投影
 
@@ -219,7 +219,8 @@ L0/L1 能让助手不盲，但文本目录仍然缺少整体视觉构图。目�
 
 ### 5.5 指代消解是一等能力
 
-目标：用户说「材质那张」「左边」「上一版」时，系统应产出 **resolved ids**，再进入 Focus / Inspect。
+目标：用户说「材质那张」「A03」「上一版 / 源图」时，系统应产出 **resolved ids**，再进入 Focus / Inspect。  
+**不做：** 「左边 / 右边那张」等纯几何相对选中消解（靠点选、alias 或可区分名称）。
 
 描述模块不只是「打印桌面」，还要支持：
 
@@ -277,7 +278,7 @@ name / role / spatial / link → artifact id
 | 选中才有图就够用一阵 | 选中只是焦点，不是视觉能力上限 |
 | 能评测再谈结构 | 结构是目标本体；评测是验收手段 |
 
-可以分阶段落地，但阶段应对齐 **L0→L1→L2→L3** 与 **Survey→Focus→Inspect→Compare**，而不是用阶段重新定义目标。
+可以分阶段落地，但阶段应对齐 **L0→L1→L2→L3** 与 **Survey→Focus→Inspect**，而不是用阶段重新定义目标。
 
 ---
 
@@ -291,8 +292,8 @@ name / role / spatial / link → artifact id
 | L2 caption | 独立表缓存 + Focus 注入（untrusted） |
 | L3 像素 | 选中自动 Inspect + index；主动 `look_at(ids|alias)` 已做 |
 | 视觉总览 | **`look_at_desk` 按需**；非每轮默认 |
-| 四种模式 | Survey+Focus+Inspect 有；Compare 无 |
-| 指代消解 | 基础（id/alias/label/关键词/血缘等）；几何「左边」未做；`relative_hints` 不做 |
+| 看见模式 | Survey+Focus+Inspect；**Compare 不做** |
+| 指代消解 | 基础（id/alias/label/关键词/血缘等）；**几何「左边」不做**；`relative_hints` 不做 |
 
 当前 Artifact 类型：`canvas_image`、`effect_image`（便签已不在产品范围）。
 
@@ -303,8 +304,8 @@ name / role / spatial / link → artifact id
 这些是**目标形态**选择，不是实现细节：
 
 1. **名称权威**：建议系统 fallback + 用户可改显示名，两者并存；artifact id 永远是机器权威。
-2. **位置语义**：建议机器保留绝对布局，面向模型同时提供相对方位；绝对坐标用于计算，相对方位用于指代。
-3. **关系语义**：建议区分显式关系与几何关系。显式关系表达生成血缘/参考用途并可持久化；左/右/相邻/重叠/同簇先作为运行时几何推导，不自动写成领域事实。
+2. **位置语义**：机器保留绝对布局；Survey 可投影粗 grid。**不做**相对方位 harness 指代（「左边那张」）；指认靠点选 / alias / 名称。
+3. **关系语义**：显式关系（连线/血缘/参考）进上下文并可持久化。左/右/相邻等几何关系**不**做 harness 指代消解，也**不**注入 `relative_hints`；Survey 可保留粗 grid 供人读，不承诺模型侧方位消解。
 4. **Caption**：建议持久化为独立的可重算缓存，不写入 Artifact payload；按文件内容 hash、artifact version 和 analyzer version 失效。
 5. **详细度上限**：建议以 token、图片张数和总字节预算共同约束，而不是只规定物件数量；超过预算时优先保留当前焦点、其关系一跳和 L0 目录，其余降级为索引。
 6. **视觉总览**：能力必备；**触发已定为按需工具**（非每轮 Survey 默认塞图）；总览只建立布局和编号对应，不替代单物件 Inspect。
@@ -327,4 +328,4 @@ name / role / spatial / link → artifact id
 
 ## 11. 一句话
 
-**桌面感知的目标 = 结构化世界模型（身份/角色/结构/内容）+ 分层内容（L0–L3）+ 按任务的四种看见模式（Survey/Focus/Inspect/Compare）；详细是能力可达，组织是默认投影与升采样纪律。**
+**桌面感知的目标 = 结构化世界模型（身份/角色/结构/内容）+ 分层内容（L0–L3）+ 按任务的看见模式（Survey/Focus/Inspect；无独立 Compare）；详细是能力可达，组织是默认投影与升采样纪律。**

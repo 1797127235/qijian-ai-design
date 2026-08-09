@@ -21,8 +21,9 @@
 ## 3. 跨标签页 desk 同步（WS 广播） — DONE
 
 - **What:** ~~desk 的 HTTP 变更广播 `object_changed`；前端 refetch~~。
-- **Done (2026-08-09):** `createDeskContentChangedHandler` 挂在 `desks`/`artifacts` 的 `setDeskChangedListener`：cover 重渲 + `publish({ type: "object_changed", projectId })`（无 artifactId，避免他 tab 抢焦点）。place/move/delete/connection/append/rollback/generate 写路径凡走 `emitDeskChanged` 均覆盖。前端既有 `useChatSession` refetch 无需改。
-- **Note:** Agent/Job 仍可能再发带 `artifactId` 的 `object_changed`（焦点/history）；双发可接受。
+- **Done (2026-08-09):** `createDeskContentChangedHandler` 挂在 `desks`/`artifacts` 的 `setDeskChangedListener`：cover 重渲 + `publish({ type: "object_changed", projectId })`（无 artifactId，避免他 tab 抢焦点）。place/move/delete/connection/append/rollback/generate 写路径凡走 `emitDeskChanged` 均覆盖。前端既有 `useChatSession` refetch。
+- **FE follow-up (2026-08-09):** `mergeDeskSnapshot` 同项目刷新保留本 tab viewport；`Desk` 应用 `initialViewport` 时不再 `onViewportChange` 回写，避免他 tab/自回声拽镜头。
+- **Note:** Agent/Job 仍可能再发带 `artifactId` 的 `object_changed`（焦点/history）；双发可接受。自回声仍会 GET desk（物体对齐），但不改 viewport。
 - **Why (historical):** 原先仅 Agent 路径发事件，HTTP 多 tab 陈旧。
 
 ## 4. PDF 画布预览 — CUT

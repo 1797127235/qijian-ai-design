@@ -66,6 +66,20 @@ describe("chatProcess", () => {
     expect(settled.process?.status).toBe("failed");
   });
 
+  it("agent_end 无 willRetry 时也释放 busy（防 settled 丢失卡死）", () => {
+    let p = applyAgentInnerEvent(null, { type: "agent_start" }).process;
+    const end = applyAgentInnerEvent(p, { type: "agent_end" });
+    expect(end.busy).toBe(false);
+    expect(end.chatItems).toBe("finalize");
+  });
+
+  it("agent_end willRetry 时保持 busy", () => {
+    const p = applyAgentInnerEvent(null, { type: "agent_start" }).process;
+    const end = applyAgentInnerEvent(p, { type: "agent_end", willRetry: true });
+    expect(end.busy).toBe(true);
+    expect(end.chatItems).toBeUndefined();
+  });
+
   it("settleProcessStopped 标记运行中 tool 失败", () => {
     let p = applyAgentInnerEvent(null, { type: "agent_start" }).process;
     p = applyAgentInnerEvent(p, {

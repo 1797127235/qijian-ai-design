@@ -1,7 +1,7 @@
 # Agent 桌面感知：黄金任务与验收
 
 **状态：** 验收规格（非实现、非 ADR）  
-**实现进度（2026-08-08）：** L-A 底座 + P0 夹具已落地。Caption：`image_captions` 表、Focus 注入、异步 vision 写（生图 complete / createPlaced / append ready）；读路径 80ms 超时 skip。**桌面总览：** 按需工具 `look_at_desk`（toolResult 内联 `role=desk_overview`，不算 Inspect；无 ready 像素整工具失败；**非**每轮默认注入 Survey）。**人用**画布左下 minimap 已落地（与 agent 总览解耦）。**GT-18（当前桌压历史）** L-A 夹具已落地：装配只认本轮 snapshot，`historyDeskMentions` 不入参；Survey 不得含已删 id。已做：单物件 `look_at(ids|alias)`。未做：几何「左边」（GT-11）、`relative_hints` 文本（产品决定不做）、GT-09/14–16/19–20 夹具与装配预算 report、Compare、L-B。GT-14/16 语义见任务注：默认 overview 已改为工具路径。  
+**实现进度（2026-08-10）：** L-A 底座 + P0 夹具已落地。Caption：`image_captions` 表、Focus 注入、异步 vision 写（生图 complete / createPlaced / append ready）；读路径 80ms 超时 skip。**桌面总览：** 按需工具 `look_at_desk`（toolResult 内联 `role=desk_overview`，不算 Inspect；无 ready 像素整工具失败；**非**每轮默认注入 Survey）。**人用**画布左下 minimap 已落地（与 agent 总览解耦）。**GT-18（当前桌压历史）** L-A 夹具已落地：装配只认本轮 snapshot，`historyDeskMentions` 不入参；Survey 不得含已删 id。已做：单物件 `look_at(ids|alias)`。**产品决定不做：** 几何「左边」指代（GT-11）、`relative_hints` 文本、**Compare 对照块**（GT-19；多选对比靠 Focus+Inspect）。**已落地：** `assembly_report` + GT-15（Inspect 裁切 → report.dropped）。未做：GT-09/14/16/20 夹具、L-B。  
 **日期：** 2026-08-08  
 **上游：** [agent-desk-perception-goals.md](agent-desk-perception-goals.md)、[agent-desk-world-model-fields.md](agent-desk-world-model-fields.md)、[agent-desk-context-assembly.md](agent-desk-context-assembly.md)  
 **范围：** 用固定夹具断言「看见 / 指代 / 装配」是否正确  
@@ -212,17 +212,14 @@ expect:
 | **断言** | R1 |
 | **层** | L-A |
 
-### GT-11 指代：空间「左边」相对选中
+### GT-11 指代：空间「左边」相对选中 — **wontfix**
 
 | | |
 |--|--|
-| **桌** | S1 布局 |
-| **选中** | [`art-fx1`]（x=800） |
-| **用户** | 「左边那张」 |
-| **期望** | 在几何规则下唯一消解到更近左邻（如 mat 或 living，**夹具写死期望 id**）；不唯一则 R2 |
-| **断言** | R1 或 R2（夹具固定一种布局使唯一） |
-| **层** | L-A |
-| **注** | 实现几何前可标 `pending-impl`，但规格保留 |
+| **状态** | **产品决定不做**（2026-08-10）。不实现基于 pose 的左/右/邻接消解；不要求 L-A 夹具。 |
+| **原意图** | 选中 fx1 时「左边那张」→ 几何唯一消解到左邻 id |
+| **现行** | 指代仅 id / alias / label / 关键词等；空间口语由用户点选、A0x 或可区分名称解决。Survey 可有 grid，**不**承诺 harness 消解「左边」。 |
+| **层** | — |
 
 ### GT-12 Focus 含 Intent 且不冒充画面
 
@@ -304,16 +301,14 @@ expect:
 | **断言** | C1, S1 |
 | **层** | L-A；**+L-B** 模型应以本轮 DESK 为准答「不在」 |
 
-### GT-19 Compare 两效果图
+### GT-19 Compare 两效果图 — **wontfix**
 
 | | |
 |--|--|
-| **桌** | living + fx1 + fx2（两效果图皆自 living） |
-| **选中** | [fx1, fx2] |
-| **用户** | 「对比这两个哪个更暖」 |
-| **期望** | Compare 表含两行；宜 Inspect 两者或声明未附图；不得引入第三张当已看 |
-| **断言** | I1, I4, H1 |
-| **层** | L-A；**+L-B** |
+| **状态** | **产品决定不做**（2026-08-10）。不实现独立 `[COMPARE]` 装配块与夹具。 |
+| **原意图** | 多选两效果 +「对比」→ 对照表两行 + 宜双 Inspect |
+| **现行** | 多选走 **Focus（多 core）+ Inspect（预算内）**；模型自行对比，无专用对照模板。 |
+| **层** | — |
 
 ### GT-20 改图任务升采样（集成意图）
 
@@ -364,13 +359,13 @@ vitest: assemble(fixture) → expect(assertions)
 | P0 | GT-05,06,16 | Inspect 诚实 |
 | P1 | GT-07,08,09,10 | 指代 |
 | P1 | GT-12,13,18 | Intent/stale/当前性 |
-| P2 | GT-11,14,15,19,20 | 几何、预算、对比、闭环 |
+| P2 | GT-14,15,20 | 预算、闭环（GT-11/19 wontfix） |
 
 ---
 
 ## 7. 通过标准
 
-- **文档阶段：** 任务被评审同意，无「无法客观断言」的条目（GT-11 可暂 `pending-impl`）。  
+- **文档阶段：** 任务被评审同意，无「无法客观断言」的条目（GT-11 已 wontfix）。  
 - **代码阶段：** P0 L-A 全绿才可宣称「桌面感知装配达标」。  
 - **不得**用「模型有时能答对」替代 L-A 绿。
 

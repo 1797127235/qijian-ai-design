@@ -171,6 +171,19 @@ export class AgentJobStore {
     return rows.map(toDto);
   }
 
+  /** 某 kind 在项目上 accepted/running 数量（并发帽用）。 */
+  async countActiveByKind(projectId: string, kind: string): Promise<number> {
+    const rows = await this.db
+      .select({ id: agentJobs.id })
+      .from(agentJobs)
+      .where(and(
+        eq(agentJobs.projectId, projectId),
+        eq(agentJobs.kind, kind),
+        inArray(agentJobs.status, ["accepted", "running"]),
+      ));
+    return rows.length;
+  }
+
   /** Chat stop：仅当前 thread 的 active jobs（不杀面板 thread_id=null）。 */
   async listActiveByThread(projectId: string, threadId: string): Promise<AgentJobDto[]> {
     const rows = await this.db

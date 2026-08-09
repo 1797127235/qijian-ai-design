@@ -53,6 +53,19 @@ export interface AgentTracer {
   flush(): Promise<void>;
 }
 
+/** 本 run 内模型 turn 的 token/cache 累加（L2 挂 root outputs）。 */
+export type TraceUsageTotals = {
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  hitRate: number | null;
+  formula: string;
+  cacheSignal: boolean;
+};
+
 export interface TraceContext {
   runId: string;
   projectId: string;
@@ -62,6 +75,8 @@ export interface TraceContext {
   inflightJobs: Set<string>;
   toolSpans: Map<string, TraceHandle>;
   modelSpan?: TraceHandle;
+  /** assistant message_end 累加的 usage */
+  usageTotals?: TraceUsageTotals;
   productFinished: boolean;
   closed: boolean;
 }

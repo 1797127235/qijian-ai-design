@@ -130,7 +130,9 @@ const sessions = new AgentSessionRegistry({
 const jobWake = new JobWakeService(
   chats,
   async ({ projectId, threadId, text, taskId, runId, message }) => {
-    // appendPrompt 已在 JobWakeService 完成；此处广播 + 跑模型
+    // appendPrompt 已在 JobWakeService 完成（写轨迹喂模型）。
+    // 不向客户端广播 chat_message：job-wake 是系统事件，不是用户气泡。
+    void message;
     if (traces?.enabled) {
       traces.startRoot({
         project_id: projectId,
@@ -139,7 +141,6 @@ const jobWake = new JobWakeService(
         inputs: { wake: true, task_id: taskId },
       });
     }
-    publish({ type: "chat_message", projectId, message: message as never });
     await sessions.runJobWake({ projectId, threadId, runId, text });
   },
   (projectId, threadId) => sessions.isThreadBusy(projectId, threadId),

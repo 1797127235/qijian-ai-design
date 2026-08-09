@@ -11,7 +11,7 @@
 - 创建、查看、改名和删除设计项目；每项目一张可平移、缩放、持久化布局的桌面。
 - 右侧多线程对话与附件；过程时间线展示 Agent 思考与工具调用。
 - 画布：中键/空格漫游、框选多选、物件连线（参考关系）、选中下方 Prompt 面板生图、会话内撤销/重做。
-- Agent 可分析桌面与选中，经 `generate_from_desk` 异步 Job 写回 `effect_image`（ADR 0013）；按需 `look_at_desk` 桌面总览、`look_at` 细看指定物件（算 Inspect）。
+- Agent 可分析桌面与选中，经 `generate_from_desk`（旁落）/ `replace_on_desk`（原卡）/ `text_to_image_on_desk`（无主源文生）异步 Job 写回 `effect_image`（ADR 0013）；可 `remove_from_desk` 删卡；按需 `look_at_desk` / `look_at`。
 - 局部重绘（框选区域 + prompt / 参考图）、大图查看、左下角 minimap 导航。
 - Artifact 不可变版本历史；桌面位置、旋转、视口与 `connections` 独立持久化。
 - 已支持的 Artifact 类型：`canvas_image`、`effect_image`。
@@ -74,9 +74,10 @@ npm run dev:server
 
 - **model id 全局唯一**；跨网关重复时先注册的网关生效，启动会 `console.warn`。
 - 面板选定 model 后，文生图与 edits 使用同一 model id。
-- **Agent** `generate_from_desk` 可传 `model`（与面板同一 allowlist）；省略则主站默认。未知 model 失败，禁止静默回落。
+- **Agent** 生图工具可传 `model`（与面板同一 allowlist）；省略则主站默认。未知 model 失败，禁止静默回落。
+- 同项目 Agent 写桌生图默认最多 **2** 路并行（`AGENT_DESK_GENERATE_MAX_ACTIVE`）；超限工具失败，不静默排队。
 
-工具白名单：`generate_from_desk`、`get_task`、`look_at_desk`、`look_at`（`AGENT_DEBUG_IMAGE_TOOL=1` 时另有调试图工具）。
+工具白名单：`generate_from_desk`、`replace_on_desk`、`text_to_image_on_desk`、`remove_from_desk`、`get_task`、`look_at_desk`、`look_at`（`AGENT_DEBUG_IMAGE_TOOL=1` 时另有调试图工具）。实现：`apps/server/src/agent/tools/generate/` + `remove-from-desk.ts`。
 
 ## 环境变量
 
@@ -103,10 +104,12 @@ npm run dev:server
 | `TEXT_API_URL` | 由 `IMAGE_API_URL` 推导 chat | 起名 / caption 等 |
 | `TEXT_API_KEY` | 回退 `IMAGE_API_KEY` | 文本密钥 |
 | `TEXT_MODEL` | 回退 `AGENT_MODEL` | 文本模型 |
-| `LANGSMITH_TRACING` | `false` | Agent 观测（H7） |
+| `LANGSMITH_TRACING` | `false` | Agent 观测（H7）；root 带 `model_usage` 汇总 |
 | `LANGSMITH_API_KEY` | 空 | LangSmith |
 | `LANGSMITH_PROJECT` | `pi` | LangSmith 项目名 |
 | `LANGSMITH_ENDPOINT` | LangSmith 云 | 端点 |
+| `AGENT_LOG_USAGE` | 关 | `1` 时每 model turn 打 `model_usage` JSON（含 cache hit） |
+| `AGENT_DESK_GENERATE_MAX_ACTIVE` | `2` | 同项目 Agent 写桌生图 active 上限 |
 
 ## 常用命令
 
