@@ -18,30 +18,22 @@
 - **Why (historical):** 主路径上传失败前端已 `deleteFile`；真泄漏是硬删物件不级联清文件 + 无扫孤儿。
 - **Depends on / blocked by:** 无；若做 TODO 1 tombstone，checker 需继续认墓碑引用。
 
-## 3. 跨标签页 desk 同步（WS 广播）
+## 3. 跨标签页 desk 同步（WS 广播） — DONE
 
-- **What:** desk 的 HTTP 变更（createPlaced / moveObject / deleteObject）广播 `object_changed` WS 事件；前端收到后 refetch desk snapshot。
-- **Why:** 目前只有 Agent tools 路径发事件，HTTP 路径不发；多 tab 同开一项目会互相陈旧直到手动刷新。
-- **Pros:** 事件通道、`undoable` 字段、前端 refetch 逻辑全部现成，接线即可。
-- **Cons:** 需处理 refetch 与本地乐观更新的竞态（stale refresh 守卫，本切片已要求串行化 desk 变更，可复用同一守卫）。
-- **Context:** `apps/server/src/agent/events.ts:15`、`src/app/useChatSession.ts:150-157`。本切片 eng review Section 1 Issue 5 降为 TODO。
-- **Depends on / blocked by:** 无。
+- **What:** ~~desk 的 HTTP 变更广播 `object_changed`；前端 refetch~~。
+- **Done (2026-08-09):** `createDeskContentChangedHandler` 挂在 `desks`/`artifacts` 的 `setDeskChangedListener`：cover 重渲 + `publish({ type: "object_changed", projectId })`（无 artifactId，避免他 tab 抢焦点）。place/move/delete/connection/append/rollback/generate 写路径凡走 `emitDeskChanged` 均覆盖。前端既有 `useChatSession` refetch 无需改。
+- **Note:** Agent/Job 仍可能再发带 `artifactId` 的 `object_changed`（焦点/history）；双发可接受。
+- **Why (historical):** 原先仅 Agent 路径发事件，HTTP 多 tab 陈旧。
 
-## 4. PDF 画布预览
+## 4. PDF 画布预览 — CUT
 
-- **What:** 画布图片入口支持 PDF：整文件引用 + pdf.js 渲染首页预览（或文件卡片点击预览）。
-- **Why:** 设计师上传户型图 PDF 是真实高频路径；第一期画布仅 JPEG/PNG（eng review D5）会在真实工作流里咬人。
-- **Pros:** `pdfjs-dist@6.2.108` 已在 dependencies、`@napi-rs/canvas` 服务端渲染能力也在，实际成本低于最初估计。
-- **Cons:** worker 配置、渲染失败兜底、大 PDF 性能需处理。
-- **Context:** D5 决策记录（gstack decision log）。上传管线 `inspectUpload` 已提取 pageCount。
-- **Depends on / blocked by:** 无。
+- **Status:** 砍掉（2026-08-09）。画布继续只认 JPEG/PNG；PDF 不进预览路线。
+- **Historical:** 曾计划整文件引用 + pdf.js 首页预览；deps 里仍有 `pdfjs-dist` / `@napi-rs/canvas`，上传管线 `inspectUpload` 仍可提 pageCount，但不做画布渲染。
 
-## 5. 选中物件浮动操作条 — 部分完成
+## 5. 选中物件浮动操作条 — CUT
 
-- **What:** 选中时浮出操作条：提示词入口 / 重新生成 / 查看大图 / 下载；以及完整「建筑学长」式工具条密度。
-- **Done (partial):** 节点工具条已有「局部重绘」等入口；双击/大图 lightbox 已有；Prompt 面板选中即开。仍缺：统一浮动条上的「重新生成 / 下载」与更完整的工具排布。
-- **Why:** 改图高频动作应一键可达。
-- **Context:** `docs/canvas-connections-generate-design.md`、`src/app/DeskWorkbench.tsx` `renderNodeToolbar`。
+- **Status:** 砍掉（2026-08-09）。不再做统一浮动条上的「重新生成 / 下载」与更密工具排布。
+- **Keep as-is:** 节点工具条局部重绘、双击/大图 lightbox、选中即开 Prompt 面板。
 
 ## 6. 图片加工（局部重绘/细节增强/视角转换/宫格拆分） — 部分完成
 

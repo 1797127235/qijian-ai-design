@@ -5,7 +5,7 @@
  *  - 携带 projectId 用于在 ChatGateway 做 fan-out（不同 project 的连接互不干扰）
  *  - agent_event 是 pi 原始事件透传，加 projectId/threadId 元信息
  *  - prompt_ack 单独出来：明确告诉前端「这条 user 消息服务端已收」
- *  - object_changed 标记桌面物件变化（含 Agent 写桌），TODO 3 把它接上 refetch
+ *  - object_changed 标记桌面物件变化（HTTP 写桌 + Agent/Job）；前端 refetch
  */
 import type { ChatMessageDto } from "../services/chat-service.js";
 

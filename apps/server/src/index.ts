@@ -16,6 +16,7 @@ import { JobWakeService } from "./agent/async-job/job-wake.js";
 import { AgentJobRunner } from "./agent/async-job/runner.js";
 import { AgentJobStore } from "./agent/async-job/store.js";
 import { ChatGateway } from "./agent/chat-gateway.js";
+import { createDeskContentChangedHandler } from "./agent/desk-changed-broadcast.js";
 import type { EventSink } from "./agent/events.js";
 import { AgentSessionRegistry } from "./agent/session-registry.js";
 import { createTraceRegistry } from "./agent/tracing/index.js";
@@ -82,8 +83,15 @@ const covers = new ProjectCoverService({
     console.warn(`[cover] render failed for project ${projectId}:`, error instanceof Error ? error.message : error);
   },
 });
-desks.setDeskChangedListener((projectId) => covers.schedule(projectId));
-artifacts.setDeskChangedListener((projectId) => covers.schedule(projectId));
+// publish 先用 no-op 占位，等 ChatGateway 构造好再回填成 chat.emit
+// HTTP 写桌也走同一 listener → object_changed，跨 tab refetch（无 artifactId 不抢焦点）
+let publish: EventSink = () => undefined;
+const onDeskContentChanged = createDeskContentChangedHandler(
+  (projectId) => covers.schedule(projectId),
+  (event) => publish(event),
+);
+desks.setDeskChangedListener(onDeskContentChanged);
+artifacts.setDeskChangedListener(onDeskContentChanged);
 // 删物件后异步扫本项目孤儿文件（默认 minAge 1h，不伤会话 undo；失败只记日志）
 artifacts.setObjectDeletedListener((projectId) => {
   void files
@@ -99,8 +107,6 @@ artifacts.setObjectDeletedListener((projectId) => {
 });
 
 // —— Agent 异步任务（job）——
-// publish 先用 no-op 占位，等 ChatGateway 构造好再回填成 chat.emit
-let publish: EventSink = () => undefined;
 const traces = createTraceRegistry(config);
 const jobStore = new AgentJobStore(db);
 const jobs = new AgentJobRunner(jobStore, (event) => publish(event), traces);
