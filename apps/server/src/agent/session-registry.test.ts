@@ -40,6 +40,39 @@ describe("system prompt", () => {
     expect(prompt).toContain("accepted");
     expect(prompt).toContain("禁止说「已生成完成」");
   });
+
+  it("pins dialogue model identity and forbids host/IDE self-claims (E1)", () => {
+    const prompt = deskSystemPrompt({
+      agentProvider: "codex2api",
+      agentModel: "grok-4.5-latest",
+    });
+
+    expect(prompt).toContain("对话模型（权威事实）：codex2api/grok-4.5-latest");
+    expect(prompt).toContain("禁止声称自己是 Cursor");
+    expect(prompt).toContain("Auto");
+    expect(prompt).toContain("出图像素由 generate_from_desk");
+    expect(prompt).not.toContain("Cursor 里的 Auto");
+  });
+
+  it("requires passing image model when user names one (E2)", () => {
+    const prompt = deskSystemPrompt();
+    expect(prompt).toContain("用户点名生图模型时");
+    expect(prompt).toContain("必须传 model");
+    expect(prompt).toContain("禁止默默用默认引擎");
+  });
+
+  it("teaches JOB_EVENT wake and forbids get_task busy-wait", () => {
+    const prompt = deskSystemPrompt();
+    expect(prompt).toContain("[JOB_EVENT]");
+    expect(prompt).toContain("不要循环调用 get_task");
+    expect(prompt).toContain("禁止自动再次 generate_from_desk");
+  });
+
+  it("falls back without inventing a model name when config is missing", () => {
+    const prompt = deskSystemPrompt({});
+    expect(prompt).toContain("由平台配置的对话模型");
+    expect(prompt).not.toContain("对话模型（权威事实）：");
+  });
 });
 
 describe("AgentSessionRegistry lifecycle", () => {

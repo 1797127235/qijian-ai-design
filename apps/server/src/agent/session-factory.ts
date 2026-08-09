@@ -47,7 +47,7 @@ export interface SessionFactoryDependencies {
   chats: ChatService;
   files: FileStorage;
   emit: EventSink;
-  config: Pick<ServerConfig, "agentProvider" | "agentModel">;
+  config: Pick<ServerConfig, "agentProvider" | "agentModel" | "imageModelOptions">;
   jobs?: AgentJobRunner;
   jobStore?: AgentJobStore;
   captions?: ImageCaptionStore;
@@ -87,7 +87,10 @@ export class SessionFactory {
       noSkills: true,
       noPromptTemplates: true,
       noContextFiles: true,
-      systemPrompt: deskSystemPrompt(),
+      systemPrompt: deskSystemPrompt({
+        agentProvider: this.deps.config.agentProvider,
+        agentModel: this.deps.config.agentModel,
+      }),
     });
     await loader.reload();
     this.modelRuntime ??= ModelRuntime.create();
@@ -97,7 +100,17 @@ export class SessionFactory {
     const sessionManager = SessionManager.continueRecent(cwd, agentSessionDir(projectId, threadId));
     const deskTools = createDeskTools(
       projectId,
-      this.deps,
+      {
+        artifacts: this.deps.artifacts,
+        desks: this.deps.desks,
+        effects: this.deps.effects,
+        generate: this.deps.generate,
+        files: this.deps.files,
+        emit: this.deps.emit,
+        jobs: this.deps.jobs,
+        jobStore: this.deps.jobStore,
+        imageModelOptions: this.deps.config.imageModelOptions,
+      },
       () => this.selectionBySession.get(key) ?? [],
       {
         threadId,

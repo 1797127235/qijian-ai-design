@@ -3,16 +3,18 @@
  *
  * 流程：
  *  1. 校验 prompt / 主源（多选时必须 source_artifact_id 或恰好单选）
- *  2. ownedCurrent 校验源属于当前项目
- *  3. jobs.run 异步：prepare 落 pending 卡 + 多 from 连线 → 后台 work 出图
- *  4. 立即返回 accepted 工具结果，不 await work
- *  5. 失败/取消时 fail() 返结构化错误
+ *  2. 可选 model：与面板同一 allowlist；未知则 fail，禁止静默主站默认（E2）
+ *  3. ownedCurrent 校验源属于当前项目
+ *  4. jobs.run 异步：prepare 落 pending 卡 + 多 from 连线 → 后台 work 出图
+ *  5. 立即返回 accepted 工具结果，不 await work
+ *  6. 失败/取消时 fail() 返结构化错误
  */
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { MAX_SELECTED_ARTIFACTS } from "../../domain/selection-limits.js";
 import type { PreparedGenerate } from "../../services/canvas-generate-service.js";
+import { matchImageModelId } from "../../services/image-providers.js";
 import { fail, ok, type ToolContext } from "./shared.js";
 
 const parameters = Type.Object({
@@ -27,6 +29,14 @@ const parameters = Type.Object({
     description: "参考物件 id 列表（材质/风格参考等，不含主源）。省略时用本轮选中减去主源。",
     maxItems: MAX_SELECTED_ARTIFACTS,
   })),
+  model: Type.Optional(Type.String({
+    description:
+      "生图 model id（与面板可选列表一致，如 gpt-image-2）。"
+      + "用户点名引擎时必须传入；省略则用平台默认。"
+      + "不在列表中时工具失败，禁止改用默认引擎。",
+    minLength: 1,
+    maxLength: 80,
+  })),
 });
 
 export function createGenerateFromDeskTool(ctx: ToolContext) {
@@ -38,15 +48,18 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
       + "用户说改材质/风格/效果时调用。"
       + "多选时：必须传 source_artifact_id 指定主图（场景），其余为参考；"
       + "单选时可省略 source，默认当前选中。"
-      + "工具立即返回 accepted+task_id（已开始），最终结果看桌面与 get_task，不要在 accepted 时声称已生成完成。",
-    promptSnippet: "generate_from_desk — 从桌面源物件异步生成效果图并落桌（支持多参考）",
+      + "用户指定生图模型时传 model（与面板同一 allowlist）；未知 model 会失败，不要假装已用该引擎。"
+      + "立即返回 accepted+task_id；完成后系统推送 [JOB_EVENT]，不要循环 get_task。",
+    promptSnippet: "generate_from_desk — 异步生图落桌（task_id；完成靠 JOB_EVENT）",
     promptGuidelines: [
       "改图/出效果时调用 generate_from_desk。",
       "多选改图时必须传 source_artifact_id（要改的那张场景）；reference_artifact_ids 为材质等参考。",
       "仅单选时可省略 source_artifact_id，默认用选中。",
+      "用户点名生图模型（如 gpt image2 / gpt-image-2）时必须传 model；失败则如实说明可用列表，禁止默默用默认引擎开干。",
+      "未点名模型时不要传 model（走平台默认）。",
       "返回 status=accepted 只表示已开始：告知用户看桌面进度，禁止说「已生成完成」。",
-      "返回 status=failed 时如实说明同步失败原因。",
-      "需要查进度时用 get_task(task_id)。",
+      "禁止循环 get_task 等待；完成由 [JOB_EVENT] 系统事件通知。",
+      "收到失败 JOB_EVENT 后禁止自动再次 generate_from_desk，除非用户明确要求重试。",
     ],
     parameters,
     executionMode: "sequential",
@@ -82,6 +95,24 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
         return fail(`参考物件不能超过 ${MAX_SELECTED_ARTIFACTS} 个`);
       }
 
+      const knownModels = ctx.deps.imageModelOptions ?? [];
+      const modelMatch = matchImageModelId(params.model, knownModels);
+      if (modelMatch === null) {
+        const requested = params.model?.trim() || "";
+        const available = knownModels.length > 0
+          ? knownModels.join(", ")
+          : "（当前未配置任何生图 model）";
+        return fail(
+          `未知生图 model：${requested}。可用：${available}。请改用列表中的 id，勿静默使用默认引擎。`,
+          {
+            reason: "unknown_model",
+            model: requested,
+            available_models: knownModels,
+          },
+        );
+      }
+      const imageModel = modelMatch;
+
       try {
         await ctx.ownedCurrent(sourceId);
         for (const refId of referenceArtifactIds) {
@@ -115,6 +146,7 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
             source_artifact_id: sourceId,
             reference_artifact_ids: referenceArtifactIds,
             client_op_id: clientOpId,
+            ...(imageModel ? { model: imageModel } : {}),
           },
           prepare: async () => {
             prepared = await ctx.deps.generate.prepare({
@@ -125,6 +157,7 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
               referenceArtifactIds,
               source: "agent_chat",
               createdBy: "agent",
+              ...(imageModel ? { model: imageModel } : {}),
             });
             return { artifactId: prepared.pending.artifact.id };
           },

@@ -254,16 +254,18 @@ async function runAsyncJob(opts: {
 | 热重载丢 running | 启动 interrupt 陈旧 job |
 | H8 双通道 | 第一期只改 Agent；幂等 clientOpId 保留 |
 
-## 14. 演进到方案 3（预留）
+## 14. 演进到方案 3（已落地 2026-08-09）
 
 ```
-L1 本设计（Job 外壳）
-L2 finalizeJob 已 emit agent_job_updated
-L3 多事件源入队
-L4 策略 + 可选自动 prompt
+L1 Job 外壳 ✅
+L2 finalize → agent_job_updated ✅
+L3 终态 → JobWakeService 入队 ✅
+L4 策略：agent 路径 generate_from_desk 自动 [JOB_EVENT] prompt ✅
 ```
 
-L1 的 `finalizeJob` 单一出口保证 L4 只加策略、不返工业务工具。
+实现：`job-event.ts` / `job-wake.ts`；`runner.finalize` → `wake.onJobTerminal`；  
+`externalId=job-wake:{taskId}` 幂等；busy 排队 + `notifyThreadIdle`。  
+对齐《深入理解 AI Agent》Ch4：task_id + 事件回注 + 禁止盲轮询。
 
 ## 15. 成功标准
 

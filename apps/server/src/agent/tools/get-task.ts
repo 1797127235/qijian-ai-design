@@ -1,9 +1,11 @@
 /**
  * Agent 工具：查询异步 job 状态。
  *  - LLM 拿到 accepted 后想确认是否完成时调用
+ *  - 失败时透传 job.error 的可公开文案（勿抹成「任务失败」）
  */
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
+import { publicJobErrorForAgent } from "../async-job/protocol.js";
 import { fail, ok, type ToolContext } from "./shared.js";
 
 const parameters = Type.Object({
@@ -19,11 +21,14 @@ export function createGetTaskTool(ctx: ToolContext) {
     label: "查询后台任务",
     description:
       "查询 Agent 异步任务状态（accepted/running/succeeded/failed/cancelled）。"
-      + "在 generate_from_desk 返回 task_id 后，需要确认是否完成时调用。",
+      + "在 generate_from_desk 返回 task_id 后，需要确认是否完成时调用。"
+      + "failed 时 error 字段含可公开原因（如图像服务 HTTP 状态），请如实转告用户。",
     promptSnippet: "get_task — 查询异步任务状态",
     promptGuidelines: [
-      "仅在有 task_id 且需要确认后台进度时调用 get_task。",
+      "优先等待系统 [JOB_EVENT]；仅当用户追问进度且尚无事件时调用 get_task。",
+      "禁止为等待结果而循环 get_task。",
       "status 为 accepted/running 时不要声称已完成。",
+      "status=failed 时把 error 原文转告用户，不要只说「任务失败」。",
     ],
     parameters,
     executionMode: "parallel",
@@ -36,9 +41,7 @@ export function createGetTaskTool(ctx: ToolContext) {
       const job = await store.get(ctx.projectId, taskId);
       if (!job) return fail("未找到任务（可能不属于当前项目）", { task_id: taskId });
 
-      const publicError = job.error
-        ? (/取消|超时|中断/.test(job.error) ? job.error.slice(0, 80) : "任务失败")
-        : undefined;
+      const publicError = publicJobErrorForAgent(job.error);
       const text = [
         `任务 ${job.id}（${job.kind}）状态=${job.status}`,
         job.artifactId ? `artifact_id=${job.artifactId}` : null,

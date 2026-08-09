@@ -10,6 +10,7 @@
 import type { EventSink } from "../events.js";
 import type { TraceRegistry } from "../tracing/index.js";
 import { mapErrorFromUnknown } from "../tracing/index.js";
+import type { JobWakeService } from "./job-wake.js";
 import { acceptedDetails, acceptedToolText } from "./protocol.js";
 import type { AgentJobStore } from "./store.js";
 import type { AcceptedJobDetails, AgentJobDto, AgentJobStatus } from "./types.js";
@@ -35,6 +36,8 @@ export interface RunAsyncJobOptions {
 
 export class AgentJobRunner {
   private readonly controllers = new Map<string, AbortController>();
+  /** 方案 3：终态 wake（index 接线后注入；测试可省略） */
+  wake?: JobWakeService;
 
   constructor(
     private readonly store: AgentJobStore,
@@ -224,8 +227,8 @@ export class AgentJobRunner {
   }
 
   /**
-   * 唯一终态出口（预留方案 3：此处可 enqueue wake）。
-   * 所有 job 终态都走这里，emit 一次 job_updated + 一次 object_changed（若有 artifactId）。
+   * 唯一终态出口。
+   * emit job_updated + object_changed；Agent 路径 enqueue wake（事件回注轨迹）。
    */
   async finalize(
     jobId: string,
@@ -270,6 +273,12 @@ export class AgentJobRunner {
       this.emit({ type: "object_changed", projectId, artifactId: updated.artifactId });
     }
     if (runId ?? updated.runId) this.traces?.completeJob(runId ?? updated.runId, jobId);
+    // 方案 3：结构化事件回注（面板 job 无 thread → no-op）
+    try {
+      this.wake?.onJobTerminal(updated);
+    } catch (error) {
+      console.warn("[job-wake] onJobTerminal:", error instanceof Error ? error.message : error);
+    }
   }
 
   /** 取消单 job。 */

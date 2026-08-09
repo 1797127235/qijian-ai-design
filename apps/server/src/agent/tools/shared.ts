@@ -25,6 +25,8 @@ export interface ToolDependencies {
   emit: EventSink;
   jobs?: AgentJobRunner;
   jobStore?: AgentJobStore;
+  /** 生图 model allowlist（与面板一致）；generate_from_desk 校验/归一化用 */
+  imageModelOptions?: string[];
 }
 
 export interface ToolSessionRef {

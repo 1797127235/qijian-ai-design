@@ -12,26 +12,27 @@
  */
 import { serve } from "@hono/node-server";
 import { WebSocketServer } from "ws";
+import { JobWakeService } from "./agent/async-job/job-wake.js";
 import { AgentJobRunner } from "./agent/async-job/runner.js";
 import { AgentJobStore } from "./agent/async-job/store.js";
 import { ChatGateway } from "./agent/chat-gateway.js";
 import type { EventSink } from "./agent/events.js";
 import { AgentSessionRegistry } from "./agent/session-registry.js";
+import { createTraceRegistry } from "./agent/tracing/index.js";
 import { loadConfig } from "./config.js";
 import { createDatabase } from "./db/client.js";
 import { createHttpApp } from "./http/app.js";
 import { ArtifactService } from "./services/artifact-service.js";
 import { CanvasGenerateService } from "./services/canvas-generate-service.js";
+import { ChatService } from "./services/chat-service.js";
 import { DeskStateService } from "./services/desk-state-service.js";
 import { FileStorage } from "./services/file-storage.js";
+import { ImageCaptionService } from "./services/image-caption-service.js";
+import { ImageCaptionStore } from "./services/image-caption-store.js";
 import { HttpImageGenerator } from "./services/image-generator.js";
 import { warnDuplicateImageModels } from "./services/image-providers.js";
-import { ImageCaptionStore } from "./services/image-caption-store.js";
-import { ImageCaptionService } from "./services/image-caption-service.js";
-import { ChatService } from "./services/chat-service.js";
 import { ProjectAutoNamer } from "./services/project-namer.js";
 import { ProjectCoverService } from "./services/project-cover-service.js";
-import { createTraceRegistry } from "./agent/tracing/index.js";
 import { eq } from "drizzle-orm";
 import { projects } from "./db/schema.js";
 
@@ -119,6 +120,25 @@ const sessions = new AgentSessionRegistry({
   traces,
   emit: (event) => publish(event),
 });
+// 方案 3 / 书中异步事件：job 终态 → 结构化 [JOB_EVENT] 回注轨迹并续跑
+const jobWake = new JobWakeService(
+  chats,
+  async ({ projectId, threadId, text, taskId, runId, message }) => {
+    // appendPrompt 已在 JobWakeService 完成；此处广播 + 跑模型
+    if (traces?.enabled) {
+      traces.startRoot({
+        project_id: projectId,
+        thread_id: threadId,
+        run_id: runId,
+        inputs: { wake: true, task_id: taskId },
+      });
+    }
+    publish({ type: "chat_message", projectId, message: message as never });
+    await sessions.runJobWake({ projectId, threadId, runId, text });
+  },
+  (projectId, threadId) => sessions.isThreadBusy(projectId, threadId),
+);
+jobs.wake = jobWake;
 const chat = new ChatGateway(sessions, chats, traces);
 // publish 回填：从此刻起，Agent/Job 抛出的事件统一进 ChatGateway，由它按连接 fan-out
 publish = chat.emit;

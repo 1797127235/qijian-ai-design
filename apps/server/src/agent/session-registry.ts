@@ -49,6 +49,9 @@ export class AgentSessionRegistry {
   private readonly jobStore: SessionFactoryDependencies["jobStore"];
   private readonly files: SessionFactoryDependencies["files"];
   private readonly captions?: ImageCaptionStore;
+  private readonly chats: SessionFactoryDependencies["chats"];
+  private readonly emit: SessionFactoryDependencies["emit"];
+  private readonly traces?: SessionFactoryDependencies["traces"];
   /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源。 */
   private readonly selectionBySession = new Map<string, string[]>();
   private shuttingDown = false;
@@ -65,6 +68,47 @@ export class AgentSessionRegistry {
     this.jobStore = deps.jobStore;
     this.files = deps.files;
     this.captions = deps.captions;
+    this.chats = deps.chats;
+    this.emit = deps.emit;
+    this.traces = deps.traces;
+  }
+
+  /** thread 是否有进行中的 agent run（wake 互斥）。 */
+  isThreadBusy(projectId: string, threadId: string): boolean {
+    const runs = this.activeRunIds.get(`${projectId}:${threadId}`);
+    return Boolean(runs && runs.length > 0);
+  }
+
+  /**
+   * Job 终态 wake：DESK + JOB_EVENT 已写在 text 里时仍刷新桌面局面。
+   * 调用方须已 appendPrompt 得到 runId；本方法只跑模型与 finish。
+   */
+  async runJobWake(args: {
+    projectId: string;
+    threadId: string;
+    runId: string;
+    text: string;
+  }): Promise<void> {
+    const { projectId, threadId, runId, text } = args;
+    try {
+      await this.prompt(projectId, threadId, text, [], runId, []);
+      const outcome = await this.chats.summarizeRunTools(runId);
+      const statusMessage = await this.chats.finishRun(runId, outcome.status, outcome.error);
+      if (statusMessage) this.emit({ type: "chat_message", projectId, message: statusMessage });
+      this.traces?.markProductFinished(runId, {
+        status: outcome.status === "failed" ? "error" : "ok",
+        outputs: { run_status: outcome.status, wake: true },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "job wake 失败";
+      const statusMessage = await this.chats.finishRun(runId, "failed", message);
+      if (statusMessage) this.emit({ type: "chat_message", projectId, message: statusMessage });
+      this.traces?.markProductFinished(runId, {
+        status: "error",
+        outputs: { run_status: "failed", wake: true },
+      });
+      throw error;
+    }
   }
 
   /**
@@ -149,6 +193,8 @@ export class AgentSessionRegistry {
       if (index >= 0) activeRuns.splice(index, 1);
       if (activeRuns.length === 0) this.activeRunIds.delete(key);
       this.scheduleIdle(key, pending);
+      // 通知 wake 队列：本 thread 可能已空闲
+      this.jobs?.wake?.notifyThreadIdle(projectId, threadId);
     }
   }
 

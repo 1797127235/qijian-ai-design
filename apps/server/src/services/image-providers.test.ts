@@ -4,6 +4,7 @@ import {
   findDuplicateModelIds,
   listModelChoices,
   loadImageProviders,
+  matchImageModelId,
   normalizeGenerationsUrl,
   resolveImageRoute,
   warnDuplicateImageModels,
@@ -70,6 +71,24 @@ describe("image providers", () => {
     });
     const route = resolveImageRoute(providers, "nope", false);
     expect(route).toEqual({ ok: false, reason: "unknown_model", model: "nope" });
+  });
+
+  it("normalizes spaced model names to allowlist id (E2)", () => {
+    const providers = loadImageProviders({
+      IMAGE_API_URL: "https://a.example/v1/images/generations",
+      IMAGE_API_KEY: "k1",
+      IMAGE_MODEL: "grok-a",
+      IMAGE_MODEL_OPTIONS: "grok-a",
+      IMAGE_PROVIDER_2_URL: "https://b.example/v1",
+      IMAGE_PROVIDER_2_KEY: "k2",
+      IMAGE_PROVIDER_2_MODELS: "gpt-image-2",
+      IMAGE_PROVIDER_2_ID: "o2a",
+    });
+    const route = resolveImageRoute(providers, "gpt image2", false);
+    expect(route).toMatchObject({ ok: true, model: "gpt-image-2" });
+    expect(matchImageModelId("gpt image2", ["gpt-image-2"])).toBe("gpt-image-2");
+    expect(matchImageModelId("nope", ["gpt-image-2"])).toBeNull();
+    expect(matchImageModelId(undefined, ["gpt-image-2"])).toBeUndefined();
   });
 
   it("uses primary editModel when forEdit and no model requested", () => {

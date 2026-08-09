@@ -198,4 +198,112 @@ describe("generate_from_desk (async job)", () => {
       referenceArtifactIds: ["mat-1"],
     }));
   });
+
+  it("forwards allowlisted model to prepare and job input (E2)", async () => {
+    const prepare = vi.fn().mockResolvedValue({
+      pending: {
+        artifact: { id: "fx-m" },
+        version: { id: "vm", status: "draft" },
+        object: { artifact_id: "fx-m", kind: "effect_image", x: 1, y: 2, rot: 0 },
+        connection: { id: "cm", from: "img-1", to: "fx-m" },
+        status: "pending",
+      },
+      composedPrompt: "中文说明图",
+      userPrompt: "中文说明图",
+      referenceFileIds: [],
+      origin: "agent_chat",
+      createdBy: "agent",
+      lockKey: "p1:img-1",
+      model: "gpt-image-2",
+    });
+    const run = vi.fn().mockImplementation(async (opts: {
+      prepare: (id: string) => Promise<unknown>;
+      input: Record<string, unknown>;
+    }) => {
+      await opts.prepare("job-m");
+      return {
+        text: "已开始",
+        details: { ok: true, async: true, status: "accepted", task_id: "job-m", kind: "generate_from_desk", artifact_id: "fx-m" },
+      };
+    });
+    const ctx = baseCtx({
+      deps: {
+        generate: { prepare, complete: vi.fn() },
+        jobs: { run },
+        imageModelOptions: ["grok-imagine-image-quality", "gpt-image-2"],
+      } as never,
+    });
+    const tool = createGenerateFromDeskTool(ctx);
+    await tool.execute(
+      "call-m",
+      { prompt: "中文说明图", model: "gpt image2" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-image-2" }));
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ model: "gpt-image-2" }),
+    }));
+  });
+
+  it("fails on unknown model without starting a job (E2)", async () => {
+    const run = vi.fn();
+    const prepare = vi.fn();
+    const ctx = baseCtx({
+      deps: {
+        generate: { prepare },
+        jobs: { run },
+        imageModelOptions: ["grok-imagine-image-quality", "gpt-image-2"],
+      } as never,
+    });
+    const tool = createGenerateFromDeskTool(ctx);
+    const result = await tool.execute(
+      "call-bad-m",
+      { prompt: "随便", model: "midjourney-v99" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    expect(textOf(result)).toContain("未知生图 model");
+    expect(textOf(result)).toContain("gpt-image-2");
+    expect(result.details).toMatchObject({ ok: false, reason: "unknown_model", model: "midjourney-v99" });
+    expect(run).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("omits model when not requested so default path stays unchanged", async () => {
+    const prepare = vi.fn().mockResolvedValue({
+      pending: {
+        artifact: { id: "fx-d" },
+        version: { id: "vd", status: "draft" },
+        object: { artifact_id: "fx-d", kind: "effect_image", x: 1, y: 2, rot: 0 },
+        connection: { id: "cd", from: "img-1", to: "fx-d" },
+        status: "pending",
+      },
+      composedPrompt: "默认",
+      userPrompt: "默认",
+      referenceFileIds: [],
+      origin: "agent_chat",
+      createdBy: "agent",
+      lockKey: "p1:img-1",
+    });
+    const run = vi.fn().mockImplementation(async (opts: { prepare: (id: string) => Promise<unknown> }) => {
+      await opts.prepare("job-d");
+      return {
+        text: "已开始",
+        details: { ok: true, async: true, status: "accepted", task_id: "job-d", kind: "generate_from_desk", artifact_id: "fx-d" },
+      };
+    });
+    const ctx = baseCtx({
+      deps: {
+        generate: { prepare, complete: vi.fn() },
+        jobs: { run },
+        imageModelOptions: ["gpt-image-2"],
+      } as never,
+    });
+    const tool = createGenerateFromDeskTool(ctx);
+    await tool.execute("call-d", { prompt: "默认" }, undefined, undefined, {} as never);
+    expect(prepare).toHaveBeenCalledWith(expect.not.objectContaining({ model: expect.anything() }));
+  });
 });

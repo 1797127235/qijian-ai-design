@@ -74,7 +74,7 @@ npm run dev:server
 
 - **model id 全局唯一**；跨网关重复时先注册的网关生效，启动会 `console.warn`。
 - 面板选定 model 后，文生图与 edits 使用同一 model id。
-- **Agent** `generate_from_desk` 不传 model，始终走主站默认（`IMAGE_MODEL` / 主站 `models[0]`）。
+- **Agent** `generate_from_desk` 可传 `model`（与面板同一 allowlist）；省略则主站默认。未知 model 失败，禁止静默回落。
 
 工具白名单：`generate_from_desk`、`get_task`、`look_at_desk`、`look_at`（`AGENT_DEBUG_IMAGE_TOOL=1` 时另有调试图工具）。
 

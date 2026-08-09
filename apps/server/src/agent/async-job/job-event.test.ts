@@ -1,0 +1,49 @@
+import { describe, expect, it } from "vitest";
+import {
+  formatJobEventBlock,
+  formatJobWakePrompt,
+  jobWakeExternalId,
+  shouldWakeAgentForJob,
+} from "./job-event.js";
+import type { AgentJobDto } from "./types.js";
+
+const base = (patch: Partial<AgentJobDto> = {}): AgentJobDto => ({
+  id: "job-1",
+  projectId: "p1",
+  threadId: "t1",
+  kind: "generate_from_desk",
+  status: "succeeded",
+  input: { prompt: "x", model: "gpt-image-2" },
+  artifactId: "fx-1",
+  createdAt: new Date().toISOString(),
+  ...patch,
+});
+
+describe("job-event", () => {
+  it("wakes only agent generate jobs on terminal status", () => {
+    expect(shouldWakeAgentForJob(base())).toBe(true);
+    expect(shouldWakeAgentForJob(base({ status: "failed" }))).toBe(true);
+    expect(shouldWakeAgentForJob(base({ status: "running" }))).toBe(false);
+    expect(shouldWakeAgentForJob(base({ threadId: undefined }))).toBe(false);
+    expect(shouldWakeAgentForJob(base({ kind: "caption_file" }))).toBe(false);
+  });
+
+  it("formats JOB_EVENT with model and public error", () => {
+    const block = formatJobEventBlock(base({
+      status: "failed",
+      error: "图像服务调用失败（HTTP 500）：do_request_failed",
+    }));
+    expect(block).toContain("[JOB_EVENT]");
+    expect(block).toContain("model=gpt-image-2");
+    expect(block).toContain("HTTP 500");
+    expect(block).not.toContain("任务失败");
+  });
+
+  it("wake prompt marks system event and forbids silent regenerate", () => {
+    const text = formatJobWakePrompt(base({ status: "failed", error: "boom" }));
+    expect(text).toContain("系统事件");
+    expect(text).toContain("禁止");
+    expect(text).toContain("generate_from_desk");
+    expect(jobWakeExternalId("abc")).toBe("job-wake:abc");
+  });
+});

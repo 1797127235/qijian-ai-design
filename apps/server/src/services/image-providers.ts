@@ -5,8 +5,37 @@
  * 约定：model id **全局唯一**；跨网关重复时先注册的 provider 生效，启动时 warn。
  * 用户选定 model 时，文生图与 edits 使用同一 model id（多数 OpenAI 兼容网关如此）。
  * 未指定 model 时：文生图用 models[0]，edits 用 editModel ?? models[0]。
- * Agent 路径不传 model → 始终主站默认。
+ * Agent / 面板均可传 model；未知 id 禁止静默回落主站（unknown_model）。
+ * 口语差异（空格/下划线/大小写）经 normalize 对齐到 allowlist 中的规范 id。
  */
+
+/**
+ * 用于 allowlist 比对的宽松键：小写 + 去掉空白/连字符/下划线等分隔符。
+ * 使「gpt image2」「gpt-image2」「gpt-image-2」对齐为同一键 gptimage2。
+ */
+export function normalizeImageModelKey(id: string): string {
+  return id.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * 将用户/Agent 给出的 model 字符串对齐到 allowlist 规范 id。
+ *  - 未传 / 空串 → undefined（调用方走默认）
+ *  - 命中（精确或 normalize 后）→ 规范 id
+ *  - 未命中 → null（调用方应 fail / 400，禁止 fallback）
+ */
+export function matchImageModelId(
+  requested: string | undefined,
+  knownIds: readonly string[],
+): string | undefined | null {
+  const raw = requested?.trim();
+  if (!raw) return undefined;
+  if (knownIds.includes(raw)) return raw;
+  const key = normalizeImageModelKey(raw);
+  for (const id of knownIds) {
+    if (normalizeImageModelKey(id) === key) return id;
+  }
+  return null;
+}
 
 export interface ImageProviderConfig {
   id: string;
@@ -179,9 +208,20 @@ export function resolveImageRoute(
   const primary = providers[0];
   const id = requestedModel?.trim();
   if (id) {
-    const provider = index.get(id);
+    let provider = index.get(id);
+    let model = id;
+    if (!provider) {
+      const key = normalizeImageModelKey(id);
+      for (const [mid, p] of index) {
+        if (normalizeImageModelKey(mid) === key) {
+          provider = p;
+          model = mid;
+          break;
+        }
+      }
+    }
     if (!provider) return { ok: false, reason: "unknown_model", model: id };
-    return { ok: true, provider, model: id };
+    return { ok: true, provider, model };
   }
   const fallbackModel = forEdit
     ? (primary.editModel ?? primary.models[0])

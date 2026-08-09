@@ -3,6 +3,7 @@
  *  - acceptedDetails → 工具 result.details：标准结构 {ok, async, status, task_id, kind, artifact_id}
  *  - acceptedToolText → 工具 result 的 text：给 LLM 读的中文提示，强调「未完成」
  *  - formatJobsStatusBlock → 当轮 prompt 的 [后台任务] 状态栏
+ *  - publicJobErrorForAgent → get_task / 状态栏共用的失败原因（禁止一律「任务失败」）
  */
 import type { AgentJobDto, AcceptedJobDetails } from "./types.js";
 
@@ -20,10 +21,29 @@ export function acceptedDetails(job: AgentJobDto, artifactId?: string): Accepted
   };
 }
 
-/** 工具 result.text：中文提示，明确「未完成」。 */
+/** 工具 result.text：中文提示，明确「未完成」；完成由系统事件回注，勿轮询。 */
 export function acceptedToolText(details: AcceptedJobDetails): string {
   const art = details.artifact_id ? `，桌面物件 ${details.artifact_id}` : "";
-  return `已开始「${details.kind}」（task_id=${details.task_id}${art}）。进度见桌面与后台任务状态；完成前不要声称已生成成功。`;
+  return `已开始「${details.kind}」（task_id=${details.task_id}${art}）。`
+    + "完成后系统会推送 [JOB_EVENT]；请先告知用户已开始，"
+    + "不要循环 get_task 等待，完成前不要声称已生成成功。";
+}
+
+/**
+ * 给 Agent 看的 job 失败原因。
+ * job.error 入库前多已经过 publicGenerateError 等脱敏；此处只做截断与轻度清洗，
+ * **禁止**再抹成笼统的「任务失败」（否则 get_task 与状态栏丢失 HTTP/model 信息）。
+ */
+export function publicJobErrorForAgent(error: string | undefined | null, maxLen = 200): string | undefined {
+  if (error == null) return undefined;
+  let text = String(error).trim().replace(/\s+/g, " ");
+  if (!text) return undefined;
+  // 去掉绝对路径与 query 串，避免把内部路径喂给模型
+  text = text
+    .replace(/\/(?:home|Users|var|tmp|media)\/\S+/g, "[path]")
+    .replace(/https?:\/\/\S+/gi, "[url]");
+  if (text.length > maxLen) text = `${text.slice(0, maxLen - 1)}…`;
+  return text;
 }
 
 /** caption 类 job 不进 Survey 状态栏（保持 cheap）。 */
@@ -35,7 +55,8 @@ export function formatJobsStatusBlock(jobs: AgentJobDto[]): string {
   if (visible.length === 0) return "";
   const lines = visible.map((job) => {
     const art = job.artifactId ? ` artifact=${job.artifactId}` : "";
-    const err = job.error ? " error=任务失败" : "";
+    const publicErr = publicJobErrorForAgent(job.error, 120);
+    const err = publicErr ? ` error=${publicErr}` : "";
     const prompt = jobLabel(job);
     return `- ${job.status}  ${job.kind}  task=${job.id}${art}${prompt}${err}`;
   });

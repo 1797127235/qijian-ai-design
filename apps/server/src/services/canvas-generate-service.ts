@@ -11,9 +11,9 @@ import { composeSideBySide, cropImage, type ImageRegion } from "./image-crop.js"
 import type { ImageGenerator, ReferenceFile } from "./image-generator.js";
 
 /**
- * 局部重绘的参考图组装（纯编排，便于单测）：
+ * 局部重绘的参考图组：
  *  - 有 region：裁剪源图（referenceFiles[0]，collectReferences 保证源在最前）替换整图
- *  - region + 上传参考图：「裁剪 | 参考」左右合成单张（grok edit 只收单图）
+ *  - region + 上传参考图：「裁剪 | 参考」左右合成单张
  *  - 只有上传参考图：参考图作为唯一 ref
  *  - 都没有：原样返回（整图生成回归路径）
  */
@@ -96,15 +96,30 @@ const EFFECT_WIDTH = 220;
 const PLACE_GAP = 60;
 const GENERATE_TIMEOUT_MS = 120_000;
 
-/** 对用户/落库可见的错误文案：去掉路径、URL、堆栈等内部细节。 */
-function publicGenerateError(raw: string): string {
+/**
+ * 对用户/落库可见的错误文案：去掉路径、URL、堆栈等内部细节，
+ * 但保留「未知 model / 上游 HTTP 状态 / 网关业务错误」等可行动信息。
+ */
+export function publicGenerateError(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "生成失败";
   if (/已取消|超时|Abort/.test(trimmed)) return "生成已取消或超时";
   if (/网络|timeout|ETIMEDOUT|ECONN/i.test(trimmed)) return "图像服务暂时不可用，请稍后重试";
   if (/尚未配置|IMAGE_API/.test(trimmed)) return "图像服务未配置";
-  if (/超过 20MB|无法归档|无效响应|不支持|不允许的图片主机|图片类型/.test(trimmed)) {
-    return trimmed.slice(0, 120);
+  if (/未知生图 model|unknown_model/i.test(trimmed)) {
+    return trimmed.replace(/\s+/g, " ").slice(0, 200);
+  }
+  // HttpImageGenerator: 图像服务调用失败：503{...} / 400{...}
+  const httpCall = trimmed.match(/图像服务调用失败：(\d{3})(.*)$/);
+  if (httpCall) {
+    const status = httpCall[1];
+    const detail = httpCall[2].replace(/\s+/g, " ").trim().slice(0, 160);
+    return detail
+      ? `图像服务调用失败（HTTP ${status}）：${detail}`
+      : `图像服务调用失败（HTTP ${status}）`;
+  }
+  if (/超过 20MB|无法归档|无效响应|不支持|不允许的图片主机|图片类型|图像服务/.test(trimmed)) {
+    return trimmed.replace(/\s+/g, " ").slice(0, 200);
   }
   return "生成失败，请稍后重试";
 }
