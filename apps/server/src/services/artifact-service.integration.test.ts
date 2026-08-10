@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { createDatabase, type Database } from "../db/client.js";
-import { artifacts, storedFiles } from "../db/schema.js";
+import { artifacts, artifactVersions, storedFiles } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { ArtifactService } from "./artifact-service.js";
 import { DeskStateService } from "./desk-state-service.js";
@@ -68,6 +68,35 @@ describe("ArtifactService placed-object lifecycle (integration)", () => {
       await service.createPlaced(project.id, "canvas_image", { payload: {}, createdBy: "designer" }, layout, "op-b");
       const snapshot = await desks.snapshot(project.id);
       expect(snapshot.artifacts).toHaveLength(2);
+    } finally {
+      await desks.deleteProject(project.id);
+    }
+  });
+
+  itDb("rejects a late generated version when the current version changed", async () => {
+    const project = await desks.createProject("it-version-fence");
+    try {
+      const placed = await service.createPlaced(
+        project.id,
+        "effect_image",
+        { payload: { pending: true }, createdBy: "designer" },
+        { kind: "effect_image", x: 0, y: 0, rot: 0 },
+      );
+      const newer = await service.append(placed.artifact.id, {
+        payload: { pending: true, prompt: "newer request" },
+        createdBy: "designer",
+      });
+
+      await expect(service.append(placed.artifact.id, {
+        payload: { pending: true, prompt: "late result" },
+        createdBy: "designer",
+      }, { expectedCurrentVersion: 1 })).rejects.toThrow("目标图片版本已变化");
+
+      const current = await service.current(placed.artifact.id);
+      expect(current.id).toBe(newer.id);
+      const versions = await db!.select().from(artifactVersions)
+        .where(eq(artifactVersions.artifactId, placed.artifact.id));
+      expect(versions).toHaveLength(2);
     } finally {
       await desks.deleteProject(project.id);
     }

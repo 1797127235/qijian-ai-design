@@ -53,4 +53,21 @@ export function registerArtifactRoutes(app: Hono, deps: { artifacts: ArtifactSer
     const input = await body(c.req.raw, z.object({ versionId: z.string().uuid().optional() }));
     return c.json(await deps.artifacts.rollback(c.req.param("id"), input.versionId));
   });
+
+  /**
+   * 用户改展示名：只改 artifacts.display_name 列，不 append 图像 version。
+   * body.displayName=null 表示清空（source 仍为 user，禁止在途 model 命名覆盖）。
+   * 会抬升 name_version / generation_token，使已入队的旧 artifact.name 任务写回失败。
+   */
+  app.patch("/api/artifacts/:id/display-name", async (c) => {
+    const input = await body(c.req.raw, z.object({
+      displayName: z.string().max(32).nullable(),
+    }));
+    const row = await deps.artifacts.setDisplayName(c.req.param("id"), input.displayName, "user");
+    return c.json({
+      id: row.id,
+      displayName: row.displayName,
+      displayNameSource: row.displayNameSource,
+    });
+  });
 }

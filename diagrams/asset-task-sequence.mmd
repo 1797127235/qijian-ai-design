@@ -1,0 +1,60 @@
+sequenceDiagram
+  autonumber
+  actor Client as 设计工作台或 Agent
+  participant API as Hono API
+  participant PG as PostgreSQL
+  participant Dispatcher as Outbox Dispatcher
+  participant Queue as Redis/BullMQ
+  participant Worker as AssetTaskWorker
+  participant Provider as 图片或文本 Provider
+  participant Poller as Event Poller
+  participant Consumer as UI 或 Agent JobWake
+
+  Client->>API: 提交单张、批量或 Agent 生图请求
+  API->>API: 校验归属并冻结 payload
+  API->>PG: BEGIN 写 task、pending artifact、Outbox
+  PG-->>API: COMMIT task_id
+  API-->>Client: 201 accepted + task_id
+
+  loop Outbox 投递
+    Dispatcher->>PG: claim pending Outbox
+    Dispatcher->>Queue: add(jobId = task_id, payload)
+    Queue-->>Dispatcher: 已存在或入队成功
+    Dispatcher->>PG: 标记 enqueued
+  end
+
+  Queue->>Worker: 分发 Job
+  Worker->>PG: 读取任务并 tryMarkRunning
+  alt 已终态或已取消
+    PG-->>Worker: 保存的终态
+    Worker-->>Queue: 返回，不重复执行
+  else 可执行 image.generate
+    Worker->>PG: 检查取消意图和 generation operation
+    Worker->>Provider: 使用稳定 operation id 请求生成
+    alt Provider 明确成功
+      Provider-->>Worker: 图片结果
+      Worker->>PG: CAS 追加版本、推进资产、写 succeeded 事件
+      Worker->>PG: 事务受理 artifact.name 与 Outbox
+    else Provider 结果不明确
+      Provider--xWorker: 超时且无法查询结果
+      Worker->>PG: 写 needs_review 事件
+    else 明确失败或取消
+      Provider-->>Worker: 明确错误或取消
+      Worker->>PG: 写 failed 或 cancelled 事件
+    end
+  end
+
+  opt 图片成功后的软命名任务
+    Dispatcher->>PG: claim 命名 Outbox
+    Dispatcher->>Queue: 入队 artifact.name
+    Queue->>Worker: 分发命名 Job
+    Worker->>Provider: 请求短名称
+    Provider-->>Worker: 模型名称
+    Worker->>PG: generation token 条件写回并写终态事件
+  end
+
+  loop 持久事件消费
+    Poller->>PG: 拉取未消费 task.terminal
+    Poller->>Consumer: UI 状态更新或 Agent JobWake
+    Poller->>PG: 标记事件已消费
+  end

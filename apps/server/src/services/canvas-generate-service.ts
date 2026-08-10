@@ -4,7 +4,7 @@ import { storedFiles } from "../db/schema.js";
 import type { ArtifactType, DeskConnection, DeskLayoutObject } from "../domain/types.js";
 import type { ImageCaptionService } from "./image-caption-service.js";
 import { HttpError } from "../lib/errors.js";
-import type { ArtifactService } from "./artifact-service.js";
+import type { ArtifactService, DatabaseTransaction } from "./artifact-service.js";
 import type { DeskStateService } from "./desk-state-service.js";
 import type { FileStorage } from "./file-storage.js";
 import { composeSideBySide, cropImage, type ImageRegion } from "./image-crop.js";
@@ -310,7 +310,10 @@ export class CanvasGenerateService {
     return `${projectId}:${clientOpId}`;
   }
 
-  /** 面板路径：同步 prepare + complete。 */
+  /**
+   * @deprecated Production uses TaskQueue + Worker (`ImageTaskExecutor`).
+   * Kept for tests / rare sync callers; do not wire new HTTP/Agent paths here.
+   */
   async generate(input: GenerateFromCanvasInput): Promise<GenerateFromCanvasResult> {
     const key = this.opKey(input.projectId, input.clientOpId);
     const hit = this.recent.get(key);
@@ -332,13 +335,14 @@ export class CanvasGenerateService {
    * 仅落 pending 卡 + 连线（同步）。Agent async 路径先调此方法再 return accepted。
    * 无 sourceArtifactId：无源 spawn（文生图）；禁止 targetArtifactId。
    */
-  async prepare(input: GenerateFromCanvasInput): Promise<PreparedGenerate> {
+  async prepare(input: GenerateFromCanvasInput, tx?: DatabaseTransaction): Promise<PreparedGenerate> {
     const origin = input.source ?? "canvas_panel";
     const createdBy = input.createdBy ?? "designer";
     const sourceId = input.sourceArtifactId?.trim() || "";
+    const db = tx ?? this.db;
 
     if (input.referenceFileId) {
-      const [row] = await this.db
+      const [row] = await db
         .select({ id: storedFiles.id })
         .from(storedFiles)
         .where(and(eq(storedFiles.id, input.referenceFileId), eq(storedFiles.projectId, input.projectId)));
@@ -352,10 +356,10 @@ export class CanvasGenerateService {
       if (input.region) {
         throw new HttpError(422, "无主源文生图不支持局部重绘");
       }
-      return this.prepareSpawn(input, origin, createdBy);
+      return this.prepareSpawn(input, origin, createdBy, tx);
     }
 
-    const snapshot = await this.desks.snapshot(input.projectId);
+    const snapshot = await this.desks.snapshot(input.projectId, tx);
     const source = snapshot.artifacts.find((a) => a.id === sourceId);
     const sourceLayout = snapshot.deskState.objects.find((o) => o.artifact_id === sourceId);
     if (!source || !sourceLayout) throw new HttpError(404, "源物件不在桌面上");
@@ -388,6 +392,7 @@ export class CanvasGenerateService {
         createdBy,
         extraRefIds,
         payloadFields,
+        tx,
       )
       : await this.prepareNewTarget(
         { ...input, sourceArtifactId: sourceId },
@@ -397,6 +402,7 @@ export class CanvasGenerateService {
         createdBy,
         extraRefIds,
         payloadFields,
+        tx,
       );
 
     const pending: GenerateFromCanvasResult = {
@@ -406,10 +412,12 @@ export class CanvasGenerateService {
       connection: preparedTarget.connection,
       status: "pending",
     };
-    this.recent.set(this.opKey(input.projectId, input.clientOpId), {
-      result: pending,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
+    if (!tx) {
+      this.recent.set(this.opKey(input.projectId, input.clientOpId), {
+        result: pending,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
+    }
 
     return {
       pending,
@@ -435,8 +443,9 @@ export class CanvasGenerateService {
     input: GenerateFromCanvasInput,
     origin: GenerateSource,
     createdBy: GenerateCreatedBy,
+    tx?: DatabaseTransaction,
   ): Promise<PreparedGenerate> {
-    const snapshot = await this.desks.snapshot(input.projectId);
+    const snapshot = await this.desks.snapshot(input.projectId, tx);
     const extraRefIds = [...new Set((input.referenceArtifactIds ?? []).filter(Boolean))];
     const referenceFileIds: string[] = [];
     for (const id of extraRefIds) {
@@ -479,18 +488,19 @@ export class CanvasGenerateService {
       rot: 0,
       w: free.w,
     };
-    const placed = await this.artifacts.createPlaced(
-      input.projectId,
-      "effect_image",
-      {
+    const placed = tx
+      ? await this.artifacts.createPlacedInTransaction(tx, input.projectId, "effect_image", {
         payload: { pending: true, ...payloadFields },
         inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
         status: "draft",
         createdBy,
-      },
-      layout,
-      input.clientOpId,
-    );
+      }, layout)
+      : await this.artifacts.createPlaced(input.projectId, "effect_image", {
+        payload: { pending: true, ...payloadFields },
+        inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
+        status: "draft",
+        createdBy,
+      }, layout, input.clientOpId);
 
     let connection: DeskConnection | undefined;
     for (let i = 0; i < extraRefIds.length; i++) {
@@ -498,12 +508,9 @@ export class CanvasGenerateService {
       if (from === placed.artifact.id) continue;
       const onDesk = snapshot.deskState.objects.some((o) => o.artifact_id === from);
       if (!onDesk) continue;
-      const conn = await this.desks.createConnection(
-        input.projectId,
-        from,
-        placed.artifact.id,
-        `${input.clientOpId}:spawn-conn:${i}`,
-      );
+      const conn = tx
+        ? (await this.desks.createConnectionInTransaction(tx, input.projectId, from, placed.artifact.id)) .connection
+        : await this.desks.createConnection(input.projectId, from, placed.artifact.id, `${input.clientOpId}:spawn-conn:${i}`);
       if (!connection) connection = conn;
     }
 
@@ -514,10 +521,12 @@ export class CanvasGenerateService {
       connection,
       status: "pending",
     };
-    this.recent.set(this.opKey(input.projectId, input.clientOpId), {
-      result: pending,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
+    if (!tx) {
+      this.recent.set(this.opKey(input.projectId, input.clientOpId), {
+        result: pending,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
+    }
 
     return {
       pending,
@@ -678,6 +687,7 @@ export class CanvasGenerateService {
     createdBy: GenerateCreatedBy,
     extraRefIds: string[],
     payloadFields: ReturnType<typeof generationPayloadFields>,
+    tx?: DatabaseTransaction,
   ) {
     // 默认「主源右侧」；已被占用则找空位，避免多旁落叠成一堆。
     const preferred = {
@@ -696,18 +706,19 @@ export class CanvasGenerateService {
       rot: 0,
       w: free.w,
     };
-    const placed = await this.artifacts.createPlaced(
-      input.projectId,
-      "effect_image",
-      {
+    const placed = tx
+      ? await this.artifacts.createPlacedInTransaction(tx, input.projectId, "effect_image", {
         payload: { pending: true, ...payloadFields },
         inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
         status: "draft",
         createdBy,
-      },
-      layout,
-      input.clientOpId,
-    );
+      }, layout)
+      : await this.artifacts.createPlaced(input.projectId, "effect_image", {
+        payload: { pending: true, ...payloadFields },
+        inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
+        status: "draft",
+        createdBy,
+      }, layout, input.clientOpId);
     const sourceArtifactId = input.sourceArtifactId!;
     const connection = await this.linkInputsToEffect(
       input.projectId,
@@ -715,6 +726,7 @@ export class CanvasGenerateService {
       sourceArtifactId,
       extraRefIds,
       input.clientOpId,
+      tx,
     );
     return {
       artifactId: placed.artifact.id,
@@ -732,6 +744,7 @@ export class CanvasGenerateService {
     createdBy: GenerateCreatedBy,
     extraRefIds: string[],
     payloadFields: ReturnType<typeof generationPayloadFields>,
+    tx?: DatabaseTransaction,
   ) {
     const targetId = input.targetArtifactId!;
     const sourceArtifactId = input.sourceArtifactId!;
@@ -748,14 +761,22 @@ export class CanvasGenerateService {
       sourceArtifactId,
       extraRefIds,
       input.clientOpId,
+      tx,
     );
 
-    const version = await this.artifacts.append(targetId, {
+    const version = tx
+      ? (await this.artifacts.appendInTransaction(tx, targetId, {
       payload: { pending: true, ...payloadFields },
       inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
       status: "draft",
       createdBy,
-    });
+      })).version
+      : await this.artifacts.append(targetId, {
+        payload: { pending: true, ...payloadFields },
+        inputRefs: referenceFileIds.map((file_id) => ({ file_id })),
+        status: "draft",
+        createdBy,
+      });
 
     return {
       artifactId: targetId,
@@ -773,18 +794,16 @@ export class CanvasGenerateService {
     sourceArtifactId: string,
     extraRefIds: string[],
     clientOpId: string,
+    tx?: DatabaseTransaction,
   ) {
     const fromIds = [sourceArtifactId, ...extraRefIds.filter((id) => id !== sourceArtifactId)]
       .filter((from) => from !== effectId);
     let primary: DeskConnection | undefined;
     for (let i = 0; i < fromIds.length; i++) {
       const from = fromIds[i];
-      const connection = await this.desks.createConnection(
-        projectId,
-        from,
-        effectId,
-        `${clientOpId}:conn:${i}`,
-      );
+      const connection = tx
+        ? (await this.desks.createConnectionInTransaction(tx, projectId, from, effectId)).connection
+        : await this.desks.createConnection(projectId, from, effectId, `${clientOpId}:conn:${i}`);
       if (from === sourceArtifactId) primary = connection;
       else if (!primary) primary = connection;
     }

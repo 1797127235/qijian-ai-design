@@ -128,6 +128,13 @@ export const artifacts = pgTable(
     projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
     artifactType: text("artifact_type").notNull(),
     currentVersionId: uuid("current_version_id"),
+    /** 人读展示名；与 version payload 分离，生图 complete 不得抹掉 */
+    displayName: text("display_name"),
+    /** user | model；user 不可被模型起名覆盖 */
+    displayNameSource: text("display_name_source"),
+    displayNameUpdatedAt: timestamp("display_name_updated_at", { withTimezone: true }),
+    displayNameVersion: integer("display_name_version").notNull().default(0),
+    displayNameGenerationToken: text("display_name_generation_token"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("artifacts_project_idx").on(table.projectId), index("artifacts_type_idx").on(table.artifactType)],
@@ -208,6 +215,34 @@ export const chatMessageAttachments = pgTable(
   ],
 );
 
+/** 用户可见的资产任务批次；命名软任务不计入 total。 */
+export const taskBatches = pgTable(
+  "task_batches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    status: text("status")
+      .$type<"accepted" | "running" | "succeeded" | "partial_failed" | "failed" | "cancelled" | "cancelled_with_side_effect">()
+      .notNull()
+      .default("accepted"),
+    total: integer("total").notNull(),
+    completed: integer("completed").notNull().default(0),
+    succeeded: integer("succeeded").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    cancelled: integer("cancelled").notNull().default(0),
+    input: jsonb("input").$type<unknown>().notNull().default(sql`'{}'::jsonb`),
+    errorSummary: jsonb("error_summary").$type<unknown>(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("task_batches_project_status_idx").on(table.projectId, table.status),
+    index("task_batches_project_created_idx").on(table.projectId, table.createdAt),
+  ],
+);
+
 /**
  * Agent 异步任务（job）：生命周期长于单次 tool_call 时使用。
  *  - 工具受理时 insert 一行 accepted，工具执行中 running，最终 succeeded/failed/cancelled/interrupted
@@ -223,11 +258,21 @@ export const agentJobs = pgTable(
     /** 面板生图可无 thread；Agent 工具路径必填 */
     threadId: uuid("thread_id").references(() => chatThreads.id, { onDelete: "cascade" }),
     runId: uuid("run_id").references(() => chatRuns.id, { onDelete: "set null" }),
+    batchId: uuid("batch_id").references(() => taskBatches.id, { onDelete: "cascade" }),
     kind: text("kind").notNull(),
     status: text("status")
-      .$type<"accepted" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted">()
+      .$type<"enqueue_pending" | "accepted" | "running" | "succeeded" | "failed" | "cancelled" | "cancelled_with_side_effect" | "needs_review" | "interrupted">()
       .notNull()
       .default("accepted"),
+    taskRole: text("task_role").$type<"image" | "name">().notNull().default("image"),
+    /**
+     * Runtime is BullMQ-only. Column may still read `legacy` on pre-migration rows
+     * for audit; new writes must always be `bullmq` (TaskStore hardcodes it).
+     */
+    queueBackend: text("queue_backend").$type<"legacy" | "bullmq">().notNull().default("bullmq"),
+    queueJobId: text("queue_job_id"),
+    payloadVersion: integer("payload_version").notNull().default(1),
+    attempt: integer("attempt").notNull().default(0),
     input: jsonb("input").$type<unknown>().notNull().default(sql`'{}'::jsonb`),
     result: jsonb("result").$type<unknown>(),
     artifactId: uuid("artifact_id"),
@@ -236,6 +281,8 @@ export const agentJobs = pgTable(
     traceRootId: text("trace_root_id"),
     traceParentId: text("trace_parent_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    enqueuedAt: timestamp("enqueued_at", { withTimezone: true }),
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
@@ -243,6 +290,79 @@ export const agentJobs = pgTable(
     index("agent_jobs_project_status_idx").on(table.projectId, table.status),
     index("agent_jobs_project_created_idx").on(table.projectId, table.createdAt),
     index("agent_jobs_run_status_idx").on(table.runId, table.status),
+    index("agent_jobs_batch_status_idx").on(table.batchId, table.status),
+    index("agent_jobs_backend_status_idx").on(table.queueBackend, table.status),
+    unique("agent_jobs_queue_identity_unique").on(table.queueBackend, table.queueJobId),
+  ],
+);
+
+/** 与任务/pending artifact 同事务写入，由 dispatcher 至少一次投递到 BullMQ。 */
+export const taskQueueOutbox = pgTable(
+  "task_queue_outbox",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id").notNull().references(() => agentJobs.id, { onDelete: "cascade" }).unique(),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    status: text("status").$type<"pending" | "claimed" | "enqueued" | "failed">().notNull().default("pending"),
+    payload: jsonb("payload").$type<unknown>().notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lockOwner: text("lock_owner"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    enqueuedAt: timestamp("enqueued_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("task_queue_outbox_dispatch_idx").on(table.status, table.availableAt),
+    index("task_queue_outbox_project_idx").on(table.projectId),
+  ],
+);
+
+/** 外部生图请求与本地 finalize 的持久化边界。 */
+export const generationOperations = pgTable(
+  "generation_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id").notNull().references(() => agentJobs.id, { onDelete: "cascade" }).unique(),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    operationKey: text("operation_key").notNull().unique(),
+    status: text("status")
+      .$type<"prepared" | "provider_pending" | "provider_succeeded" | "downloaded" | "finalized" | "failed" | "needs_review">()
+      .notNull()
+      .default("prepared"),
+    providerRequestId: text("provider_request_id"),
+    attempt: integer("attempt").notNull().default(0),
+    targetArtifactId: uuid("target_artifact_id"),
+    expectedTargetVersion: integer("expected_target_version").notNull(),
+    resultFileId: uuid("result_file_id").references(() => storedFiles.id, { onDelete: "set null" }),
+    result: jsonb("result").$type<unknown>(),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("generation_operations_project_status_idx").on(table.projectId, table.status),
+    index("generation_operations_target_idx").on(table.targetArtifactId),
+  ],
+);
+
+/** Worker/API 跨进程消费的持久任务事件；event_key 负责去重。 */
+export const taskEvents = pgTable(
+  "task_events",
+  {
+    id: serial("id").primaryKey(),
+    taskId: uuid("task_id").notNull().references(() => agentJobs.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    eventKey: text("event_key").notNull().unique(),
+    type: text("type").notNull(),
+    payload: jsonb("payload").$type<unknown>().notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("task_events_project_id_idx").on(table.projectId, table.id),
+    index("task_events_task_id_idx").on(table.taskId, table.id),
   ],
 );
 

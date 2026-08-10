@@ -134,6 +134,34 @@
       "when": 1786173413265,
       "tag": "0018_left_the_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786600000000,
+      "tag": "0019_artifact_display_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786700000000,
+      "tag": "0020_unified_asset_tasks",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0021_artifact_name_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0022_bullmq_only",
+      "breakpoints": true
     }
   ]
 }

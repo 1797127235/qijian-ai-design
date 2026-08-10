@@ -10,6 +10,8 @@ export type DeskObject =
       status: "draft" | "confirmed";
       /** 与 Agent Survey 一致的桌面编号（A01…），按 desk_state.objects 顺序 */
       alias?: string;
+      /** 人读展示名（display_name ?? 本地 fallback） */
+      label?: string;
       /** 空占位卡无 url；上传或生成填回后存在 */
       url?: string;
       pending?: boolean;
@@ -34,6 +36,8 @@ export type DeskObject =
       status: "draft" | "confirmed";
       /** 与 Agent Survey 一致的桌面编号（A01…） */
       alias?: string;
+      /** 人读展示名（display_name ?? 本地 fallback） */
+      label?: string;
       url?: string;
       pending?: boolean;
       error?: string;

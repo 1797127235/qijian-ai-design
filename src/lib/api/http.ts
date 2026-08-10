@@ -88,6 +88,12 @@ export const api = {
     request<{ versionNo: number }>(`/api/artifacts/${artifactId}/versions`, json("POST", { payload, ...(inputRefs ? { inputRefs } : {}) })),
   rollbackArtifact: (artifactId: string, versionId?: string) =>
     request<{ versionNo: number }>(`/api/artifacts/${artifactId}/rollback`, json("POST", versionId ? { versionId } : {})),
+  /** 改展示名：不 append 图像 version */
+  setDisplayName: (artifactId: string, displayName: string | null) =>
+    request<{ id: string; displayName: string | null; displayNameSource: string | null }>(
+      `/api/artifacts/${artifactId}/display-name`,
+      json("PATCH", { displayName }),
+    ),
   uploadFile: async (projectId: string, file: File, signal?: AbortSignal) => {
     const form = new FormData();
     form.append("file", file);

@@ -75,9 +75,9 @@ npm run dev:server
 - **model id 全局唯一**；跨网关重复时先注册的网关生效，启动会 `console.warn`。
 - 面板选定 model 后，文生图与 edits 使用同一 model id。
 - **Agent** 生图工具可传 `model`（与面板同一 allowlist）；省略则主站默认。未知 model 失败，禁止静默回落。
-- 同项目 Agent 写桌生图默认最多 **2** 路并行（`AGENT_DESK_GENERATE_MAX_ACTIVE`）；超限工具失败，不静默排队。
+- 同项目图像任务 active 默认 **4**（`TASK_PROJECT_IMAGE_CONCURRENCY`）：超出 **排队**（BullMQ），不是工具直接失败。需另开 `npm run dev:worker`。
 
-工具白名单：`generate_from_desk`、`replace_on_desk`、`text_to_image_on_desk`、`remove_from_desk`、`get_task`、`look_at_desk`、`look_at`（`AGENT_DEBUG_IMAGE_TOOL=1` 时另有调试图工具）。实现：`apps/server/src/agent/tools/generate/` + `remove-from-desk.ts`。
+工具白名单：`generate_from_desk`、`replace_on_desk`、`text_to_image_on_desk`、`remove_from_desk`、`get_task`、`look_at_desk`、`look_at`（`AGENT_DEBUG_IMAGE_TOOL=1` 时另有调试图工具）。实现：`apps/server/src/agent/tools/generate/` + `remove-from-desk.ts`；执行：`apps/server/src/tasks/` + Worker。
 
 ## 环境变量
 
@@ -109,13 +109,25 @@ npm run dev:server
 | `LANGSMITH_PROJECT` | `pi` | LangSmith 项目名 |
 | `LANGSMITH_ENDPOINT` | LangSmith 云 | 端点 |
 | `AGENT_LOG_USAGE` | 关 | `1` 时每 model turn 打 `model_usage` JSON（含 cache hit） |
-| `AGENT_DESK_GENERATE_MAX_ACTIVE` | `2` | 同项目 Agent 写桌生图 active 上限 |
+| `REDIS_URL` | `redis://localhost:6379` | BullMQ 调度（业务态在 PG） |
+| `TASK_QUEUE_PREFIX` | `qijian` | BullMQ key 前缀 |
+| `TASK_WORKER_CONCURRENCY` | `4` | Worker 全局并发（含生图与命名） |
+| `TASK_PROJECT_IMAGE_CONCURRENCY` | `4` | 同项目图像任务 active 上限（排队而非直接失败） |
+| `TASK_IMAGE_MAX_ATTEMPTS` | `3` | 生图自动重试含首次上限（明确白跑才重试） |
+| `TASK_IMAGE_BACKOFF_MS` | `2000` | 生图重试退避基数 ms（×2，封顶 60s） |
+| `BULL_BOARD_PATH` | `/admin/queues` | 队列管理页路径 |
+| `BULL_BOARD_USERNAME` / `PASSWORD` | 空 | 生产务必配置；未配则强制只读 |
+| `BULL_BOARD_READ_ONLY` | `true` | 无写操作；有凭据后可改 `false` |
+
+生图/起名后台任务走 **BullMQ + 独立 Worker**（`npm run dev:worker`）。无 legacy 进程内 runner。
 
 ## 常用命令
 
 ```bash
 npm run build          # 前端类型检查与构建
 npm run build:server   # 后端类型检查
+npm run dev:server     # API（含 outbox dispatcher）
+npm run dev:worker     # BullMQ Worker（生图 + 起名）
 npm test               # 测试
 npm run db:generate    # 生成迁移
 npm run db:migrate     # 执行迁移
@@ -140,12 +152,15 @@ npm run db:migrate     # 执行迁移
 | `POST / GET` | `/api/projects/:id/files`、`/api/files/:id` | 上传/读文件 |
 | `WS` | `/api/projects/:id/chat` | 对话、过程事件与桌面变更 |
 | `GET` | `/api/public-config` | 公开配置（生图模型列表等，无密钥） |
+| `GET` | `/admin/queues` | Bull Board（默认只读；生产配 Basic Auth） |
 
 ## 文档
 
 - [领域词汇](CONTEXT.md)
 - [设计系统](DESIGN.md)
 - [待办](TODOS.md)
+- [资产任务队列运维](docs/runbooks/asset-task-queue.md)
+- [ADR 0014 BullMQ](docs/adr/0014-bullmq-task-queue-for-asset-batches.md)
 - [画布连线 + 面板生图](docs/canvas-connections-generate-design.md)
 - [局部重绘](docs/canvas-inpainting-design.md)
 - [Agent 桌面上下文装配](docs/agent-desk-context-assembly.md)

@@ -92,4 +92,17 @@ describe("mapSnapshot", () => {
     const objects = mapSnapshot(snap);
     expect(objects.map((o) => o.alias)).toEqual(["A01", "A02"]);
   });
+
+  it("uses displayName as label when present", () => {
+    const snap = snapshotWith("effect_image", { file_id: "f-1", pending: false });
+    snap.artifacts[0].displayName = "储藏室";
+    const objects = mapSnapshot(snap);
+    expect(objects[0].label).toBe("储藏室");
+  });
+
+  it("falls back to 效果图-N without lineage string", () => {
+    const snap = snapshotWith("effect_image", { file_id: "f-1", pending: false });
+    const objects = mapSnapshot(snap);
+    expect(objects[0].label).toMatch(/^效果图-\d+$/);
+  });
 });

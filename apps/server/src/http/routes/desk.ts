@@ -4,18 +4,23 @@
  *  - 物件删除实际是 artifact 删除（级联清版本 + 桌面布局 + 相关连线），见 artifact-service.deletePlaced
  */
 import type { Hono } from "hono";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { AgentJobRunner } from "../../agent/async-job/runner.js";
 import type { ArtifactService } from "../../services/artifact-service.js";
 import type { CanvasGenerateService, PreparedGenerate } from "../../services/canvas-generate-service.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
+import { createPanelImageTaskPayload } from "../../tasks/panel-image-task.js";
+import type { TaskStore } from "../../tasks/task-store.js";
+import type { AssetBatchSubmissionService } from "../../tasks/asset-batch-submission.js";
 import { body } from "./shared.js";
 
 export function registerDeskRoutes(app: Hono, deps: {
   desks: DeskStateService;
   artifacts: ArtifactService;
   generate?: CanvasGenerateService;
-  jobs?: AgentJobRunner;
+  taskStore?: TaskStore;
+  defaultImageModel?: string;
+  batchSubmitter?: AssetBatchSubmissionService;
 }) {
   /** GET /desk 一次性返回 project + 全部 artifact + desk_state。 */
   app.get("/api/projects/:id/desk", async (c) => c.json(await deps.desks.snapshot(c.req.param("id"))));
@@ -68,12 +73,12 @@ export function registerDeskRoutes(app: Hono, deps: {
   });
 
   /**
-   * 面板生图（H8）：prepare + jobs.run → 秒级 accepted+task_id；complete 在后台。
-   *  - prepare 失败抛 HttpError（无 job 行）
+   * 面板生图：事务创建 pending artifact、任务和 outbox，Worker 后台完成。
+   *  - prepare 失败时整个受理事务回滚
    *  - targetArtifactId：重试已有失败卡时传入，在原 effect_image 上 append 新版本
    */
   app.post("/api/projects/:id/generate-image", async (c) => {
-    if (!deps.generate || !deps.jobs) {
+    if (!deps.generate || !deps.taskStore) {
       return c.json({ error: { code: "NOT_CONFIGURED", message: "生图服务未配置", retryable: false } }, 503);
     }
     const projectId = c.req.param("id");
@@ -98,19 +103,18 @@ export function registerDeskRoutes(app: Hono, deps: {
     }));
 
     let prepared: PreparedGenerate | undefined;
-    const { details } = await deps.jobs.run({
-      projectId,
-      kind: "generate_from_desk",
-      input: {
-        origin: "canvas_panel",
-        prompt: input.prompt,
-        source_artifact_id: input.sourceArtifactId,
-        target_artifact_id: input.targetArtifactId,
-        client_op_id: input.clientOpId,
-        size: input.size,
-        model: input.model,
-      },
-      prepare: async () => {
+    const taskId = randomUUID();
+    const snapshot = await deps.desks.snapshot(projectId);
+    const payload = createPanelImageTaskPayload({
+      snapshot,
+      taskId,
+      request: input,
+      defaultModel: input.model ?? deps.defaultImageModel ?? "grok-imagine-image-quality",
+    });
+    await deps.taskStore.accept({
+      payload,
+      taskKind: "generate_from_desk",
+      prepare: async (tx) => {
         prepared = await deps.generate!.prepare({
           projectId,
           sourceArtifactId: input.sourceArtifactId,
@@ -123,39 +127,64 @@ export function registerDeskRoutes(app: Hono, deps: {
           model: input.model,
           source: "canvas_panel",
           createdBy: "designer",
-        });
+        }, tx);
         return { artifactId: prepared.pending.artifact.id };
       },
-      work: async ({ signal }) => {
-        if (!prepared) throw new Error("内部错误：prepare 未完成");
-        const result = await deps.generate!.complete(prepared, signal);
-        if (result.status === "failed") {
-          const err = new Error(result.error ?? "生成失败");
-          (err as Error & { name: string }).name = /取消|超时/.test(result.error ?? "")
-            ? "AbortError"
-            : "GenerateFailed";
-          throw err;
-        }
-        return {
-          artifactId: result.artifact.id,
-          result: {
-            artifact_id: result.artifact.id,
-            status: result.status,
-            connection_id: result.connection?.id,
-          },
-        };
-      },
     });
-
+    // 与 batch 一致：事务内 prepare 不 emit；跨 tab 需 object_changed
+    deps.desks.notifyDeskChanged(projectId);
     const pending = prepared!.pending;
     return c.json({
       status: "accepted" as const,
       async: true as const,
-      task_id: details.task_id,
+      task_id: taskId,
       artifact: pending.artifact,
       version: pending.version,
       object: pending.object,
       connection: pending.connection,
+    }, 201);
+  });
+
+  app.post("/api/projects/:id/generate-images", async (c) => {
+    if (!deps.batchSubmitter) {
+      return c.json({ error: { code: "NOT_CONFIGURED", message: "批量任务队列未启用", retryable: false } }, 503);
+    }
+    const input = await body(c.req.raw, z.object({
+      items: z.array(z.object({
+        prompt: z.string().max(4000).default(""),
+        sourceArtifactId: z.string().uuid().optional(),
+        targetArtifactId: z.string().uuid().optional(),
+        referenceArtifactIds: z.array(z.string().uuid()).max(8).optional(),
+        clientOpId: z.string().min(1).max(80).optional(),
+        spawnAt: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
+        region: z.object({
+          x: z.number().min(0).max(1),
+          y: z.number().min(0).max(1),
+          w: z.number().min(0.02).max(1),
+          h: z.number().min(0.02).max(1),
+        }).optional(),
+        referenceFileId: z.string().uuid().optional(),
+        size: z.string().max(32).optional(),
+        model: z.string().min(1).max(80).optional(),
+      })).min(1).max(20),
+    }));
+    const accepted = await deps.batchSubmitter.submit({
+      projectId: c.req.param("id"),
+      createdBy: "designer",
+      requests: input.items,
+    });
+    return c.json({
+      status: "accepted" as const,
+      async: true as const,
+      batch_id: accepted.batch.id,
+      total: accepted.batch.total,
+      tasks: accepted.tasks.map(({ task, pending }) => ({
+        task_id: task.id,
+        artifact: pending?.artifact,
+        version: pending?.version,
+        object: pending?.object,
+        connection: pending?.connection,
+      })),
     }, 201);
   });
 }

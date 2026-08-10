@@ -1,6 +1,5 @@
 /** async-job 子模块统一出口。 */
 export { AgentJobStore } from "./store.js";
-export { AgentJobRunner, type RunAsyncJobOptions } from "./runner.js";
 export {
   acceptedDetails,
   acceptedToolText,

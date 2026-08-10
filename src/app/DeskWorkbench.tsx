@@ -442,6 +442,7 @@ export function DeskWorkbench({
               setLightboxUrl(obj.url);
             }
           }}
+          onRename={desk.onRename}
           overlay={
             <DeskToolbar
               canUndo={history.canUndo}
@@ -549,7 +550,12 @@ export function DeskWorkbench({
           }}
         />
         {lightbox.rendered && (
-          <ImageLightbox url={lightbox.rendered} closing={lightbox.closing} onClose={() => setLightboxUrl(undefined)} />
+          <ImageLightbox
+            url={lightbox.rendered}
+            alt={objects.find((o) => o.url === lightbox.rendered)?.label ?? "大图"}
+            closing={lightbox.closing}
+            onClose={() => setLightboxUrl(undefined)}
+          />
         )}
         {inpaintReady && inpaintSourceId && (
           <InpaintDialog

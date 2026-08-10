@@ -9,8 +9,9 @@ import type { CanvasGenerateService } from "../../services/canvas-generate-servi
 import type { DeskStateService } from "../../services/desk-state-service.js";
 import type { FileStorage } from "../../services/file-storage.js";
 import type { ImageGenerator } from "../../services/image-generator.js";
-import type { AgentJobRunner } from "../async-job/runner.js";
 import type { AgentJobStore } from "../async-job/store.js";
+import type { AssetTaskSubmissionService } from "../../tasks/asset-task-submission.js";
+import type { TaskCancellationService } from "../../tasks/cancellation.js";
 import type { EventSink } from "../events.js";
 import { mapError, type ErrorCode } from "../tracing/index.js";
 
@@ -23,10 +24,11 @@ export interface ToolDependencies {
   /** 读盘（look_at_desk 总览缩略） */
   files: FileStorage;
   emit: EventSink;
-  jobs?: AgentJobRunner;
   jobStore?: AgentJobStore;
+  taskCancellation?: TaskCancellationService;
   /** 生图 model allowlist（与面板一致）；generate_from_desk 校验/归一化用 */
   imageModelOptions?: string[];
+  assetTaskSubmitter?: AssetTaskSubmissionService;
 }
 
 export interface ToolSessionRef {

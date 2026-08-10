@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import type { Database } from "../db/client.js";
 import { artifacts, artifactVersions, deskStates, projects, storedFiles } from "../db/schema.js";
 import { DomainValidationError, assertPayload } from "../domain/payload-rules.js";
@@ -34,7 +35,7 @@ export interface RestorePlacedInput {
   layout: NewDeskObject;
 }
 
-type DatabaseTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+export type DatabaseTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type NewDeskObject = Omit<DeskLayoutObject, "artifact_id">;
 
 /** 画布图片可接受的 media_type（与 ALLOWED_UPLOAD_MEDIA_TYPES 不同——后者管上传，这里管落桌）。 */
@@ -133,15 +134,7 @@ export class ArtifactService {
       const inflight = this.inflightPlacements.get(key);
       if (inflight) return inflight;
     }
-    const work = this.db.transaction(async (tx) => {
-      const created = await this.createInTransaction(tx, projectId, artifactType, input);
-      const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
-      if (!state) throw new HttpError(404, "未找到该设计项目");
-      const object: DeskLayoutObject = { artifact_id: created.artifact.id, ...layout };
-      const objects = [...state.objects.filter((item) => item.artifact_id !== created.artifact.id), object];
-      await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
-      return { ...created, object };
-    }).then((result) => {
+    const work = this.db.transaction((tx) => this.createPlacedInTransaction(tx, projectId, artifactType, input, layout)).then((result) => {
       if (key) this.rememberPlacement(key, result);
       this.kickCaption(projectId, input.payload);
       this.emitDeskChanged(projectId);
@@ -151,6 +144,25 @@ export class ArtifactService {
     });
     if (key) this.inflightPlacements.set(key, work);
     return work;
+  }
+
+  /** Same placement operation inside a caller-owned transaction (batch acceptance). */
+  async createPlacedInTransaction(
+    tx: DatabaseTransaction,
+    projectId: string,
+    artifactType: ArtifactType,
+    input: AppendVersionInput,
+    layout: NewDeskObject,
+  ) {
+    if (!artifactTypes.includes(artifactType)) throw new HttpError(422, "不支持的 Artifact 类型");
+    this.validateConfirmedPayload(artifactType, input);
+    const created = await this.createInTransaction(tx, projectId, artifactType, input);
+    const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
+    if (!state) throw new HttpError(404, "未找到该设计项目");
+    const object: DeskLayoutObject = { artifact_id: created.artifact.id, ...layout };
+    const objects = [...state.objects.filter((item) => item.artifact_id !== created.artifact.id), object];
+    await tx.update(deskStates).set({ objects, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
+    return { ...created, object };
   }
 
   /** 撤销删除：以原 UUID 重建 artifact（版本链从 v1 重启）并恢复桌面布局。 */
@@ -211,30 +223,49 @@ export class ArtifactService {
    * 追加新版本到现有 artifact，current_version_id 指针前移。
    * 继承上一版本的 inputRefs（未传时），保证 GC 引用图不断。
    */
-  async append(artifactId: string, input: AppendVersionInput) {
-    let changedProjectId = "";
-    const version = await this.db.transaction(async (tx) => {
-      const [artifact] = await tx.select().from(artifacts).where(eq(artifacts.id, artifactId)).for("update");
-      if (!artifact) throw new HttpError(404, "未找到该 Artifact");
-      changedProjectId = artifact.projectId;
-      const [current] = artifact.currentVersionId
-        ? await tx.select({ inputRefs: artifactVersions.inputRefs }).from(artifactVersions).where(eq(artifactVersions.id, artifact.currentVersionId))
-        : [];
-      const nextInput = { ...input, inputRefs: input.inputRefs ?? current?.inputRefs ?? [] };
-      this.validateConfirmedPayload(artifact.artifactType as ArtifactType, nextInput);
-      await this.validateInputRefs(tx, artifact.projectId, nextInput.inputRefs);
-      await this.validateCanvasImageFile(tx, artifact.projectId, artifact.artifactType as ArtifactType, nextInput.payload);
-      const [{ next }] = await tx
-        .select({ next: max(artifactVersions.versionNo) })
-        .from(artifactVersions)
-        .where(eq(artifactVersions.artifactId, artifactId));
-      const version = await this.insertVersion(tx, artifactId, (next ?? 0) + 1, nextInput);
-      await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifactId));
-      this.kickCaption(artifact.projectId, nextInput.payload);
-      return version;
-    });
-    this.emitDeskChanged(changedProjectId);
-    return version;
+  async append(
+    artifactId: string,
+    input: AppendVersionInput,
+    options: { expectedCurrentVersion?: number } = {},
+  ) {
+    const result = await this.db.transaction((tx) =>
+      this.appendInTransaction(tx, artifactId, input, options));
+    this.kickCaption(result.projectId, input.payload);
+    this.emitDeskChanged(result.projectId);
+    return result.version;
+  }
+
+  async appendInTransaction(
+    tx: DatabaseTransaction,
+    artifactId: string,
+    input: AppendVersionInput,
+    options: { expectedCurrentVersion?: number } = {},
+  ) {
+    const [artifact] = await tx.select().from(artifacts).where(eq(artifacts.id, artifactId)).for("update");
+    if (!artifact) throw new HttpError(404, "未找到该 Artifact");
+    const [current] = artifact.currentVersionId
+      ? await tx.select({
+        inputRefs: artifactVersions.inputRefs,
+        versionNo: artifactVersions.versionNo,
+      }).from(artifactVersions).where(eq(artifactVersions.id, artifact.currentVersionId))
+      : [];
+    if (
+      options.expectedCurrentVersion !== undefined
+      && current?.versionNo !== options.expectedCurrentVersion
+    ) {
+      throw new HttpError(409, "目标图片版本已变化，已忽略迟到的生成结果");
+    }
+    const nextInput = { ...input, inputRefs: input.inputRefs ?? current?.inputRefs ?? [] };
+    this.validateConfirmedPayload(artifact.artifactType as ArtifactType, nextInput);
+    await this.validateInputRefs(tx, artifact.projectId, nextInput.inputRefs);
+    await this.validateCanvasImageFile(tx, artifact.projectId, artifact.artifactType as ArtifactType, nextInput.payload);
+    const [{ next }] = await tx
+      .select({ next: max(artifactVersions.versionNo) })
+      .from(artifactVersions)
+      .where(eq(artifactVersions.artifactId, artifactId));
+    const version = await this.insertVersion(tx, artifactId, (next ?? 0) + 1, nextInput);
+    await tx.update(artifacts).set({ currentVersionId: version.id }).where(eq(artifacts.id, artifactId));
+    return { version, projectId: artifact.projectId };
   }
 
   /**
@@ -276,6 +307,199 @@ export class ArtifactService {
       .where(eq(artifacts.id, artifactId));
     if (!row) throw new HttpError(404, "未找到该 Artifact");
     return row;
+  }
+
+  async getDisplayName(artifactId: string): Promise<{
+    id: string;
+    projectId: string;
+    displayName: string | null;
+    displayNameSource: string | null;
+  }> {
+    const [row] = await this.db
+      .select({
+        id: artifacts.id,
+        projectId: artifacts.projectId,
+        displayName: artifacts.displayName,
+        displayNameSource: artifacts.displayNameSource,
+      })
+      .from(artifacts)
+      .where(eq(artifacts.id, artifactId));
+    if (!row) throw new HttpError(404, "未找到该 Artifact");
+    return row;
+  }
+
+  /**
+   * 设置人读展示名（artifacts 表列，与 version payload 分离，生图 complete 不会抹掉）。
+   *
+   * - source=user：总是写入；清空时 name=null 但 source 仍为 user，禁止后续 model 填空；
+   *   同时抬升 displayNameVersion / 换 generationToken，使在途命名任务失效。
+   * - source=model + force=false：仅当 display_name 仍为空且非 user 源。
+   * - source=model + force=true：可覆盖 null/model（replace 强制重起名），永不覆盖 user。
+   */
+  async setDisplayName(
+    artifactId: string,
+    name: string | null,
+    source: "user" | "model",
+    opts?: { force?: boolean },
+  ): Promise<{ id: string; projectId: string; displayName: string | null; displayNameSource: string | null }> {
+    const trimmed = name === null ? null : name.trim().replace(/\s+/g, " ").slice(0, 32) || null;
+    const now = new Date();
+
+    if (source === "user") {
+      const [row] = await this.db
+        .update(artifacts)
+        .set({
+          displayName: trimmed,
+          displayNameSource: "user",
+          displayNameUpdatedAt: now,
+          displayNameVersion: sql`${artifacts.displayNameVersion} + 1`,
+          displayNameGenerationToken: randomUUID(),
+        })
+        .where(eq(artifacts.id, artifactId))
+        .returning({
+          id: artifacts.id,
+          projectId: artifacts.projectId,
+          displayName: artifacts.displayName,
+          displayNameSource: artifacts.displayNameSource,
+        });
+      if (!row) throw new HttpError(404, "未找到该 Artifact");
+      this.emitDeskChanged(row.projectId);
+      return row;
+    }
+
+    const force = opts?.force === true;
+    const where = force
+      ? and(
+        eq(artifacts.id, artifactId),
+        sql`(${artifacts.displayNameSource} IS NULL OR ${artifacts.displayNameSource} = 'model')`,
+      )
+      : and(
+        eq(artifacts.id, artifactId),
+        sql`${artifacts.displayName} IS NULL`,
+        sql`(${artifacts.displayNameSource} IS NULL OR ${artifacts.displayNameSource} IS DISTINCT FROM 'user')`,
+      );
+
+    const [row] = await this.db
+      .update(artifacts)
+      .set({
+        displayName: trimmed,
+        displayNameSource: trimmed === null ? null : "model",
+        displayNameUpdatedAt: now,
+      })
+      .where(where)
+      .returning({
+        id: artifacts.id,
+        projectId: artifacts.projectId,
+        displayName: artifacts.displayName,
+        displayNameSource: artifacts.displayNameSource,
+      });
+    if (row) {
+      this.emitDeskChanged(row.projectId);
+      return row;
+    }
+    return this.getDisplayName(artifactId);
+  }
+
+  /**
+   * 入队命名前调用：签发 generation_token 并抬升 name_version。
+   * 返回 undefined 表示不应起名（用户已命名、或已有 model 名且非 force）。
+   * 快照里的 displayNameSource 供 apply 时匹配「当时预期」的 source 条件。
+   */
+  async prepareModelDisplayName(
+    artifactId: string,
+    force = false,
+  ): Promise<{
+    artifactId: string;
+    projectId: string;
+    artifactVersionId: string;
+    nameVersion: number;
+    generationToken: string;
+    displayNameSource: "system" | "model";
+  } | undefined> {
+    return this.db.transaction(async (tx) => {
+      const [artifact] = await tx.select().from(artifacts)
+        .where(eq(artifacts.id, artifactId)).for("update");
+      if (!artifact?.currentVersionId) return undefined;
+      if (artifact.displayNameSource === "user") return undefined;
+      if (!force && artifact.displayName) return undefined;
+      const generationToken = randomUUID();
+      const nameVersion = artifact.displayNameVersion + 1;
+      await tx.update(artifacts).set({
+        displayNameVersion: nameVersion,
+        displayNameGenerationToken: generationToken,
+      }).where(eq(artifacts.id, artifactId));
+      return {
+        artifactId: artifact.id,
+        projectId: artifact.projectId,
+        artifactVersionId: artifact.currentVersionId,
+        nameVersion,
+        generationToken,
+        displayNameSource: artifact.displayNameSource === "model" ? "model" : "system",
+      };
+    });
+  }
+
+  /**
+   * Worker 写回模型名：必须同时匹配 name_version + generation_token。
+   * 任一条件失败返回 false（迟到任务 / 用户已改名），不抛错。
+   */
+  async applyGeneratedDisplayName(input: {
+    artifactId: string;
+    name: string;
+    nameVersion: number;
+    generationToken: string;
+    displayNameSource: "system" | "model";
+    force?: boolean;
+  }): Promise<boolean> {
+    // prepare 时若尚无 model 名，快照为 system（列上 source 多为 null）
+    const expectedSource = input.displayNameSource === "model"
+      ? eq(artifacts.displayNameSource, "model")
+      : sql`${artifacts.displayNameSource} IS NULL`;
+    const writableName = input.force ? sql`true` : sql`${artifacts.displayName} IS NULL`;
+    const [row] = await this.db.update(artifacts).set({
+      displayName: input.name.trim().slice(0, 32),
+      displayNameSource: "model",
+      displayNameUpdatedAt: new Date(),
+    }).where(and(
+      eq(artifacts.id, input.artifactId),
+      eq(artifacts.displayNameVersion, input.nameVersion),
+      eq(artifacts.displayNameGenerationToken, input.generationToken),
+      expectedSource,
+      writableName,
+    )).returning({ projectId: artifacts.projectId });
+    if (row) this.emitDeskChanged(row.projectId);
+    return Boolean(row);
+  }
+
+  /**
+   * 作废在途命名：抬升 version/token；可选清空非 user 的 display_name。
+   * 用于取消/失败旁落等需要丢弃旧 model 名的场景。
+   */
+  async invalidateModelDisplayName(artifactId: string, clearModelName = false): Promise<void> {
+    const [row] = await this.db.update(artifacts).set({
+      displayNameVersion: sql`${artifacts.displayNameVersion} + 1`,
+      displayNameGenerationToken: randomUUID(),
+      ...(clearModelName ? { displayName: null, displayNameSource: null } : {}),
+      displayNameUpdatedAt: new Date(),
+    }).where(and(
+      eq(artifacts.id, artifactId),
+      ...(clearModelName ? [sql`${artifacts.displayNameSource} IS DISTINCT FROM 'user'`] : []),
+    )).returning({ projectId: artifacts.projectId });
+    if (row) this.emitDeskChanged(row.projectId);
+  }
+
+  /** 仅清除 source=model 的名（例如旁落失败卡）；source=user 不动。 */
+  async clearModelDisplayName(artifactId: string): Promise<void> {
+    const [row] = await this.db
+      .update(artifacts)
+      .set({
+        displayName: null,
+        displayNameSource: null,
+        displayNameUpdatedAt: new Date(),
+      })
+      .where(and(eq(artifacts.id, artifactId), eq(artifacts.displayNameSource, "model")))
+      .returning({ projectId: artifacts.projectId });
+    if (row) this.emitDeskChanged(row.projectId);
   }
 
   /**

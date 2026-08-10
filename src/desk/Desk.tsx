@@ -26,6 +26,10 @@ import { useExitTransition } from "./useExitTransition";
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 4;
 
+/** 物件上不应启动拖选的命中目标（名称编辑 / 把手 / 表单） */
+const INTERACTIVE_NODE =
+  "button, input, textarea, a, .conn-handle, .resize-handle, .desk-object-label, .desk-object-label-input";
+
 export type SelectOpts = { panel?: boolean; toggle?: boolean };
 
 function aabbIntersects(
@@ -59,6 +63,7 @@ export function Desk({
   onCreateConnection,
   onConnectStart,
   onObjectDoubleClick,
+  onRename,
   renderObject,
   renderNodeToolbar,
   overlay,
@@ -75,6 +80,8 @@ export function Desk({
     from: { x: number; y: number; w: number },
     to: { x: number; y: number; w: number },
   ) => void;
+  /** 双击名称区改 display_name */
+  onRename?: (id: string, displayName: string | null) => void;
   initialViewport?: Viewport;
   onViewportChange?: (viewport: Viewport) => void;
   focusRequest?: { id: string; token: number };
@@ -97,6 +104,11 @@ export function Desk({
   children?: ReactNode;
 }) {
   const [view, setView] = useState<Viewport>(initialViewport ?? { x: 40, y: 20, zoom: 0.62 });
+  const [editingLabelId, setEditingLabelId] = useState<string>();
+  const [editingLabelDraft, setEditingLabelDraft] = useState("");
+  const labelInputRef = useRef<HTMLInputElement>(null);
+  /** Sync draft for outside-click commit without stale closures. */
+  const editingLabelRef = useRef<{ id: string; draft: string }>();
   const [panning, setPanning] = useState(false);
   const [marqueeScreen, setMarqueeScreen] = useState<{ x1: number; y1: number; x2: number; y2: number }>();
   const pan = useRef<{ sx: number; sy: number; vx: number; vy: number }>();
@@ -210,6 +222,7 @@ export function Desk({
   };
 
   const onViewportPointerDown = (e: React.PointerEvent) => {
+    finishLabelEditIfOutside(e.target);
     if ((e.target as HTMLElement).closest(".obj, button, input, textarea, select, a, .conn-handle, .resize-handle, .conn-hit, .desk-prompt-panel")) return;
 
     if (e.button === 1 || (e.button === 0 && spaceHeld.current)) {
@@ -434,9 +447,65 @@ export function Desk({
     onSelectConnection?.(undefined);
   };
 
+  /** 退出编辑态（不写库）；Esc 与 commit 共用。 */
+  const clearLabelEditState = useCallback(() => {
+    editingLabelRef.current = undefined;
+    setEditingLabelId(undefined);
+    setEditingLabelDraft("");
+  }, []);
+
+  /** blur 在 Esc/已提交后仍会触发；用 ref 跳过一次，避免误提交或双发 PATCH。 */
+  const skipLabelBlurCommitRef = useRef(false);
+
+  /**
+   * 提交改名：先清本地编辑态，再与原 label 比较；有变化才调 onRename（PATCH display-name）。
+   * 空串表示清空 → display_name=null，回落 fallback 标签。
+   */
+  const commitLabelEdit = useCallback((id: string, draft: string) => {
+    skipLabelBlurCommitRef.current = true;
+    clearLabelEditState();
+    if (!onRename) return;
+    const trimmed = draft.trim();
+    const prev = objects.find((o) => o.id === id)?.label ?? "";
+    if (trimmed === prev.trim()) return;
+    onRename(id, trimmed ? trimmed : null);
+  }, [clearLabelEditState, onRename, objects]);
+
+  /** 双击名称进入就地编辑；禁止用 window.prompt。 */
+  const beginLabelEdit = (obj: DeskObject) => {
+    if (!onRename) return;
+    // 换卡编辑前先提交当前草稿，避免 INTERACTIVE_NODE 短路丢改
+    const cur = editingLabelRef.current;
+    if (cur && cur.id !== obj.id) {
+      commitLabelEdit(cur.id, cur.draft);
+    }
+    skipLabelBlurCommitRef.current = false;
+    const draft = obj.label ?? "";
+    editingLabelRef.current = { id: obj.id, draft };
+    setEditingLabelId(obj.id);
+    setEditingLabelDraft(draft);
+    requestAnimationFrame(() => {
+      labelInputRef.current?.focus();
+      labelInputRef.current?.select();
+    });
+  };
+
+  /**
+   * 点画布空白/其他物件时提交编辑。
+   * 不能只依赖 input blur：单选会隐藏名称节点，input 卸载后 blur 可能不按预期触发，导致永远卡在编辑态。
+   */
+  const finishLabelEditIfOutside = useCallback((target: EventTarget | null) => {
+    const cur = editingLabelRef.current;
+    if (!cur) return;
+    if ((target as HTMLElement | null)?.closest?.(".desk-object-label-input")) return;
+    commitLabelEdit(cur.id, cur.draft);
+  }, [commitLabelEdit]);
+
   const startNodeDrag = (e: React.PointerEvent, obj: DeskObject) => {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle, .resize-handle")) return;
+    // 名称区只负责改名，不选中、不拖卡、不开面板
+    if ((e.target as HTMLElement).closest(INTERACTIVE_NODE)) return;
+    finishLabelEditIfOutside(e.target);
     e.stopPropagation();
     const toggle = e.shiftKey;
     const now = performance.now();
@@ -455,7 +524,7 @@ export function Desk({
 
   const onObjectClick = (e: React.MouseEvent, obj: DeskObject) => {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button, input, textarea, a, .conn-handle, .resize-handle")) return;
+    if ((e.target as HTMLElement).closest(INTERACTIVE_NODE)) return;
     e.stopPropagation();
     // 选中已在 pointerdown 完成；此处仅兜底（如无 pointer 路径）
     if (!lastTap.current || lastTap.current.id !== obj.id) {
@@ -482,6 +551,17 @@ export function Desk({
   };
 
   const selectedSet = new Set(selectedIds);
+  /**
+   * 是否渲染卡外名称/输入框。
+   * - 编辑中：强制 true，保证 input 不因「单选隐藏」被卸载。
+   * - 单选：隐藏名称（编辑态减噪，顶栏/底栏已占位）。
+   * - 多选/未选中：显示 label。
+   */
+  const showLabel = (obj: DeskObject) => {
+    if (editingLabelId === obj.id) return true;
+    if (selectedIds.length === 1 && selectedSet.has(obj.id)) return false;
+    return Boolean(obj.label);
+  };
   const toolbarObject = renderNodeToolbar && selectedIds.length === 1
     ? objects.find((o) => o.id === selectedIds[0])
     : undefined;
@@ -533,8 +613,62 @@ export function Desk({
               onClick={(e) => onObjectClick(e, obj)}
               onDragStart={(e) => e.preventDefault()}
             >
-              {obj.alias && (
-                <span className="desk-alias-badge" title={`对话编号 ${obj.alias}`}>{obj.alias}</span>
+              {showLabel(obj) && obj.label && (
+                editingLabelId === obj.id ? (
+                  <input
+                    ref={labelInputRef}
+                    className="desk-object-label-input"
+                    value={editingLabelDraft}
+                    maxLength={32}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEditingLabelDraft(v);
+                      if (editingLabelRef.current?.id === obj.id) {
+                        editingLabelRef.current = { id: obj.id, draft: v };
+                      }
+                    }}
+                    onBlur={() => {
+                      if (skipLabelBlurCommitRef.current) {
+                        skipLabelBlurCommitRef.current = false;
+                        return;
+                      }
+                      commitLabelEdit(obj.id, editingLabelRef.current?.draft ?? editingLabelDraft);
+                    }}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitLabelEdit(obj.id, editingLabelRef.current?.draft ?? editingLabelDraft);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        skipLabelBlurCommitRef.current = true;
+                        clearLabelEditState();
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="desk-object-label"
+                    title={obj.alias ? `${obj.label} · 双击改名 · ${obj.alias}` : "双击改名"}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      beginLabelEdit(obj);
+                    }}
+                  >
+                    {obj.label}
+                  </span>
+                )
               )}
               {renderObject(obj)}
               {showHandles && onCreateConnection && (

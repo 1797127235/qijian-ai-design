@@ -175,7 +175,21 @@ describe("buildDeskStatusBlock", () => {
     const fxLine = block.split("\n").find((l) => l.includes("art-fx1") && l.startsWith("- A"));
     expect(fxLine).toBeDefined();
     expect(fxLine).not.toMatch(/「换暖光」/);
-    expect(fxLine).toMatch(/「效果图-\d+」|「从 .+ 生成-\d+」/);
+    // 无 display_name 时 fallback 为「效果图-N」，不再用血缘串作主名
+    expect(fxLine).toMatch(/「效果图-\d+」/);
+    expect(fxLine).not.toMatch(/从 .+ 生成/);
+  });
+
+  it("prefers displayName over fallback for effect_image", () => {
+    const snap = snapshot();
+    const fx = snap.artifacts.find((a) => a.id === "art-fx1");
+    if (fx) {
+      fx.displayName = "客厅 · 暖木";
+      fx.displayNameSource = "model";
+    }
+    const block = buildDeskStatusBlock(snap, [], { fileNames });
+    const fxLine = block.split("\n").find((l) => l.includes("art-fx1") && l.startsWith("- A"));
+    expect(fxLine).toMatch(/「客厅 · 暖木」/);
   });
 });
 

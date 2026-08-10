@@ -11,13 +11,15 @@ export const WAKEABLE_JOB_KINDS = new Set(["generate_from_desk"]);
 
 export type JobTerminalStatus = Extract<
   AgentJobStatus,
-  "succeeded" | "failed" | "cancelled" | "interrupted"
+  "succeeded" | "failed" | "cancelled" | "cancelled_with_side_effect" | "needs_review" | "interrupted"
 >;
 
 export function isJobTerminalStatus(status: string): status is JobTerminalStatus {
   return status === "succeeded"
     || status === "failed"
     || status === "cancelled"
+    || status === "cancelled_with_side_effect"
+    || status === "needs_review"
     || status === "interrupted";
 }
 

@@ -42,6 +42,9 @@ export interface ArtifactSnapshot {
   payload: Record<string, unknown>;
   inputRefs: unknown[]; // 产生该 artifact 的输入引用（如来源文件）
   createdBy: "designer" | "agent"; // 设计师手动 / Agent 生成
+  /** 人读展示名（artifact 列）；null/缺省则用前端 fallback */
+  displayName?: string | null;
+  displayNameSource?: string | null;
 }
 
 // 画布上某个 artifact 的布局（位置 + 旋转 + 宽度）

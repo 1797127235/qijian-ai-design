@@ -63,3 +63,16 @@
 - **Context:** `apps/server/src/services/image-generator.ts`（`assertSafeImageUrl` / `isPrivateOrLinkLocalHost` / `redirect: "error"` / `readBodyBounded`）。
 - **Depends on / blocked by:** 无；provider 域名稳定时可先做 allowlist。
 
+## 10. 同主源效果图「照片堆」（控桌面扇形散开）
+
+- **What（MVP，先做这个）:** 同主源 / 同房间的多张候选**叠在一处**，默认只露 latest + 角标张数；点开横向翻旧版（条或简单网格）。大桌连线收敛到堆（或堆顶），不再主源扇到每一张。另起明确新方向时才新占一格。对齐 `CONTEXT.md`「效果图变体 / 照片堆」。
+- **Why:** Dogfood 可见：户型一源多出图后扇形散开、连线乱、难扫（2026-08-10）。当前 `generate_from_desk` 旁落 + `findFreeDeskPlacement` 故意铺开防叠，结果是桌面熵爆。
+- **不做（刻意延后）:**
+  - 默认改 `replace_on_desk`：适合「同卡微调」，不适合「一户型多房间 / 多方向」——会盖错题材。
+  - 变体树 / 枝条 UI、嵌套小画布、自动归档旧变体：语义更完整，但复杂；**先当相册叠，别当子系统做**。树与嵌套画布等真有「分叉比不了」的痛再开项。
+- **归堆粗规则（实现时钉死）:** 优先稳定空间标识；没有则「根主源 + 角色（整景/局部）」；裸 parent  alone 不够（链式父会变）。跨房间 / 换角色 → 新堆或新卡。
+- **Pros:** 直接对准眼前乱桌；工程可比树/嵌套小；领域词已有。
+- **Cons:** 线性堆丢分叉语义；深树以后仍要升级。
+- **Context:** 对话结论 2026-08-10；落位现状 `apps/server/src/services/canvas-generate-service.ts` `prepareNewTarget` + `findFreeDeskPlacement`；生图工具 `apps/server/src/agent/tools/generate/`；相关备忘 `docs/agent-run-errors-2026-08-09.md` 候选方向 C。
+- **Depends on / blocked by:** 无硬依赖；可先 FE 叠放演示再补归属字段。
+

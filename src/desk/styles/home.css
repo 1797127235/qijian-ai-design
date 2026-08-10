@@ -110,10 +110,16 @@
 }
 .home-recent h2 { font-family: var(--font-display); font-size: 16px; font-weight: 600; margin-bottom: 18px; }
 .home-row {
-  display: flex; gap: 22px; overflow-x: auto; padding: 2px 2px 14px;
-  scrollbar-width: thin;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 22px; padding: 2px 2px 14px;
 }
-.home-row .home-card { flex: none; width: 236px; }
+
+/* 宽屏：内容列与卡片随视口放大，不留大片空白 */
+@media (min-width: 1500px) {
+  .home-center { max-width: 1000px; }
+  .home-recent { max-width: 1440px; }
+  .home-row { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 26px; }
+}
 
 .home-card {
   position: relative; display: flex; flex-direction: column; gap: 12px;

@@ -7,6 +7,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { Database } from "../db/client.js";
+import type { DatabaseTransaction } from "./artifact-service.js";
 import { artifacts, artifactVersions, deskStates, projects, storedFiles } from "../db/schema.js";
 import { artifactTypes, type DeskConnection, type DeskLayoutObject, type DeskSnapshot, type DeskViewport } from "../domain/types.js";
 import { HttpError } from "../lib/errors.js";
@@ -50,6 +51,10 @@ export class DeskStateService {
     } catch {
       /* 忽略监听器异常 */
     }
+  }
+
+  notifyDeskChanged(projectId: string) {
+    this.emitDeskChanged(projectId);
   }
 
   /** 列出所有项目（按 updatedAt 倒序，前端首页用）。 */
@@ -109,11 +114,12 @@ export class DeskStateService {
    * 是 Agent / 前端 GET /desk 的主数据源，单次往返避免拼装竞态。
    * 只返回 supportedArtifactTypes 内的类型（其他历史遗留类型自动丢弃）。
    */
-  async snapshot(projectId: string): Promise<DeskSnapshot> {
-    const [project] = await this.db.select().from(projects).where(eq(projects.id, projectId));
+  async snapshot(projectId: string, tx?: DatabaseTransaction): Promise<DeskSnapshot> {
+    const db = tx ?? this.db;
+    const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
     if (!project) throw new HttpError(404, "未找到该设计项目");
-    const [state] = await this.db.select().from(deskStates).where(eq(deskStates.projectId, projectId));
-    const rows = await this.db
+    const [state] = await db.select().from(deskStates).where(eq(deskStates.projectId, projectId));
+    const rows = await db
       .select({ artifact: artifacts, version: artifactVersions })
       .from(artifacts)
       .innerJoin(artifactVersions, eq(artifacts.currentVersionId, artifactVersions.id))
@@ -131,6 +137,8 @@ export class DeskStateService {
             inputRefs: version.inputRefs,
             createdBy: version.createdBy,
             createdAt: version.createdAt,
+            displayName: artifact.displayName ?? null,
+            displayNameSource: artifact.displayNameSource ?? null,
           }]
         : []),
       deskState: {
@@ -209,7 +217,12 @@ export class DeskStateService {
    * clientOpId 当前未直接使用（用 connectionId 做幂等键），保留形参避免破坏 Agent 调用方。
    */
   async createConnection(projectId: string, from: string, to: string, clientOpId?: string, connectionId?: string) {
-    const result = await this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => this.createConnectionInTransaction(tx, projectId, from, to, connectionId));
+    if (result.created) this.emitDeskChanged(projectId);
+    return result.connection;
+  }
+
+  async createConnectionInTransaction(tx: DatabaseTransaction, projectId: string, from: string, to: string, connectionId?: string) {
       const [state] = await tx.select().from(deskStates).where(eq(deskStates.projectId, projectId)).for("update");
       if (!state) throw new HttpError(404, "未找到该设计项目");
       const objectIds = new Set(state.objects.map((o) => o.artifact_id));
@@ -225,10 +238,6 @@ export class DeskStateService {
       const connections = [...(state.connections ?? []), connection];
       await tx.update(deskStates).set({ connections, updatedAt: new Date() }).where(eq(deskStates.projectId, projectId));
       return { connection, created: true };
-    });
-    // 幂等命中（连线已存在）不改桌面，不触发
-    if (result.created) this.emitDeskChanged(projectId);
-    return result.connection;
   }
 
   async deleteConnection(projectId: string, connectionId: string) {

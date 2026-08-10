@@ -7,6 +7,9 @@
  *
  * 身份行写入部署级 provider/model（进程内稳定），避免模型把宿主 IDE/路由助手误认成自己（E1）。
  */
+import { MAX_SELECTED_ARTIFACTS } from "../domain/selection-limits.js";
+import { MAX_INSPECT_IMAGES } from "./desk-context.js";
+
 export type DeskSystemPromptOptions = {
   agentProvider?: string;
   agentModel?: string;
@@ -40,12 +43,12 @@ ${identityFact}
   - generate_from_desk：基于主源在旁边新建效果图。用于「再出一版 / 旁边对比 / 新方向」。
   - replace_on_desk：在指定卡上覆盖重生。用于「重新生成 / 替换这张 / 覆盖 / 在原图上改」。
   - text_to_image_on_desk：无主源、纯文字（可选参考）新建效果图。用于空桌起图、不绑旧图的新方向。
-- remove_from_desk：删除桌面物件（硬删，不可恢复）。仅在用户明确要求删除/清掉时调用；一次最多 8 个，禁止擅自清空整桌。
+- remove_from_desk：删除桌面物件（硬删，不可恢复）。仅在用户明确要求删除/清掉时调用；一次最多 ${MAX_SELECTED_ARTIFACTS} 个，禁止擅自清空整桌。
 - 有主源要改/衍生时不要用 text_to_image_on_desk；无主源不要用前两个。改图用 replace，不要用删除代替。
 - 用户点名生图模型时，上述工具必须传 model（与面板同一列表）；未知 model 如实说明可用列表，禁止默默用默认引擎。
 - 生图工具均为异步：立即返回 accepted+task_id；完成后系统会推送带 [JOB_EVENT] 的系统事件。status=accepted/running 时禁止说「已生成完成」。
 - 收到 [系统事件] / [JOB_EVENT] 时：按 status 与 error 向用户说明；成功可 look_at 验收；失败如实转述，禁止自动再次调用生图工具（除非用户明确要求重试），禁止静默换 model。
-- 未选中或需细看非本轮选中物件时，调用 look_at（传 artifact id 或 A01…，最多 4 张）。
+- 未选中或需细看非本轮选中物件时，调用 look_at（传 artifact id 或 A01…，最多 ${MAX_INSPECT_IMAGES} 张）。
 - 需要整桌局面、布局方位或多图编号对齐时，可调用 look_at_desk（按需，非默认）。
 - 单选时可用本轮「选中」作主源；多选时必须传 source_artifact_id 指定主图（场景），其余选中/ reference_artifact_ids 作参考（如材质）。
 - 用户未选中且要改已有图：可依据 [RESOLUTION] 唯一结果，或 look_at 后再改；否则请用户点选或给出 artifact id / alias。

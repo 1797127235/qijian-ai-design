@@ -1,30 +1,14 @@
 /**
- * 生图工具共用执行核：model 校验 → ownedCurrent → jobs.run → prepare/complete。
- * 旁落 / 原卡替换 / 文生图只传不同 placement；并发帽在 jobs.run(maxActive) 内串行 create。
+ * 生图工具共用执行核：model 校验 → ownedCurrent → BullMQ 持久任务受理。
+ * 旁落 / 原卡替换 / 文生图只传不同 placement。
  */
-import { randomUUID } from "node:crypto";
 import { MAX_SELECTED_ARTIFACTS } from "../../../../domain/selection-limits.js";
-import type { PreparedGenerate } from "../../../../services/canvas-generate-service.js";
 import { matchImageModelId } from "../../../../services/image-providers.js";
-import { DeskGenerateCapError } from "../../../async-job/runner.js";
+import { acceptedToolText } from "../../../async-job/protocol.js";
 import { fail, ok, type ToolContext } from "../../shared.js";
 
 /** Job kind 统一，靠 input.placement 区分；wake 白名单仍认 generate_from_desk。 */
 export const DESK_GENERATE_JOB_KIND = "generate_from_desk";
-
-/**
- * 同项目 Agent 写桌生图同时进行中的上限（accepted+running）。
- * 超限工具直接 fail，不静默排队。可用环境变量 AGENT_DESK_GENERATE_MAX_ACTIVE 覆盖。
- */
-export const DEFAULT_AGENT_DESK_GENERATE_MAX_ACTIVE = 2;
-
-export function agentDeskGenerateMaxActive(): number {
-  const raw = process.env.AGENT_DESK_GENERATE_MAX_ACTIVE?.trim();
-  if (!raw) return DEFAULT_AGENT_DESK_GENERATE_MAX_ACTIVE;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 1) return DEFAULT_AGENT_DESK_GENERATE_MAX_ACTIVE;
-  return Math.min(20, Math.floor(n));
-}
 
 export type DeskGeneratePlacement =
   | { mode: "beside"; sourceArtifactId: string; referenceArtifactIds: string[] }
@@ -44,14 +28,6 @@ export type RunDeskGenerateInput = {
   signal?: AbortSignal;
   toolName: DeskGenerateToolName;
 };
-
-function capFail(error: DeskGenerateCapError) {
-  return fail(error.message, {
-    reason: error.reason,
-    active: error.active,
-    max: error.max,
-  });
-}
 
 function resolveImageModel(ctx: ToolContext, requested?: string) {
   const knownModels = ctx.deps.imageModelOptions ?? [];
@@ -79,79 +55,6 @@ async function ensureOwned(ctx: ToolContext, ids: string[], fallback = "源物�
   }
 }
 
-function throwIfGenerateFailed(result: { status: string; error?: string }) {
-  if (result.status !== "failed") return;
-  const err = new Error(result.error ?? "生成失败");
-  (err as Error & { name: string }).name = /取消|超时/.test(result.error ?? "")
-    ? "AbortError"
-    : "GenerateFailed";
-  throw err;
-}
-
-type JobsRun = NonNullable<ToolContext["deps"]["jobs"]>["run"];
-
-async function runGenerateJob(
-  ctx: ToolContext,
-  args: {
-    toolCallId: string;
-    toolName: DeskGenerateToolName;
-    placement: DeskGeneratePlacement["mode"];
-    jobInput: Record<string, unknown>;
-    prepare: () => Promise<PreparedGenerate>;
-    replaceInPlace: boolean;
-    failExtra?: Record<string, unknown>;
-    signal?: AbortSignal;
-  },
-) {
-  const jobs = ctx.deps.jobs;
-  const session = ctx.session;
-  if (!jobs || !session) return fail("异步任务服务未就绪");
-
-  let prepared: PreparedGenerate | undefined;
-  try {
-    const { text, details } = await jobs.run({
-      projectId: ctx.projectId,
-      threadId: session.threadId,
-      runId: session.runId(),
-      toolCallId: args.toolCallId,
-      kind: DESK_GENERATE_JOB_KIND,
-      maxActive: { kind: DESK_GENERATE_JOB_KIND, max: agentDeskGenerateMaxActive() },
-      input: args.jobInput,
-      prepare: async () => {
-        prepared = await args.prepare();
-        return { artifactId: prepared.pending.artifact.id };
-      },
-      work: async ({ signal: jobSignal }) => {
-        if (!prepared) throw new Error("内部错误：prepare 未完成");
-        const result = await ctx.deps.generate.complete(prepared, jobSignal);
-        throwIfGenerateFailed(result);
-        return {
-          artifactId: result.artifact.id,
-          result: {
-            artifact_id: result.artifact.id,
-            status: result.status,
-            connection_id: result.connection?.id,
-            placement: args.placement,
-            tool: args.toolName,
-          },
-        };
-      },
-    } as Parameters<JobsRun>[0]);
-    return ok(text, {
-      ...details,
-      placement: args.placement,
-      tool: args.toolName,
-      replace_in_place: args.replaceInPlace,
-    });
-  } catch (error) {
-    if (error instanceof DeskGenerateCapError) return capFail(error);
-    if (error instanceof Error && (error.name === "AbortError" || args.signal?.aborted)) {
-      return fail("已停止生成", { status: "failed", ...args.failExtra });
-    }
-    return fail(error instanceof Error ? error.message : "生成失败", args.failExtra);
-  }
-}
-
 export async function runDeskGenerate(ctx: ToolContext, input: RunDeskGenerateInput) {
   const prompt = input.prompt.trim();
   if (!prompt) return fail("prompt 不能为空");
@@ -160,118 +63,56 @@ export async function runDeskGenerate(ctx: ToolContext, input: RunDeskGenerateIn
   if (!modelResult.ok) return modelResult.error;
   const imageModel = modelResult.model;
 
-  if (input.placement.mode === "spawn") {
-    return runSpawnGenerate(ctx, {
-      prompt,
-      referenceArtifactIds: input.placement.referenceArtifactIds,
-      x: input.placement.x,
-      y: input.placement.y,
-      imageModel,
-      toolCallId: input.toolCallId,
-      signal: input.signal,
-      toolName: input.toolName,
-    });
-  }
-
-  const sourceId = input.placement.sourceArtifactId;
-  const referenceArtifactIds = input.placement.referenceArtifactIds;
-  const replaceInPlace = input.placement.mode === "replace";
-  const targetArtifactId = replaceInPlace ? sourceId : undefined;
-
-  const ownedErr = await ensureOwned(ctx, [sourceId, ...referenceArtifactIds]);
-  if (ownedErr) return ownedErr;
-  if (input.signal?.aborted) {
-    return fail("已停止", { source_artifact_id: sourceId, status: "failed" });
-  }
-
-  const clientOpId = `agent:${input.toolCallId || randomUUID()}`;
-  return runGenerateJob(ctx, {
-    toolCallId: input.toolCallId,
-    toolName: input.toolName,
-    placement: input.placement.mode,
-    replaceInPlace,
-    signal: input.signal,
-    failExtra: { source_artifact_id: sourceId },
-    jobInput: {
-      origin: "agent_chat",
-      tool: input.toolName,
-      placement: input.placement.mode,
-      prompt,
-      source_artifact_id: sourceId,
-      ...(targetArtifactId
-        ? { target_artifact_id: targetArtifactId, replace_in_place: true }
-        : {}),
-      reference_artifact_ids: referenceArtifactIds,
-      client_op_id: clientOpId,
-      ...(imageModel ? { model: imageModel } : {}),
-    },
-    prepare: () => ctx.deps.generate.prepare({
-      projectId: ctx.projectId,
-      sourceArtifactId: sourceId,
-      prompt,
-      clientOpId,
-      referenceArtifactIds,
-      source: "agent_chat",
-      createdBy: "agent",
-      ...(targetArtifactId ? { targetArtifactId } : {}),
-      ...(imageModel ? { model: imageModel } : {}),
-    }),
-  });
+  return runBullMqGenerate(ctx, input, imageModel);
 }
 
-async function runSpawnGenerate(
+async function runBullMqGenerate(
   ctx: ToolContext,
-  input: {
-    prompt: string;
-    referenceArtifactIds: string[];
-    x?: number;
-    y?: number;
-    imageModel: string | undefined;
-    toolCallId: string;
-    signal?: AbortSignal;
-    toolName: DeskGenerateToolName;
-  },
+  input: RunDeskGenerateInput,
+  imageModel: string | undefined,
 ) {
-  const ownedErr = await ensureOwned(ctx, input.referenceArtifactIds, "参考物件无效");
+  const submitter = ctx.deps.assetTaskSubmitter;
+  const session = ctx.session;
+  if (!submitter || !session) return fail("异步任务服务未就绪");
+  const ids = input.placement.mode === "spawn"
+    ? input.placement.referenceArtifactIds
+    : [input.placement.sourceArtifactId, ...input.placement.referenceArtifactIds];
+  const ownedErr = await ensureOwned(ctx, ids, "源或参考物件无效");
   if (ownedErr) return ownedErr;
-  if (input.signal?.aborted) {
-    return fail("已停止", { status: "failed", placement: "spawn" });
-  }
+  if (input.signal?.aborted) return fail("已停止", { status: "failed" });
 
-  const clientOpId = `agent:${input.toolCallId || randomUUID()}`;
-  const spawnAt =
-    Number.isFinite(input.x) && Number.isFinite(input.y)
-      ? { x: input.x as number, y: input.y as number }
-      : undefined;
-
-  return runGenerateJob(ctx, {
-    toolCallId: input.toolCallId,
-    toolName: input.toolName,
-    placement: "spawn",
-    replaceInPlace: false,
-    signal: input.signal,
-    failExtra: { placement: "spawn" },
-    jobInput: {
-      origin: "agent_chat",
-      tool: input.toolName,
-      placement: "spawn",
-      prompt: input.prompt,
-      reference_artifact_ids: input.referenceArtifactIds,
-      client_op_id: clientOpId,
-      ...(spawnAt ? { spawn_at: spawnAt } : {}),
-      ...(input.imageModel ? { model: input.imageModel } : {}),
-    },
-    prepare: () => ctx.deps.generate.prepare({
+  try {
+    const submitted = await submitter.submitAgentImage({
       projectId: ctx.projectId,
-      prompt: input.prompt,
-      clientOpId,
-      referenceArtifactIds: input.referenceArtifactIds,
-      source: "agent_chat",
-      createdBy: "agent",
-      ...(spawnAt ? { spawnAt } : {}),
-      ...(input.imageModel ? { model: input.imageModel } : {}),
-    }),
-  });
+      threadId: session.threadId,
+      runId: session.runId(),
+      prompt: input.prompt.trim(),
+      model: imageModel,
+      toolName: input.toolName,
+      toolCallId: input.toolCallId,
+      placement: input.placement,
+    });
+    const details = {
+      ok: true as const,
+      async: true as const,
+      status: "accepted" as const,
+      task_id: submitted.taskId,
+      kind: DESK_GENERATE_JOB_KIND,
+      artifact_id: submitted.pending.artifact.id,
+    };
+    return ok(acceptedToolText(details), {
+      ...details,
+      task_kind: "image.generate",
+      placement: input.placement.mode,
+      tool: input.toolName,
+      replace_in_place: input.placement.mode === "replace",
+    });
+  } catch (error) {
+    if (error instanceof Error && (error.name === "AbortError" || input.signal?.aborted)) {
+      return fail("已停止生成", { status: "failed" });
+    }
+    return fail(error instanceof Error ? error.message : "生成失败");
+  }
 }
 
 /** 解析主源：显式 id > 单选；多选无显式则失败。 */

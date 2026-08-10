@@ -5,9 +5,10 @@
  *  - 统一错误：AppError → JSON {code, message, retryable, details}；其他 → 500 INTERNAL_ERROR
  */
 import { cors } from "hono/cors";
-import { Hono } from "hono";
+import { Hono, type Context, type Next } from "hono";
 import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
+import { timingSafeEqual } from "node:crypto";
 import type { ServerConfig } from "../config.js";
 import { AppError } from "../lib/errors.js";
 import type { ArtifactService } from "../services/artifact-service.js";
@@ -15,8 +16,9 @@ import type { CanvasGenerateService } from "../services/canvas-generate-service.
 import type { DeskStateService } from "../services/desk-state-service.js";
 import type { FileStorage } from "../services/file-storage.js";
 import type { ChatService } from "../services/chat-service.js";
-import type { AgentJobRunner } from "../agent/async-job/runner.js";
 import type { AgentSessionRegistry } from "../agent/session-registry.js";
+import type { TaskStore } from "../tasks/task-store.js";
+import type { AssetBatchSubmissionService } from "../tasks/asset-batch-submission.js";
 import { registerArtifactRoutes } from "./routes/artifacts.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerDeskRoutes } from "./routes/desk.js";
@@ -31,9 +33,32 @@ interface HttpDependencies {
   files: FileStorage;
   chats: ChatService;
   sessions: AgentSessionRegistry;
-  /** 面板生图：CanvasGenerate + Job 外壳（H8） */
+  /** 面板生图：CanvasGenerate + 持久任务队列 */
   generate?: CanvasGenerateService;
-  jobs?: AgentJobRunner;
+  taskStore?: TaskStore;
+  batchSubmitter?: AssetBatchSubmissionService;
+  bullBoard?: Hono;
+}
+
+function hasBullBoardCredentials(c: Context, expectedUsername: string, expectedPassword: string): boolean {
+  const authorization = c.req.header("authorization") ?? "";
+  if (!authorization.startsWith("Basic ")) return false;
+  let supplied = "";
+  try {
+    supplied = Buffer.from(authorization.slice(6).trim(), "base64").toString("utf8");
+  } catch {
+    return false;
+  }
+  const expectedBytes = Buffer.from(`${expectedUsername}:${expectedPassword}`);
+  const suppliedBytes = Buffer.from(supplied);
+  return expectedBytes.length === suppliedBytes.length
+    && timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
+async function protectBullBoard(c: Context, next: Next, username?: string, password?: string) {
+  if (!username || !password || hasBullBoardCredentials(c, username, password)) return next();
+  c.header("WWW-Authenticate", "Basic realm=\"Bull Board\", charset=\"UTF-8\"");
+  return c.text("Bull Board credentials required", 401);
 }
 
 export function createHttpApp(deps: HttpDependencies) {
@@ -57,13 +82,29 @@ export function createHttpApp(deps: HttpDependencies) {
     }),
   );
 
+  if (deps.bullBoard) {
+    const boardPath = deps.config.bullBoardPath;
+    const authenticate = (c: Context, next: Next) => protectBullBoard(
+      c,
+      next,
+      deps.config.bullBoardUsername,
+      deps.config.bullBoardPassword,
+    );
+    app.use(boardPath, authenticate);
+    app.use(`${boardPath}/*`, authenticate);
+    app.get(`${boardPath}/`, (c) => c.redirect(boardPath, 308));
+    app.route(boardPath, deps.bullBoard);
+  }
+
   // 路由注册：每个文件管自己的资源
   registerProjectRoutes(app, deps);
   registerDeskRoutes(app, {
     desks: deps.desks,
     artifacts: deps.artifacts,
     generate: deps.generate,
-    jobs: deps.jobs,
+    taskStore: deps.taskStore,
+    defaultImageModel: deps.config.imageModel,
+    batchSubmitter: deps.batchSubmitter,
   });
   registerChatRoutes(app, deps);
   registerArtifactRoutes(app, deps);

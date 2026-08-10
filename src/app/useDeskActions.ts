@@ -73,6 +73,30 @@ export function useDeskActions(options: {
     [enqueue],
   );
 
+  const onRename = useCallback(
+    (id: string, displayName: string | null) => {
+      const { projectId, activeProjectRef, refreshDesk, setChatItems } = depsRef.current;
+      if (!projectId) return;
+      setObjects((cur) =>
+        cur.map((o) => (o.id === id ? { ...o, label: displayName ?? undefined } : o)),
+      );
+      void enqueue(() =>
+        api.setDisplayName(id, displayName).then(
+          () => refreshDesk(projectId).catch(() => undefined),
+          (e) => {
+            if (activeProjectRef.current !== projectId) return;
+            setChatItems((cur) => [
+              ...cur,
+              { id: nextId(), role: "agent", text: `改名失败：${e instanceof Error ? e.message : "未知错误"}` },
+            ]);
+            void refreshDesk(projectId).catch(() => undefined);
+          },
+        ),
+      );
+    },
+    [enqueue, setObjects],
+  );
+
   const onViewportChange = useCallback(
     (viewport: { x: number; y: number; zoom: number }) => {
       const { projectId, snapshot, activeProjectRef, refreshDesk, setChatItems } = depsRef.current;
@@ -116,6 +140,7 @@ export function useDeskActions(options: {
     onMoveEnd,
     onResize,
     onResizeEnd,
+    onRename,
     onViewportChange,
     clearViewportTimer,
   };

@@ -6,7 +6,6 @@ import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { MAX_SELECTED_ARTIFACTS } from "../../domain/selection-limits.js";
 import { compileDeskObjects, type DeskObjectView } from "../desk-context.js";
-import { DESK_GENERATE_JOB_KIND } from "./generate/shared/run-desk-generate.js";
 import { fail, ok, type ToolContext } from "./shared.js";
 
 const ALIAS_RE = /^A\d{2,}$/i;
@@ -52,7 +51,7 @@ export function createRemoveFromDeskTool(ctx: ToolContext) {
     promptGuidelines: [
       "用户明确要求删除/清掉某卡时调用 remove_from_desk。",
       "传 artifact id 或 A01…；省略则用本轮选中。",
-      "一次最多 8 个；禁止未确认时清空整桌。",
+      `一次最多 ${MAX_SELECTED_ARTIFACTS} 个；禁止未确认时清空整桌。`,
       "成功后才能说已删除；失败如实说明。",
       "删除不能代替「覆盖重生」；要改图用 replace_on_desk。",
     ],
@@ -112,17 +111,9 @@ export function createRemoveFromDeskTool(ctx: ToolContext) {
         }
 
         try {
-          const store = ctx.deps.jobStore;
-          const jobs = ctx.deps.jobs;
-          if (store && jobs) {
-            const active = await store.listActiveByArtifact(ctx.projectId, item.id);
-            for (const job of active) {
-              if (job.kind === DESK_GENERATE_JOB_KIND) {
-                jobs.cancelJob(job.id);
-                cancelledJobs.push(job.id);
-              }
-            }
-          }
+          const cancelled = await ctx.deps.taskCancellation
+            ?.cancelArtifact(ctx.projectId, item.id) ?? [];
+          cancelledJobs.push(...cancelled);
 
           await ctx.deps.artifacts.deletePlaced(ctx.projectId, item.id);
           deleted.push({ artifact_id: item.id, alias: item.alias });

@@ -21,6 +21,7 @@ import {
   sanitizeCaptionText,
 } from "../services/image-caption-sanitize.js";
 import type { ImageCaptionStore } from "../services/image-caption-store.js";
+import type { JobWakeService } from "./async-job/job-wake.js";
 
 export type { SessionFactoryDependencies as RegistryDependencies } from "./session-factory.js";
 export { agentPrompt } from "./agent-prompt.js";
@@ -44,8 +45,7 @@ export class AgentSessionRegistry {
   private readonly writes: EventWriteTracker;
   private readonly factory: SessionFactory;
   private readonly desks: SessionFactoryDependencies["desks"];
-  private readonly generate: SessionFactoryDependencies["generate"];
-  private readonly jobs: SessionFactoryDependencies["jobs"];
+  private readonly taskCancellation: SessionFactoryDependencies["taskCancellation"];
   private readonly jobStore: SessionFactoryDependencies["jobStore"];
   private readonly files: SessionFactoryDependencies["files"];
   private readonly captions?: ImageCaptionStore;
@@ -55,6 +55,7 @@ export class AgentSessionRegistry {
   /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源。 */
   private readonly selectionBySession = new Map<string, string[]>();
   private shuttingDown = false;
+  private jobWake?: JobWakeService;
 
   constructor(
     deps: SessionFactoryDependencies,
@@ -63,14 +64,17 @@ export class AgentSessionRegistry {
     this.writes = new EventWriteTracker(deps.emit);
     this.factory = new SessionFactory(deps, this.writes, this.activeRunIds, this.selectionBySession);
     this.desks = deps.desks;
-    this.generate = deps.generate;
-    this.jobs = deps.jobs;
+    this.taskCancellation = deps.taskCancellation;
     this.jobStore = deps.jobStore;
     this.files = deps.files;
     this.captions = deps.captions;
     this.chats = deps.chats;
     this.emit = deps.emit;
     this.traces = deps.traces;
+  }
+
+  setJobWake(jobWake: JobWakeService) {
+    this.jobWake = jobWake;
   }
 
   /** thread 是否有进行中的 agent run（wake 互斥）。 */
@@ -194,7 +198,7 @@ export class AgentSessionRegistry {
       if (activeRuns.length === 0) this.activeRunIds.delete(key);
       this.scheduleIdle(key, pending);
       // 通知 wake 队列：本 thread 可能已空闲
-      this.jobs?.wake?.notifyThreadIdle(projectId, threadId);
+      this.jobWake?.notifyThreadIdle(projectId, threadId);
     }
   }
 
@@ -350,7 +354,7 @@ export class AgentSessionRegistry {
     const key = `${projectId}:${threadId}`;
     const pending = this.sessions.get(key);
     // 只 cancel 本 thread 的 jobs（job signal 会 abort complete）；不 abortProject，避免杀面板生图
-    await this.jobs?.cancelThread(projectId, threadId);
+    await this.taskCancellation?.cancelThread(projectId, threadId);
     if (!pending) return true;
     try {
       const aborted = await stopAgentSession(await pending);
@@ -384,7 +388,6 @@ export class AgentSessionRegistry {
     this.shuttingDown = true;
     for (const timer of this.idleTimers.values()) clearTimeout(timer);
     this.idleTimers.clear();
-    await this.jobs?.shutdown();
     const pending = [...this.sessions.values()];
     this.sessions.clear();
     await Promise.allSettled(pending.map(async (session) => releaseAgentSession(await session, true)));

@@ -12,14 +12,14 @@ Phase 0 已让对话看见画布选中。画布面板生图（`CanvasGenerateSer
 
 ## 决策
 
-1. **允许 Agent 写桌，写桌生图共用一条管线**（`CanvasGenerateService` + 异步 Job），实现在 `apps/server/src/agent/tools/generate/`。  
+1. **允许 Agent 写桌，写桌生图共用一条管线**（`CanvasGenerateService` prepare + TaskQueue/`image.generate` Worker），工具在 `apps/server/src/agent/tools/generate/`。  
 2. **Agent 工具名可多个，语义按落点拆分**（2026-08-10 修订）：  
    - `generate_from_desk` — 主源旁落新 effect_image  
    - `replace_on_desk` — 原卡 append 替换画面  
    - `text_to_image_on_desk` — 无主源文生图落桌（spawn；空位算法，可选参考）  
    - `remove_from_desk` — 硬删桌面物件（与 HTTP DELETE 同路径；用户明确要求时）  
-3. **Job kind** MVP 仍统一为 `generate_from_desk`，靠 input `placement` / `tool` 区分；观测不够时再分 kind。  
-4. **并发**：同项目 Agent 写桌生图 active 默认上限 2（`AGENT_DESK_GENERATE_MAX_ACTIVE`）；create 路径串行化防竞态。旁落 complete 的 lockKey 为**新卡 id**（非主源），避免同主源多旁落互 abort。  
+3. **业务 task kind** 为 `image.generate`（placement/operation 区分）；对外/兼容字段可仍出现 `generate_from_desk`。  
+4. **调度与并发**：执行走 **BullMQ 任务队列**（见 [ADR 0014](0014-bullmq-task-queue-for-asset-batches.md)）。同项目图像 active 默认 4（`TASK_PROJECT_IMAGE_CONCURRENCY`），超出**排队**而非工具直接失败。  
 5. **来源标记**：payload `source: "agent_chat"`；`createdBy: "agent"`。  
 6. **源物件解析**：工具参数 `source_artifact_id` 优先；缺省用本轮单选；多选无显式 id 则失败。  
 7. **完成判定**：以工具返回与 `object_changed` / `[JOB_EVENT]`（可短窗批合并）为准；禁止无工具结果时声称已落桌/已删除。  

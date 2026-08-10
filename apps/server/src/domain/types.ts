@@ -53,6 +53,10 @@ export interface ArtifactSnapshot {
   inputRefs: unknown[];
   createdBy: CreatedBy;
   createdAt: Date;
+  /** 人读展示名（artifact 列，非 version payload） */
+  displayName?: string | null;
+  /** user | model */
+  displayNameSource?: string | null;
 }
 
 /** 一次 GET /desk 的完整快照（项目 + 全部 artifacts + 桌面状态）。 */

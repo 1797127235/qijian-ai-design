@@ -4,7 +4,8 @@
 **实现进度（2026-08-10）：** L0 Survey / Focus+caption / 选中 Inspect / 基础指代已落地；视觉总览落地为按需工具 `look_at_desk`（非每轮强制塞图）。**产品决定不做：** 几何「左边」类相对选中消解、`relative_hints` 文本、**Compare 对照块**。详见 [装配规则](agent-desk-context-assembly.md)、[黄金任务](agent-desk-golden-tasks.md)。  
 **日期：** 2026-08-08  
 **范围：** 助手如何「描述桌上物件」以及如何「组织上下文看见桌面」  
-**相关：** [CONTEXT.md](../CONTEXT.md)、[ADR 0013](adr/0013-agent-generate-from-desk.md)、[agent-harness-audit](agent-harness-audit.md)、[agent-design-frontier-review](agent-design-frontier-review.md)、[世界模型字段表](agent-desk-world-model-fields.md)、[上下文装配规则](agent-desk-context-assembly.md)
+**相关：** [CONTEXT.md](../CONTEXT.md)、[ADR 0013](adr/0013-agent-generate-from-desk.md)、[ADR 0014](adr/0014-bullmq-task-queue-for-asset-batches.md)、[世界模型字段表](agent-desk-world-model-fields.md)、[上下文装配规则](agent-desk-context-assembly.md)  
+**归档（勿当现行）：** [harness 审计](archive/audits/agent-harness-audit.md)、[frontier review](archive/audits/agent-design-frontier-review.md)
 
 ---
 

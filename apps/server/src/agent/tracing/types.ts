@@ -1,4 +1,5 @@
 /** H7 Agent 观测：错误码与 Tracer 契约。 */
+import type { TokenUsageAggregate } from "../usage-metrics.js";
 
 export type ErrorCode =
   | "VALIDATION"
@@ -54,17 +55,7 @@ export interface AgentTracer {
 }
 
 /** 本 run 内模型 turn 的 token/cache 累加（L2 挂 root outputs）。 */
-export type TraceUsageTotals = {
-  turns: number;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  hitRate: number | null;
-  formula: string;
-  cacheSignal: boolean;
-};
+export type TraceUsageTotals = TokenUsageAggregate;
 
 export interface TraceContext {
   runId: string;

@@ -1,10 +1,13 @@
 /** agent_jobs.status 枚举。与 schema 的 $type 对齐。 */
 export type AgentJobStatus =
+  | "enqueue_pending"
   | "accepted"
   | "running"
   | "succeeded"
   | "failed"
   | "cancelled"
+  | "cancelled_with_side_effect"
+  | "needs_review"
   | "interrupted";
 
 /** AgentJob DTO（Date → ISO string）。 */

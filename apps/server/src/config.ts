@@ -53,6 +53,31 @@ export interface ServerConfig {
   langsmithProject?: string;
   langsmithEndpoint?: string;
   langsmithDebugSync: boolean;
+  redisUrl: string;
+  taskQueuePrefix: string;
+  taskWorkerConcurrency: number;
+  taskProjectImageConcurrency: number;
+  /** 生图自动重试含首次上限（ADR 0015） */
+  taskImageMaxAttempts: number;
+  /** 生图重试退避基数 ms */
+  taskImageBackoffMs: number;
+  /** outbox → Redis 入队失败上限；达到后 outbox/task 标 failed（死信） */
+  taskOutboxMaxAttempts: number;
+  /** outbox 入队失败退避基数 ms（指数，封顶 60s） */
+  taskOutboxBackoffMs: number;
+  /** Bull Board 管理页路径（默认仅本机开发使用） */
+  bullBoardPath: string;
+  /** 两者都配置后启用浏览器原生 HTTP Basic Auth */
+  bullBoardUsername?: string;
+  bullBoardPassword?: string;
+  /** 只读模式禁止从管理页暂停、清理、重试或删除任务 */
+  bullBoardReadOnly: boolean;
+}
+
+function boundedInteger(raw: string | undefined, fallback: number, max: number): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 1) return fallback;
+  return Math.min(max, Math.floor(value));
 }
 
 /** 未配网关时的模型列表占位；与 loadImageProviders 主站 builtins 一致。 */
@@ -122,5 +147,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     langsmithProject: env.LANGSMITH_PROJECT ?? "pi",
     langsmithEndpoint: env.LANGSMITH_ENDPOINT,
     langsmithDebugSync: (env.LANGSMITH_DEBUG_SYNC ?? "").toLowerCase() === "true",
+    redisUrl: env.REDIS_URL?.trim() || "redis://localhost:6379",
+    taskQueuePrefix: env.TASK_QUEUE_PREFIX?.trim() || "qijian",
+    taskWorkerConcurrency: boundedInteger(env.TASK_WORKER_CONCURRENCY, 4, 32),
+    taskProjectImageConcurrency: boundedInteger(env.TASK_PROJECT_IMAGE_CONCURRENCY, 4, 16),
+    taskImageMaxAttempts: boundedInteger(env.TASK_IMAGE_MAX_ATTEMPTS, 3, 8),
+    taskImageBackoffMs: boundedInteger(env.TASK_IMAGE_BACKOFF_MS, 2_000, 60_000),
+    taskOutboxMaxAttempts: boundedInteger(env.TASK_OUTBOX_MAX_ATTEMPTS, 20, 100),
+    taskOutboxBackoffMs: boundedInteger(
+      env.TASK_OUTBOX_BACKOFF_MS ?? env.TASK_OUTBOX_RETRY_BASE_MS,
+      1_000,
+      60_000,
+    ),
+    bullBoardPath: normalizeBullBoardPath(env.BULL_BOARD_PATH),
+    bullBoardUsername: env.BULL_BOARD_USERNAME?.trim() || undefined,
+    bullBoardPassword: env.BULL_BOARD_PASSWORD?.trim() || undefined,
+    bullBoardReadOnly: (env.BULL_BOARD_READ_ONLY ?? "true").toLowerCase() !== "false",
   };
+}
+
+function normalizeBullBoardPath(raw: string | undefined): string {
+  const value = raw?.trim() || "/admin/queues";
+  const withSlash = value.startsWith("/") ? value : `/${value}`;
+  return withSlash.replace(/\/+$/, "") || "/admin/queues";
 }

@@ -24,7 +24,6 @@ import type { ImageGenerator } from "../services/image-generator.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { FileStorage } from "../services/file-storage.js";
 import type { ImageCaptionStore } from "../services/image-caption-store.js";
-import type { AgentJobRunner } from "./async-job/runner.js";
 import type { AgentJobStore } from "./async-job/store.js";
 import {
   EventWriteTracker,
@@ -37,6 +36,8 @@ import { agentSessionDir } from "./session-paths.js";
 import { deskSystemPrompt } from "./system-prompt.js";
 import { createDeskTools } from "./tools/index.js";
 import type { TraceRegistry } from "./tracing/index.js";
+import type { AssetTaskSubmissionService } from "../tasks/asset-task-submission.js";
+import type { TaskCancellationService } from "../tasks/cancellation.js";
 import { capJson, mapErrorFromUnknown } from "./tracing/index.js";
 import {
   addUsageSample,
@@ -55,7 +56,8 @@ export interface SessionFactoryDependencies {
   files: FileStorage;
   emit: EventSink;
   config: Pick<ServerConfig, "agentProvider" | "agentModel" | "imageModelOptions">;
-  jobs?: AgentJobRunner;
+  assetTaskSubmitter?: AssetTaskSubmissionService;
+  taskCancellation?: TaskCancellationService;
   jobStore?: AgentJobStore;
   captions?: ImageCaptionStore;
   traces?: TraceRegistry;
@@ -114,9 +116,10 @@ export class SessionFactory {
         generate: this.deps.generate,
         files: this.deps.files,
         emit: this.deps.emit,
-        jobs: this.deps.jobs,
         jobStore: this.deps.jobStore,
+        taskCancellation: this.deps.taskCancellation,
         imageModelOptions: this.deps.config.imageModelOptions,
+        assetTaskSubmitter: this.deps.assetTaskSubmitter,
       },
       () => this.selectionBySession.get(key) ?? [],
       {

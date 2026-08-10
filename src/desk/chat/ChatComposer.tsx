@@ -1,4 +1,5 @@
-import { ArrowUp, FileText, Image as ImageIcon, LoaderCircle, Plus, RotateCcw, Square, X } from "lucide-react";
+import { ArrowUp, ChevronUp, FileText, Image as ImageIcon, LoaderCircle, Plus, RotateCcw, Square, X } from "lucide-react";
+import { useState } from "react";
 import type { ChatConnectionStatus } from "../../lib/api";
 import { ATTACHMENT_ACCEPT } from "../attachments";
 import type { DeskObject } from "../types";
@@ -11,23 +12,31 @@ const connectionLabels: Record<ChatConnectionStatus, string> = {
   disconnected: "已离线",
 };
 
+/** 多选横排条：默认露出的缩略图数，超出收进 +N */
+const SELECTION_ROW_MAX = 6;
+
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 选中 chip 标题：优先桌面编号 + 类型名（与 Agent alias 对齐）。 */
+/** 选中 chip：主文案用 label；无 label 再回落类型名。 */
 function selectionLabel(object: DeskObject) {
-  const prefix = object.alias ? `${object.alias} · ` : "";
-  if (object.kind === "effect_image") {
-    if (object.pending) return `${prefix}效果图 · 生成中`;
-    if (object.error) return `${prefix}效果图 · 失败`;
-    return `${prefix}效果图`;
+  const name = object.label?.trim();
+  if (name) {
+    if (object.pending) return `${name} · 生成中`;
+    if (object.error) return `${name} · 失败`;
+    return name;
   }
-  if (object.pending) return `${prefix}图片 · 生成中`;
-  if (object.error) return `${prefix}图片 · 失败`;
-  if (!object.url) return `${prefix}图片 · 空占位`;
-  return `${prefix}画布图`;
+  if (object.kind === "effect_image") {
+    if (object.pending) return "效果图 · 生成中";
+    if (object.error) return "效果图 · 失败";
+    return "效果图";
+  }
+  if (object.pending) return "图片 · 生成中";
+  if (object.error) return "图片 · 失败";
+  if (!object.url) return "图片 · 空占位";
+  return "画布图";
 }
 
 function selectionPreview(object: DeskObject) {
@@ -72,6 +81,7 @@ export function ChatComposer({
   onRetry: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
+  const [selectionExpanded, setSelectionExpanded] = useState(false);
   const placeholder = connection !== "connected"
     ? `${connectionLabels[connection]}，可先输入消息`
     : selectedObjects.length > 0
@@ -93,33 +103,83 @@ export function ChatComposer({
     >
       {/* 画布选中即时 chip：一点选就显示，发送时才经 selectedArtifactIds 给 Agent */}
       {selectedObjects.length > 0 && (
-        <div className="composer-selection" aria-label="当前选中的桌面物件">
-          {selectedObjects.map((selectedObject) => {
-            const previewUrl = selectionPreview(selectedObject);
-            return (
-              <div key={selectedObject.id} className="composer-selection-chip">
-                <div className="composer-selection-preview" aria-hidden="true">
-                  {previewUrl
-                    ? <img src={previewUrl} alt="" />
-                    : <ImageIcon size={16} strokeWidth={1.6} />}
-                </div>
-                <div className="composer-selection-copy">
-                  <span title={selectionLabel(selectedObject)}>{selectionLabel(selectedObject)}</span>
-                  <small>已选中 · 发送时告诉助手</small>
-                </div>
+        <div
+          className="composer-selection"
+          aria-label={`已选中 ${selectedObjects.length} 个桌面物件，发送时告诉助手`}
+          title={`已选中 ${selectedObjects.length} 个 · 发送时告诉助手`}
+        >
+          {selectedObjects.length > 3 ? (
+            <div className="composer-selection-row">
+              {(selectionExpanded ? selectedObjects : selectedObjects.slice(0, SELECTION_ROW_MAX)).map((selectedObject) => {
+                const previewUrl = selectionPreview(selectedObject);
+                const label = selectionLabel(selectedObject);
+                return (
+                  <div key={selectedObject.id} className="composer-selection-thumb" title={label}>
+                    {previewUrl
+                      ? <img src={previewUrl} alt="" />
+                      : <ImageIcon size={14} strokeWidth={1.6} />}
+                    <button
+                      type="button"
+                      className="composer-selection-thumb-remove"
+                      aria-label={`取消选中 ${label}`}
+                      title="取消选中"
+                      disabled={draftLocked}
+                      onClick={() => onClearSelection?.(selectedObject.id)}
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                );
+              })}
+              {!selectionExpanded && selectedObjects.length > SELECTION_ROW_MAX && (
                 <button
                   type="button"
-                  className="composer-attachment-action"
-                  aria-label="取消选中"
-                  title="取消选中"
-                  disabled={draftLocked}
-                  onClick={() => onClearSelection?.(selectedObject.id)}
+                  className="composer-selection-more"
+                  aria-label={`还有 ${selectedObjects.length - SELECTION_ROW_MAX} 个，点击展开`}
+                  title={`还有 ${selectedObjects.length - SELECTION_ROW_MAX} 个 · 点击展开`}
+                  onClick={() => setSelectionExpanded(true)}
                 >
-                  <X size={16} />
+                  +{selectedObjects.length - SELECTION_ROW_MAX}
                 </button>
-              </div>
-            );
-          })}
+              )}
+              {selectionExpanded && (
+                <button
+                  type="button"
+                  className="composer-selection-more"
+                  aria-label="收起"
+                  title="收起"
+                  onClick={() => setSelectionExpanded(false)}
+                >
+                  <ChevronUp size={12} />
+                </button>
+              )}
+            </div>
+          ) : (
+            selectedObjects.map((selectedObject) => {
+              const previewUrl = selectionPreview(selectedObject);
+              const label = selectionLabel(selectedObject);
+              return (
+                <div key={selectedObject.id} className="composer-selection-chip">
+                  <div className="composer-selection-preview" aria-hidden="true">
+                    {previewUrl
+                      ? <img src={previewUrl} alt="" />
+                      : <ImageIcon size={13} strokeWidth={1.6} />}
+                  </div>
+                  <span className="composer-selection-name" title={label}>{label}</span>
+                  <button
+                    type="button"
+                    className="composer-attachment-action"
+                    aria-label={`取消选中 ${label}`}
+                    title="取消选中"
+                    disabled={draftLocked}
+                    onClick={() => onClearSelection?.(selectedObject.id)}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
       {items.length > 0 && (

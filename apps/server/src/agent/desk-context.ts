@@ -126,15 +126,8 @@ export function revisionOf(snapshot: DeskSnapshot): string {
 function buildLabels(
   onDesk: ArtifactSnapshot[],
   fileNames: Record<string, string>,
-  connections: { from: string; to: string }[],
+  _connections: { from: string; to: string }[],
 ): Map<string, string> {
-  const parents = new Map<string, string[]>();
-  for (const edge of connections) {
-    const list = parents.get(edge.to) ?? [];
-    list.push(edge.from);
-    parents.set(edge.to, list);
-  }
-
   const raw = new Map<string, string>();
   const typeCounters = new Map<string, number>();
   const nextSeq = (key: string) => {
@@ -144,6 +137,13 @@ function buildLabels(
   };
 
   for (const artifact of onDesk) {
+    // display_name 优先（人读 fact）；禁止把血缘串当主名
+    const display = typeof artifact.displayName === "string" ? clipLabel(artifact.displayName) : "";
+    if (display) {
+      raw.set(artifact.id, display);
+      continue;
+    }
+
     const life = lifecycleOf(artifact);
     const fileId = typeof artifact.payload.file_id === "string" ? artifact.payload.file_id : "";
     const fileLabel = fileId && fileNames[fileId] ? clipLabel(stripExt(fileNames[fileId])) : "";
@@ -153,24 +153,12 @@ function buildLabels(
     else if (life === "failed") base = `生成失败-${nextSeq("failed")}`;
     else if (life === "empty") base = `空图-${nextSeq("empty")}`;
     else if (artifact.artifactType === "canvas_image" && fileLabel) base = fileLabel;
-    else if (artifact.artifactType === "effect_image") {
-      const parentIds = parents.get(artifact.id) ?? [];
-      const parentLabel = parentIds.map((id) => raw.get(id)).find(Boolean);
-      base = parentLabel
-        ? `从 ${parentLabel} 生成-${nextSeq(`fx-from-${parentIds[0]}`)}`
-        : `效果图-${nextSeq("fx")}`;
-    } else base = `画布图-${nextSeq("canvas")}`;
+    else if (artifact.artifactType === "effect_image") base = `效果图-${nextSeq("fx")}`;
+    else base = `画布图-${nextSeq("canvas")}`;
     raw.set(artifact.id, base);
   }
 
-  typeCounters.clear();
-  for (const artifact of onDesk) {
-    if (artifact.artifactType !== "effect_image" || lifecycleOf(artifact) !== "ready") continue;
-    const parentIds = parents.get(artifact.id) ?? [];
-    const parentLabel = parentIds.map((id) => raw.get(id)).find(Boolean);
-    if (parentLabel) raw.set(artifact.id, `从 ${parentLabel} 生成-${nextSeq(`fx-from-${parentIds[0]}`)}`);
-  }
-
+  // 同桌 ephemeral 消歧（不写回 display_name）
   const seen = new Map<string, number>();
   const unique = new Map<string, string>();
   for (const artifact of onDesk) {

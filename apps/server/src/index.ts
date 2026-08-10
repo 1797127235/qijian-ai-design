@@ -6,14 +6,17 @@
  *   2) 领域服务：artifacts / desks / files / chats / image generator
  *   3) 复合服务：CanvasGenerateService（聚合 artifacts+desks+files+effects 给 Agent 调用）
  *   4) 文件引用检查器互注册：chats / artifacts 谁持有 file_id，FileStorage 才能算孤儿
- *   5) Agent 异步任务：jobStore / runner，进程启动时清扫「running 中」遗留 job
+ *   5) BullMQ 资产任务：PostgreSQL outbox + Redis 队列 + Worker
  *   6) AgentSessionRegistry：把 pi-coding-agent 实例与上述服务绑定
  *   7) ChatGateway：所有 event 统一入口，publish 函数先占位再回填避免循环依赖
  */
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { WebSocketServer } from "ws";
+import { createBullBoard } from "@bull-board/api";
+import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
+import { HonoAdapter } from "@bull-board/hono";
 import { JobWakeService } from "./agent/async-job/job-wake.js";
-import { AgentJobRunner } from "./agent/async-job/runner.js";
 import { AgentJobStore } from "./agent/async-job/store.js";
 import { ChatGateway } from "./agent/chat-gateway.js";
 import { createDeskContentChangedHandler } from "./agent/desk-changed-broadcast.js";
@@ -36,6 +39,17 @@ import { ProjectAutoNamer } from "./services/project-namer.js";
 import { ProjectCoverService } from "./services/project-cover-service.js";
 import { eq } from "drizzle-orm";
 import { projects } from "./db/schema.js";
+import { BullMqQueueAdapter } from "./tasks/bullmq/queue.js";
+import { TaskOutboxDispatcher } from "./tasks/dispatcher.js";
+import { TaskQueueReconciler } from "./tasks/reconciler.js";
+import { TaskStore } from "./tasks/task-store.js";
+import { AssetTaskSubmissionService } from "./tasks/asset-task-submission.js";
+import { TaskEventStore } from "./tasks/event-store.js";
+import { TaskJobWakePoller } from "./tasks/job-wake-poller.js";
+import { TaskDeskRefreshPoller } from "./tasks/desk-refresh-poller.js";
+import { AssetBatchSubmissionService } from "./tasks/asset-batch-submission.js";
+import { TaskCancellationService } from "./tasks/cancellation.js";
+import { ImageTaskExecutor } from "./tasks/image-task-executor.js";
 
 // —— 基础设施 ——
 const config = loadConfig();
@@ -109,9 +123,13 @@ artifacts.setObjectDeletedListener((projectId) => {
 // —— Agent 异步任务（job）——
 const traces = createTraceRegistry(config);
 const jobStore = new AgentJobStore(db);
-const jobs = new AgentJobRunner(jobStore, (event) => publish(event), traces);
+const taskStore = new TaskStore(db);
+const bullmq = new BullMqQueueAdapter(config);
+const taskCancellation = new TaskCancellationService(taskStore, bullmq);
+const assetTaskSubmitter = new AssetTaskSubmissionService(taskStore, generate, desks, config);
+const batchSubmitter = new AssetBatchSubmissionService(taskStore, generate, desks, config);
 const captions = captionStore;
-// Agent 写桌：generate_from_desk → Job 异步外壳 → CanvasGenerateService
+// Agent 写桌：generate_from_desk → BullMQ 持久任务 → Worker
 const sessions = new AgentSessionRegistry({
   artifacts,
   desks,
@@ -120,10 +138,11 @@ const sessions = new AgentSessionRegistry({
   chats,
   files,
   config,
-  jobs,
   jobStore,
+  taskCancellation,
   captions,
   traces,
+  assetTaskSubmitter,
   emit: (event) => publish(event),
 });
 // 方案 3 / 书中异步事件：job 终态 → 结构化 [JOB_EVENT] 回注轨迹并续跑
@@ -145,31 +164,112 @@ const jobWake = new JobWakeService(
   },
   (projectId, threadId) => sessions.isThreadBusy(projectId, threadId),
 );
-jobs.wake = jobWake;
+sessions.setJobWake(jobWake);
+const taskEventStore = new TaskEventStore(db);
+const wakePoller = new TaskJobWakePoller(taskEventStore, jobStore, jobWake);
 const chat = new ChatGateway(sessions, chats, traces);
 // publish 回填：从此刻起，Agent/Job 抛出的事件统一进 ChatGateway，由它按连接 fan-out
 publish = chat.emit;
+// Worker 终态 → object_changed（跨进程补推，前端 refreshDesk）
+const deskRefreshPoller = new TaskDeskRefreshPoller(taskEventStore, taskStore, (event) => publish(event));
 // 自动起名：走 publish（= chat.emit）fan-out project_renamed；需在 publish 回填后构造
 const namer = new ProjectAutoNamer(desks, config, (event) => publish(event));
 chat.namer = namer;
 
+// BullMQ runtime: PG acceptance is durable; dispatcher/reconciler rebuild Redis scheduling.
+// API 进程仅用 failPending 清死信 pending 卡（不跑 generate）
+const imageTaskExecutor = new ImageTaskExecutor(files, effects, artifacts);
+const dispatcher = new TaskOutboxDispatcher(taskStore, bullmq, {
+  maxAttempts: config.taskOutboxMaxAttempts,
+  retryBaseMs: config.taskOutboxBackoffMs,
+  onDeadLetter: async ({ artifactId, payload, error }) => {
+    if (artifactId && payload.kind === "image.generate") {
+      await imageTaskExecutor.failPending(artifactId, payload, error);
+    }
+  },
+});
+const reconciler = new TaskQueueReconciler(taskStore, bullmq);
+bullmq.queue.on("error", (error) => console.warn("[bullmq] queue error:", error.message));
+bullmq.flowProducer.on("error", (error) => console.warn("[bullmq] flow error:", error.message));
+let dispatching = false;
+let reconciling = false;
+let wakePolling = false;
+let deskRefreshPolling = false;
+const dispatchTimer = setInterval(() => {
+  if (dispatching) return;
+  dispatching = true;
+  void dispatcher.dispatchOnce()
+    .catch((error) => console.warn("[bullmq] dispatcher failed:", error instanceof Error ? error.message : error))
+    .finally(() => { dispatching = false; });
+}, 250);
+const reconcileTimer = setInterval(() => {
+  if (reconciling) return;
+  reconciling = true;
+  void reconciler.reconcileOnce()
+    .catch((error) => console.warn("[bullmq] reconciler failed:", error instanceof Error ? error.message : error))
+    .finally(() => { reconciling = false; });
+}, 30_000);
+const wakeTimer = setInterval(() => {
+  if (wakePolling) return;
+  wakePolling = true;
+  void wakePoller.pollOnce()
+    .catch((error) => console.warn("[job-wake] event poll failed:", error instanceof Error ? error.message : error))
+    .finally(() => { wakePolling = false; });
+}, 500);
+const deskRefreshTimer = setInterval(() => {
+  if (deskRefreshPolling) return;
+  deskRefreshPolling = true;
+  void deskRefreshPoller.pollOnce()
+    .catch((error) => console.warn("[desk-refresh] event poll failed:", error instanceof Error ? error.message : error))
+    .finally(() => { deskRefreshPolling = false; });
+}, 500);
+
+// Bull Board is an operational read-only view over the same BullMQ queue.
+const bullBoardServer = new HonoAdapter(serveStatic)
+  .setBasePath(config.bullBoardPath);
+createBullBoard({
+  queues: [new BullMQAdapter(bullmq.queue, {
+    // Never expose destructive controls without Basic Auth credentials.
+    readOnlyMode: config.bullBoardReadOnly || !config.bullBoardUsername || !config.bullBoardPassword,
+    displayName: "Asset Tasks",
+    description: "BullMQ asset generation and naming tasks",
+  })],
+  serverAdapter: bullBoardServer,
+  options: {
+    uiConfig: {
+      boardTitle: "Qijian Asset Tasks",
+    },
+  },
+});
+const bullBoard = bullBoardServer.registerPlugin();
+
 /**
  * HTTP 启动 + WS upgrade 路由。
- *  - 先 await boot 清扫，再 listen，避免 interruptStale 误杀启动后新建的 job
+ *  - 先等待 BullMQ/Redis 就绪并执行一次 reconciler，再 listen
  *  - WS 只挂在 `/api/projects/:id/chat`，项目 ID 取自 URL；其他路径 destroy
  *  - 用 `noServer: true` 自己接管 upgrade，避免 ws 库创建第二个 http server
  */
-const app = createHttpApp({ config, artifacts, desks, files, chats, sessions, generate, jobs });
+const app = createHttpApp({
+  config,
+  artifacts,
+  desks,
+  files,
+  chats,
+  sessions,
+  generate,
+  taskStore,
+  batchSubmitter,
+  bullBoard,
+});
 const sockets = new WebSocketServer({ noServer: true });
 
 async function start() {
-  // 启动时把上次崩溃遗留的 running job 标记为 interrupted，避免「幽灵生成」
-  try {
-    const n = await jobs.interruptStaleOnBoot();
-    if (n > 0) console.log(`Interrupted ${n} stale agent job(s) on boot`);
-  } catch (error) {
-    console.warn("Failed to interrupt stale agent jobs on boot:", error instanceof Error ? error.message : error);
-  }
+  await bullmq.waitUntilReady();
+  await reconciler.reconcileOnce();
+  // 避免重启后回放历史 terminal（会刷屏 object_changed / 误触发 job-wake）
+  const eventCursor = await taskEventStore.latestId();
+  wakePoller.restoreCursor([{ id: eventCursor } as never]);
+  deskRefreshPoller.restoreCursor([{ id: eventCursor } as never]);
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`Qijian agent server listening on http://localhost:${info.port}`);
@@ -201,12 +301,17 @@ async function start() {
 
   /** 优雅关停：先关 WS → await HTTP close → Agent 会话 → DB pool */
   async function shutdown() {
+    clearInterval(dispatchTimer);
+    clearInterval(reconcileTimer);
+    clearInterval(wakeTimer);
+    clearInterval(deskRefreshTimer);
     for (const client of sockets.clients) client.close(1001, "server shutdown");
     await new Promise<void>((resolve) => sockets.close(() => resolve()));
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
     await sessions.shutdown();
+    await bullmq.shutdown();
     traces.forceCloseAll("server shutdown");
     await traces.flush();
     await pool.end();

@@ -59,10 +59,7 @@ describe("remove_from_desk", () => {
   it("deletes selected artifact and emits changed", async () => {
     const deletePlaced = vi.fn().mockResolvedValue({ object: { artifact_id: "a1" } });
     const changed = vi.fn();
-    const cancelJob = vi.fn();
-    const listActiveByArtifact = vi.fn().mockResolvedValue([
-      { id: "job-1", kind: "generate_from_desk" },
-    ]);
+    const cancelArtifact = vi.fn().mockResolvedValue(["job-1"]);
     const ctx = {
       projectId: "p1",
       selectedArtifactIds: () => ["a1"],
@@ -72,15 +69,14 @@ describe("remove_from_desk", () => {
       deps: {
         desks: { snapshot: vi.fn().mockResolvedValue(snapshotWith([{ id: "a1" }, { id: "a2" }])) },
         artifacts: { deletePlaced },
-        jobs: { cancelJob },
-        jobStore: { listActiveByArtifact },
+        taskCancellation: { cancelArtifact },
       },
     } as unknown as ToolContext;
 
     const tool = createRemoveFromDeskTool(ctx);
     const result = await tool.execute("c2", {}, undefined, undefined, {} as never);
     expect(deletePlaced).toHaveBeenCalledWith("p1", "a1");
-    expect(cancelJob).toHaveBeenCalledWith("job-1");
+    expect(cancelArtifact).toHaveBeenCalledWith("p1", "a1");
     expect(changed).toHaveBeenCalledWith("a1", true);
     expect(textOf(result)).toContain("已从桌面删除");
     expect(result.details).toMatchObject({
@@ -105,8 +101,6 @@ describe("remove_from_desk", () => {
       deps: {
         desks: { snapshot: vi.fn().mockResolvedValue(snap) },
         artifacts: { deletePlaced },
-        jobs: { cancelJob: vi.fn() },
-        jobStore: { listActiveByArtifact: vi.fn().mockResolvedValue([]) },
       },
     } as unknown as ToolContext;
 
