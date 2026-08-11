@@ -8,7 +8,7 @@
 }
 .rail-seal { margin-bottom: 10px; }
 .brand-mark.rail-seal { width: 30px; height: 30px; }
-.brand-mark.hero-seal { width: 42px; height: 42px; }
+.brand-mark.hero-seal { width: 52px; height: 52px; }
 .rail-btn {
   width: 40px; height: 40px; border-radius: 10px; cursor: pointer;
   display: grid; place-items: center; color: var(--color-mute);
@@ -29,15 +29,19 @@
 
 .home-hero { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .home-title {
-  font-family: var(--font-display); font-weight: 600; letter-spacing: .01em;
-  font-size: clamp(26px, 3.6vw, 38px); line-height: 1.25;
+  font-family: var(--font-display); font-weight: 600; letter-spacing: -0.02em;
+  font-size: clamp(35px, 4.5vw, 50px); line-height: 1.18;
   display: flex; align-items: center; gap: 12px;
 }
-.hero-seal { width: 42px; height: 42px; flex: none; }
-.home-tagline { margin-top: 14px; font-size: 15px; color: var(--color-mute); }
+.hero-seal { width: 52px; height: 52px; flex: none; }
+.home-tagline {
+  margin-top: 14px; font-family: var(--font-display); font-size: 18px; letter-spacing: .01em;
+  color: var(--color-ink-soft);
+  width: 100%; padding-bottom: 28px; border-bottom: 1px solid var(--color-hairline);
+}
 
 .home-prompt {
-  width: 100%; margin-top: 32px;
+  width: 100%; margin-top: 28px;
   background: var(--color-card); border: 1px solid var(--color-hairline-strong);
   border-radius: 18px; box-shadow: var(--shadow-float);
   padding: 16px 16px 10px;
@@ -108,7 +112,7 @@
   max-width: 1180px;
   padding: 0 clamp(24px, 5vw, 64px) 72px;
 }
-.home-recent h2 { font-family: var(--font-display); font-size: 16px; font-weight: 600; margin-bottom: 18px; }
+.home-recent h2 { font-family: var(--font-display); font-size: 18px; font-weight: 600; margin-bottom: 18px; }
 .home-row {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 22px; padding: 2px 2px 14px;
@@ -243,7 +247,7 @@
 }
 .home-modal-cancel:disabled, .home-modal-confirm:disabled { opacity: .5; cursor: not-allowed; }
 .home-card-cap { display: flex; flex-direction: column; gap: 4px; padding: 0 2px; }
-.home-card-name { font-family: var(--font-display); font-size: 15px; font-weight: 600; line-height: 1.35; color: var(--color-ink); }
+.home-card-name { font-family: var(--font-display); font-size: 16.5px; font-weight: 600; line-height: 1.35; color: var(--color-ink); }
 .home-card-meta {
   font-family: var(--font-outlier); font-size: 10.5px; letter-spacing: .04em;
   color: var(--color-mute-soft); display: flex; align-items: center; gap: 6px; flex-wrap: wrap;

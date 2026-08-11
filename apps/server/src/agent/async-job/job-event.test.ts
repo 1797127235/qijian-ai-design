@@ -59,9 +59,28 @@ describe("job-event", () => {
     expect(text).toContain("[JOB_EVENT_BATCH]");
     expect(text).toContain("succeeded=1");
     expect(text).toContain("failed=1");
+    expect(text).toContain("outcome=partial");
+    expect(text).toContain("部分成功");
     expect(text).toContain("j1");
     expect(text).toContain("j2");
+    expect(text).toContain("勿自动全部重试");
     expect(jobWakeBatchExternalId(["j2", "j1"])).toBe(jobWakeBatchExternalId(["j1", "j2"]));
+  });
+
+  it("batch wake marks all_succeeded and all_failed", () => {
+    const allOk = formatJobWakeBatchPrompt([
+      base({ id: "j1", status: "succeeded", artifactId: "a1" }),
+      base({ id: "j2", status: "succeeded", artifactId: "a2" }),
+    ]);
+    expect(allOk).toContain("outcome=all_succeeded");
+    expect(allOk).not.toContain("部分成功");
+
+    const allBad = formatJobWakeBatchPrompt([
+      base({ id: "j3", status: "failed", error: "HTTP 500" }),
+      base({ id: "j4", status: "failed", error: "timeout" }),
+    ]);
+    expect(allBad).toContain("outcome=all_failed");
+    expect(allBad).toContain("HTTP 500");
   });
 });
 

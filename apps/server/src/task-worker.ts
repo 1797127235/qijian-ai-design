@@ -13,7 +13,6 @@ import { ImageTaskExecutor } from "./tasks/image-task-executor.js";
 import { AssetTaskWorker } from "./tasks/bullmq/worker.js";
 import { TaskStore } from "./tasks/task-store.js";
 import { ArtifactNameTaskService } from "./tasks/artifact-name-task.js";
-
 const config = loadConfig();
 const { db, pool } = createDatabase(config);
 const artifacts = new ArtifactService(db);

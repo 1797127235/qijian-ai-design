@@ -1,7 +1,12 @@
 import type { DeskSnapshot } from "../domain/types.js";
 import { HttpError } from "../lib/errors.js";
 import { composeCanvasPrompt, stripInpaintPrefix } from "../services/canvas-generate-service.js";
-import type { ImageGenerateTaskV1 } from "./types.js";
+import type { GenerationMemorySnapshot, ImageGenerateTaskV1 } from "./types.js";
+
+export function composePromptWithProjectMemory(prompt: string, memory?: GenerationMemorySnapshot): string {
+  if (!memory?.compiled_design_context.trim()) return prompt;
+  return `${memory.compiled_design_context}\n\n[CURRENT_GENERATION_REQUEST]\n${prompt}`;
+}
 
 type PanelImageInput = {
   prompt: string;
@@ -18,6 +23,7 @@ export function createPanelImageTaskPayload(input: {
   taskId: string;
   request: PanelImageInput;
   defaultModel: string;
+  generationMemory?: GenerationMemorySnapshot;
 }): ImageGenerateTaskV1 {
   const source = input.snapshot.artifacts.find((artifact) => artifact.id === input.request.sourceArtifactId);
   const sourceFileId = source?.payload.file_id;
@@ -56,12 +62,13 @@ export function createPanelImageTaskPayload(input: {
     references,
     target_artifact_id: target?.id,
     target_version: target ? target.versionNo + 1 : 1,
-    prompt,
+    prompt: composePromptWithProjectMemory(prompt, input.generationMemory),
     user_prompt: userPrompt,
     model: input.request.model ?? input.defaultModel,
     size: input.request.size,
     region: input.request.region,
     reference_file_id: input.request.referenceFileId,
     origin: { type: "panel", name: "generate-image" },
+    generation_memory: input.generationMemory,
   };
 }

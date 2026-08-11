@@ -137,7 +137,7 @@ export function Home({
       <div className="home-main">
         <div className="home-center">
           <header className="home-hero">
-            <h1 className="home-title"><img className="brand-mark hero-seal" src="/brand-mark.svg" alt="" width={42} height={42} />砌间，专注设计判断</h1>
+            <h1 className="home-title"><img className="brand-mark hero-seal" src="/brand-mark.svg" alt="" width={52} height={52} />砌间，专注设计判断</h1>
             <p className="home-tagline">琐碎的交给代理：空间理解、设计方向、效果图与提案包，都在一张桌面上</p>
 
             <div className="home-prompt">

@@ -6,6 +6,9 @@ import type { CanvasGenerateService, PreparedGenerate } from "../services/canvas
 import type { DatabaseTransaction } from "../services/artifact-service.js";
 import { composeCanvasPrompt, stripInpaintPrefix } from "../services/canvas-generate-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
+import type { ProjectMemoryService } from "../agent/memory/service.js";
+import type { GenerationMemorySnapshot } from "./types.js";
+import { composePromptWithProjectMemory } from "./panel-image-task.js";
 import { TaskStore } from "./task-store.js";
 import type { ImageGenerateTaskV1 } from "./types.js";
 
@@ -28,6 +31,7 @@ export class AssetBatchSubmissionService {
     private readonly generate: CanvasGenerateService,
     private readonly desks: DeskStateService,
     private readonly config: Pick<ServerConfig, "imageModel">,
+    private readonly memory?: ProjectMemoryService,
   ) {}
 
   async submit(input: {
@@ -40,9 +44,10 @@ export class AssetBatchSubmissionService {
     }
     const snapshot = await this.desks.snapshot(input.projectId);
     const preparedByTask = new Map<string, PreparedGenerate>();
-    const taskInputs = input.requests.map((request) => {
+    const taskInputs = await Promise.all(input.requests.map(async (request) => {
       const taskId = randomUUID();
-      const payload = this.freezePayload(snapshot, input.projectId, taskId, request);
+      const generationMemory = await this.memory?.freezeForGeneration(input.projectId);
+      const payload = this.freezePayload(snapshot, input.projectId, taskId, request, generationMemory);
       return {
         payload,
         taskKind: "batch_generate",
@@ -67,7 +72,7 @@ export class AssetBatchSubmissionService {
           return { artifactId: prepared.pending.artifact.id };
         },
       };
-    });
+    }));
     const accepted = await this.store.acceptBatch({
       projectId: input.projectId,
       createdBy: input.createdBy,
@@ -89,6 +94,7 @@ export class AssetBatchSubmissionService {
     projectId: string,
     taskId: string,
     request: BatchImageRequest,
+    generationMemory?: GenerationMemorySnapshot,
   ): ImageGenerateTaskV1 {
     const source = request.sourceArtifactId
       ? snapshot.artifacts.find((artifact) => artifact.id === request.sourceArtifactId)
@@ -120,13 +126,17 @@ export class AssetBatchSubmissionService {
       target_version: request.targetArtifactId
         ? (snapshot.artifacts.find((artifact) => artifact.id === request.targetArtifactId)?.versionNo ?? 0) + 1
         : 1,
-      prompt: composeCanvasPrompt({ userPrompt, missingRef: false, region: request.region }),
+      prompt: composePromptWithProjectMemory(
+        composeCanvasPrompt({ userPrompt, missingRef: false, region: request.region }),
+        generationMemory,
+      ),
       user_prompt: userPrompt,
       model: request.model ?? this.config.imageModel ?? "grok-imagine-image-quality",
       size: request.size,
       region: request.region,
       reference_file_id: request.referenceFileId,
       origin: { type: "batch", name: "batch-generate" },
+      generation_memory: generationMemory,
     };
   }
 }

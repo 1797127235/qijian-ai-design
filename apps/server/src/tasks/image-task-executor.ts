@@ -109,6 +109,7 @@ export class ImageTaskExecutor {
       ...(task.reference_file_id ? { reference_file_id: task.reference_file_id } : {}),
       ...(task.size ? { size: task.size } : {}),
       model: task.model,
+      ...(task.generation_memory ? { generation_memory: task.generation_memory } : {}),
     };
   }
 

@@ -45,15 +45,17 @@ export function createGenerateFromDeskTool(ctx: ToolContext) {
     promptGuidelines: [
       "要在主源旁新建效果图时调用 generate_from_desk。",
       "用户要「重新生成/替换/覆盖原图」时改用 replace_on_desk，不要本工具。",
+      "用户要并排对比多个方向时：同一轮多次调用本工具（可并行），每次一个 prompt；不要等第一张完成再提交下一张。",
       "多选时必须传 source_artifact_id；reference_artifact_ids 为材质等参考。",
       "用户点名生图模型时必须传 model；未知 model 失败，禁止默默换引擎。",
       "未点名模型时不要传 model。",
       "status=accepted 只表示已开始；禁止说「已生成完成」。",
-      "禁止循环 get_task；完成由 [JOB_EVENT] 通知。",
+      "禁止循环 get_task；完成由 [JOB_EVENT] / [JOB_EVENT_BATCH] 通知。",
+      "部分成功部分失败时：只评价成功卡，如实转述失败 error；仅对用户点名要重试的失败项再调用，禁止整批自动重试。",
       "失败后禁止自动再次调用，除非用户明确要求重试。",
     ],
     parameters,
-    executionMode: "sequential",
+    executionMode: "parallel",
     async execute(toolCallId, params, signal) {
       const source = resolveSourceArtifactId(ctx, params.source_artifact_id);
       if (!source.ok) return fail(source.error);

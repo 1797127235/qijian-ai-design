@@ -394,3 +394,15 @@ export const imageCaptions = pgTable(
     index("image_captions_project_file_idx").on(table.projectId, table.fileId),
   ],
 );
+
+/**
+ * 项目记忆极简表：每项目一行当前态。
+ * entries 是 stable_key → 结构化条目；revision 每次写入 +1，供生图冻结。
+ */
+export const projectMemories = pgTable("project_memories", {
+  projectId: uuid("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  revision: integer("revision").notNull().default(0),
+  entries: jsonb("entries").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  compiledContext: text("compiled_context").notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

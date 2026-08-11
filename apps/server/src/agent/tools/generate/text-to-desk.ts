@@ -50,14 +50,16 @@ export function createTextToDeskTool(ctx: ToolContext) {
     promptGuidelines: [
       "空桌或用户只要文字起一张新图时调用 text_to_image_on_desk。",
       "桌上已有主源要改/衍生时用 generate_from_desk 或 replace_on_desk，不要本工具。",
+      "用户要并排多个文生方向时：同一轮多次调用本工具（可并行），每次一个 prompt。",
       "不要传 source_artifact_id；本工具不能原卡替换。",
       "用户点名生图模型时必须传 model；未知 model 失败，禁止默默换引擎。",
       "status=accepted 只表示已开始；禁止说「已生成完成」。",
-      "禁止循环 get_task；完成由 [JOB_EVENT] 通知。",
+      "禁止循环 get_task；完成由 [JOB_EVENT] / [JOB_EVENT_BATCH] 通知。",
+      "部分成功部分失败时：只评价成功卡，如实转述失败 error；仅对用户点名要重试的失败项再调用。",
       "失败后禁止自动再次调用，除非用户明确要求重试。",
     ],
     parameters,
-    executionMode: "sequential",
+    executionMode: "parallel",
     async execute(toolCallId, params, signal) {
       const refs = resolveSpawnReferenceArtifactIds(params.reference_artifact_ids);
       if (!refs.ok) return fail(refs.error);

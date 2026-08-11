@@ -75,6 +75,32 @@ export interface DeskSnapshot {
   };
 }
 
+// 项目记忆：与 apps/server/src/agent/memory/domain.ts 的 MemoryState 一一对应
+export type ProjectMemoryFamily =
+  | "project_truth"
+  | "design_intent"
+  | "design_decision"
+  | "visual_system"
+  | "decision_history"
+  | "open_matter"
+  | "project_procedure"
+  | "generation_learning";
+
+export interface ProjectMemoryEntry {
+  stableKey: string;
+  family: ProjectMemoryFamily;
+  summary: string;
+  body: string;
+  updatedAt: string;
+}
+
+export interface ProjectMemoryState {
+  projectId: string;
+  revision: number;
+  entries: Record<string, ProjectMemoryEntry>;
+  compiledContext: string;
+}
+
 // 单条聊天消息记录
 export interface StoredChatMessage {
   id: string;

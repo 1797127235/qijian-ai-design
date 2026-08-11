@@ -13,6 +13,9 @@
 | [adr/0013-agent-generate-from-desk.md](adr/0013-agent-generate-from-desk.md) | Agent 写桌生图工具语义 |
 | [adr/0014-bullmq-task-queue-for-asset-batches.md](adr/0014-bullmq-task-queue-for-asset-batches.md) | BullMQ 统一资产任务（BullMQ-only） |
 | [adr/0015-image-task-safe-retry.md](adr/0015-image-task-safe-retry.md) | 生图安全有界重试（无查单/无网关幂等） |
+| [adr/0016-project-design-memory.md](adr/0016-project-design-memory.md) | 项目设计记忆架构（已接受并实现） |
+| [project-memory-v1.md](project-memory-v1.md) | 项目记忆 V1 模块、API、并发与故障语义 |
+| [ideas/project-memory-v1-behavior.md](ideas/project-memory-v1-behavior.md) | 项目记忆 V1 场景、不变式与自动化测试 |
 | [ideas/image-task-safe-retry.md](ideas/image-task-safe-retry.md) | 0015 产品规格与上游实测 |
 | [asset-task-queue-diagrams.md](asset-task-queue-diagrams.md) | BullMQ 任务架构图、流程图和时序图 |
 | [runbooks/asset-task-queue.md](runbooks/asset-task-queue.md) | 队列运维：outbox、needs_review、重试、Bull Board、命名软失败 |

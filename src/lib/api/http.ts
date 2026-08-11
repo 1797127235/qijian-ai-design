@@ -4,6 +4,7 @@ import {
   type ChatThread,
   type DeskLayoutObject,
   type DeskSnapshot,
+  type ProjectMemoryState,
   type ProjectSummary,
   type StoredChatMessage,
   type StoredFile,
@@ -38,6 +39,7 @@ export const api = {
     request<ProjectSummary>(`/api/projects/${projectId}`, json("PATCH", { name })),
   deleteProject: (projectId: string) => request<void>(`/api/projects/${projectId}`, { method: "DELETE" }),
   desk: (projectId: string) => request<DeskSnapshot>(`/api/projects/${projectId}/desk`),
+  projectMemory: (projectId: string) => request<ProjectMemoryState>(`/api/projects/${projectId}/memory`),
   chatThreads: (projectId: string) => request<ChatThread[]>(`/api/projects/${projectId}/chat/threads`),
   createChatThread: (projectId: string) =>
     request<ChatThread>(`/api/projects/${projectId}/chat/threads`, json("POST", {})),

@@ -25,6 +25,13 @@ function context(selected = ["source-1"]) {
 }
 
 describe("BullMQ-only generate tools", () => {
+  it("allows parallel fan-out for beside/spawn but keeps replace sequential", () => {
+    const { ctx } = context();
+    expect(createGenerateFromDeskTool(ctx).executionMode).toBe("parallel");
+    expect(createTextToDeskTool(ctx).executionMode).toBe("parallel");
+    expect(createReplaceOnDeskTool(ctx).executionMode).toBe("sequential");
+  });
+
   it("submits beside and replace tasks with distinct placements", async () => {
     const { ctx, submitAgentImage } = context();
 

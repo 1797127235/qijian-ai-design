@@ -50,6 +50,7 @@ import { TaskDeskRefreshPoller } from "./tasks/desk-refresh-poller.js";
 import { AssetBatchSubmissionService } from "./tasks/asset-batch-submission.js";
 import { TaskCancellationService } from "./tasks/cancellation.js";
 import { ImageTaskExecutor } from "./tasks/image-task-executor.js";
+import { ProjectMemoryService } from "./agent/memory/service.js";
 
 // —— 基础设施 ——
 const config = loadConfig();
@@ -63,6 +64,7 @@ const desks = new DeskStateService(db);
 const files = new FileStorage(db, config);
 const effects = new HttpImageGenerator(config, files);
 const chats = new ChatService(db);
+const memory = new ProjectMemoryService(db);
 const captionStore = new ImageCaptionStore(db);
 const captionService = new ImageCaptionService(files, captionStore, config);
 artifacts.setImageReadyHandler((projectId, fileId) => captionService.kick(projectId, fileId));
@@ -126,8 +128,8 @@ const jobStore = new AgentJobStore(db);
 const taskStore = new TaskStore(db);
 const bullmq = new BullMqQueueAdapter(config);
 const taskCancellation = new TaskCancellationService(taskStore, bullmq);
-const assetTaskSubmitter = new AssetTaskSubmissionService(taskStore, generate, desks, config);
-const batchSubmitter = new AssetBatchSubmissionService(taskStore, generate, desks, config);
+const assetTaskSubmitter = new AssetTaskSubmissionService(taskStore, generate, desks, config, memory);
+const batchSubmitter = new AssetBatchSubmissionService(taskStore, generate, desks, config, memory);
 const captions = captionStore;
 // Agent 写桌：generate_from_desk → BullMQ 持久任务 → Worker
 const sessions = new AgentSessionRegistry({
@@ -143,6 +145,7 @@ const sessions = new AgentSessionRegistry({
   captions,
   traces,
   assetTaskSubmitter,
+  memory,
   emit: (event) => publish(event),
 });
 // 方案 3 / 书中异步事件：job 终态 → 结构化 [JOB_EVENT] 回注轨迹并续跑
@@ -259,6 +262,7 @@ const app = createHttpApp({
   generate,
   taskStore,
   batchSubmitter,
+  memory,
   bullBoard,
 });
 const sockets = new WebSocketServer({ noServer: true });

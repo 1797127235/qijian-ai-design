@@ -7,6 +7,12 @@ const frozenArtifactRef = z.object({
   file_id: uuid,
 }).strict();
 
+export const generationMemorySnapshotSchema = z.object({
+  checkpoint_revision: z.number().int().nonnegative(),
+  stable_keys: z.array(z.string().min(1).max(300)).max(500).default([]),
+  compiled_design_context: z.string().max(30_000),
+}).strict();
+
 export const imageGenerateTaskV1Schema = z.object({
   schema_version: z.literal(1),
   kind: z.literal("image.generate"),
@@ -32,6 +38,8 @@ export const imageGenerateTaskV1Schema = z.object({
     type: z.enum(["agent", "panel", "batch"]),
     name: z.string().trim().min(1).max(100),
   }).strict(),
+  /** 受理时冻结的项目记忆快照。 */
+  generation_memory: generationMemorySnapshotSchema.optional(),
 }).strict().superRefine((task, ctx) => {
   if (task.operation !== "spawn" && !task.source) {
     ctx.addIssue({
@@ -65,6 +73,7 @@ export const taskPayloadSchema = z.union([
 ]);
 
 export type ImageGenerateTaskV1 = z.infer<typeof imageGenerateTaskV1Schema>;
+export type GenerationMemorySnapshot = z.infer<typeof generationMemorySnapshotSchema>;
 export type ArtifactNameTaskV1 = z.infer<typeof artifactNameTaskV1Schema>;
 export type TaskPayload = z.infer<typeof taskPayloadSchema>;
 

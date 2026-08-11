@@ -17,6 +17,7 @@ import { PromptPanel } from "../desk/PromptPanel";
 import { CANVAS_IMAGE_ACCEPT } from "../desk/attachments";
 import { ChatPanel } from "../desk/ChatPanel";
 import { InpaintDialog, type InpaintSource } from "../desk/InpaintDialog";
+import { MemoryCard } from "../desk/MemoryCard";
 import { useExitTransition } from "../desk/useExitTransition";
 import type { DeskConnection, DeskObject } from "../desk/types";
 import type { Viewport } from "../desk/geometry";
@@ -27,6 +28,7 @@ import { useDeskActions } from "./useDeskActions";
 import { useDeskGenerate } from "./useDeskGenerate";
 import { useDeskHistory } from "./useDeskHistory";
 import { useDeskPlacement } from "./useDeskPlacement";
+import { useProjectMemory } from "./useProjectMemory";
 
 export function DeskWorkbench({
   projectId,
@@ -160,6 +162,7 @@ export function DeskWorkbench({
     viewportRef,
   });
   const gen = useDeskGenerate({ projectId, history, refreshDesk, onError: pushCanvasError, generateGate });
+  const memoryDesk = useProjectMemory(projectId, chat.busy);
 
   // 每个 projectId 只 bind 一次；StrictMode 双挂载靠 boundProjectRef 挡住重复拉历史
   useEffect(() => {
@@ -455,6 +458,11 @@ export function DeskWorkbench({
               onUndo={history.undo}
               onRedo={history.redo}
               onImage={placement.addImagePlaceholder}
+              memoryCount={memoryDesk.memory ? Object.keys(memoryDesk.memory.entries).length : 0}
+              memoryVisible={!memoryDesk.layout.hidden}
+              onToggleMemory={() =>
+                memoryDesk.updateLayout({ ...memoryDesk.layout, hidden: !memoryDesk.layout.hidden })
+              }
             />
           }
           renderNodeToolbar={(obj) => (
@@ -507,6 +515,17 @@ export function DeskWorkbench({
             />
           )}
         >
+          {!memoryDesk.layout.hidden && (
+            <MemoryCard
+              memory={memoryDesk.memory}
+              loadFailed={memoryDesk.loadFailed}
+              layout={memoryDesk.layout}
+              viewportRef={viewportRef}
+              onLayoutChange={memoryDesk.updateLayout}
+              onHide={() => memoryDesk.updateLayout({ ...memoryDesk.layout, hidden: true })}
+              onRefresh={memoryDesk.refresh}
+            />
+          )}
           {panelSource && (
             <PromptPanel
               source={panelSource}

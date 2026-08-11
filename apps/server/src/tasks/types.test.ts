@@ -19,6 +19,20 @@ describe("taskPayloadSchema", () => {
     expect(parsed.kind).toBe("image.generate");
   });
 
+  it("accepts an auditable frozen project-memory context", () => {
+    const parsed = taskPayloadSchema.parse({
+      ...baseImage,
+      operation: "spawn",
+      generation_memory: {
+        checkpoint_revision: 4,
+        stable_keys: ["materials.primary"],
+        compiled_design_context: "[PROJECT_MEMORY revision=4]\n- 灰色洞石",
+      },
+    });
+
+    expect(parsed.kind === "image.generate" && parsed.generation_memory?.checkpoint_revision).toBe(4);
+  });
+
   it("requires a frozen source for beside and replace", () => {
     for (const operation of ["beside", "replace", "inpaint"]) {
       expect(() => taskPayloadSchema.parse({ ...baseImage, operation })).toThrow();

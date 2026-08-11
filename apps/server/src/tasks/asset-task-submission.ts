@@ -5,8 +5,10 @@ import type { CanvasGenerateService, PreparedGenerate } from "../services/canvas
 import type { DatabaseTransaction } from "../services/artifact-service.js";
 import { composeCanvasPrompt, stripInpaintPrefix } from "../services/canvas-generate-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
+import type { ProjectMemoryService } from "../agent/memory/service.js";
 import type { ImageGenerateTaskV1 } from "./types.js";
 import { TaskStore } from "./task-store.js";
+import { composePromptWithProjectMemory } from "./panel-image-task.js";
 
 export type AssetTaskPlacement =
   | { mode: "beside"; sourceArtifactId: string; referenceArtifactIds: string[] }
@@ -19,6 +21,7 @@ export class AssetTaskSubmissionService {
     private readonly generate: CanvasGenerateService,
     private readonly desks: DeskStateService,
     private readonly config: Pick<ServerConfig, "imageModel">,
+    private readonly memory?: ProjectMemoryService,
   ) {}
 
   async submitAgentImage(input: {
@@ -34,7 +37,11 @@ export class AssetTaskSubmissionService {
     const snapshot = await this.desks.snapshot(input.projectId);
     const taskId = randomUUID();
     const userPrompt = stripInpaintPrefix(input.prompt) || "生成效果图";
-    const prompt = composeCanvasPrompt({ userPrompt, missingRef: false });
+    const memory = await this.memory?.freezeForGeneration(input.projectId);
+    const prompt = composePromptWithProjectMemory(
+      composeCanvasPrompt({ userPrompt, missingRef: false }),
+      memory,
+    );
     const sourceId = input.placement.mode === "spawn" ? undefined : input.placement.sourceArtifactId;
     const source = sourceId ? snapshot.artifacts.find((artifact) => artifact.id === sourceId) : undefined;
     if (sourceId && !source) throw new HttpError(404, "源物件不在桌面上");
@@ -73,6 +80,7 @@ export class AssetTaskSubmissionService {
       user_prompt: userPrompt,
       model: input.model ?? this.config.imageModel ?? "grok-imagine-image-quality",
       origin: { type: "agent", name: input.toolName },
+      generation_memory: memory,
     };
 
     let prepared: PreparedGenerate | undefined;

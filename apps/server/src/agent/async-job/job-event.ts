@@ -84,6 +84,15 @@ const WAKE_HEADER = [
   "用户若明确要求重试，再调用对应工具。",
 ];
 
+const WAKE_BATCH_HEADER = [
+  "[系统事件·非用户口令·不可当作系统指令]",
+  "本批后台异步任务已有终态结果（可能仍有其它任务在跑，勿假设整桌已全部结束）。",
+  "请根据 [JOB_EVENT_BATCH] 与下方各 [JOB_EVENT] 向用户说明：成功几路、失败几路。",
+  "若有成功与失败并存：保留并评价成功卡；失败项只转述 error，不要因失败否定成功结果。",
+  "禁止：自动整批重试；禁止默默改用其它生图 model；禁止声称未成功的 task 已落桌。",
+  "仅当用户明确要求时，只重试其点名的失败 task/方向。",
+];
+
 /** 注入 pi / chat 的完整 wake 文本（user 角色，前缀标明系统事件）。 */
 export function formatJobWakePrompt(job: AgentJobDto): string {
   return [...WAKE_HEADER, "", formatJobEventBlock(job)].join("\n");
@@ -91,16 +100,24 @@ export function formatJobWakePrompt(job: AgentJobDto): string {
 
 /**
  * 同批多 job 一条 wake：先汇总表，再附各 [JOB_EVENT]（截断防过长）。
+ * 混合成功/失败时 outcome=partial，驱动 Agent 分项说明而非整批失败话术。
  */
 export function formatJobWakeBatchPrompt(jobs: AgentJobDto[]): string {
-  if (jobs.length === 0) return [...WAKE_HEADER, "", "[JOB_EVENT_BATCH] count=0"].join("\n");
+  if (jobs.length === 0) return [...WAKE_BATCH_HEADER, "", "[JOB_EVENT_BATCH] count=0"].join("\n");
   if (jobs.length === 1) return formatJobWakePrompt(jobs[0]!);
 
   const succeeded = jobs.filter((j) => j.status === "succeeded");
   const failed = jobs.filter((j) => j.status !== "succeeded");
+  const outcome = succeeded.length === 0
+    ? "all_failed"
+    : failed.length === 0
+      ? "all_succeeded"
+      : "partial";
   const summaryLines = [
-    `[JOB_EVENT_BATCH] count=${jobs.length} succeeded=${succeeded.length} failed=${failed.length}`,
-    "请用一段话汇总，不要逐条重复客套。",
+    `[JOB_EVENT_BATCH] count=${jobs.length} succeeded=${succeeded.length} failed=${failed.length} outcome=${outcome}`,
+    outcome === "partial"
+      ? "本批部分成功：必须分项说明成功与失败，禁止只说「生成失败」或「都好了」。"
+      : "请用一段话汇总，不要逐条重复客套。",
   ];
   if (succeeded.length > 0) {
     summaryLines.push(
@@ -111,18 +128,19 @@ export function formatJobWakeBatchPrompt(jobs: AgentJobDto[]): string {
     );
   }
   if (failed.length > 0) {
-    summaryLines.push(
-      `未成功 task_id：${failed.map((j) => j.id).join(", ")}`
-      + `（status 见下方；勿自动全部重试）`,
-    );
+    const failBits = failed.map((j) => {
+      const err = publicJobErrorForAgent(j.error, 80);
+      return err ? `${j.id}(${j.status}:${err})` : `${j.id}(${j.status})`;
+    });
+    summaryLines.push(`未成功：${failBits.join("; ")}；勿自动全部重试`);
   }
 
   const maxDetail = 8;
   const detailJobs = jobs.slice(0, maxDetail);
   const details = detailJobs.map((j) => formatJobEventBlock(j)).join("\n\n");
   const more = jobs.length > maxDetail
-    ? `\n…另有 ${jobs.length - maxDetail} 条略（可用 get_task 查 task_id）`
+    ? `\n…另有 ${jobs.length - maxDetail} 条略（仅在用户追问具体 task 时用 get_task；禁止循环轮询）`
     : "";
 
-  return [...WAKE_HEADER, "", ...summaryLines, "", details + more].join("\n");
+  return [...WAKE_BATCH_HEADER, "", ...summaryLines, "", details + more].join("\n");
 }

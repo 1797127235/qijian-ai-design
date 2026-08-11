@@ -51,6 +51,11 @@ describe("createPanelImageTaskPayload", () => {
       taskId: crypto.randomUUID(),
       request: { prompt: "make it brighter", sourceArtifactId: source.id },
       defaultModel: "default-model",
+      generationMemory: {
+        checkpoint_revision: 3,
+        stable_keys: ["palette.base"],
+        compiled_design_context: "[PROJECT_MEMORY revision=3]\n- 低饱和暖灰",
+      },
     });
 
     expect(payload.operation).toBe("beside");
@@ -61,6 +66,9 @@ describe("createPanelImageTaskPayload", () => {
       file_id: reference.payload.file_id,
     }]);
     expect(payload.target_version).toBe(1);
+    expect(payload.generation_memory?.checkpoint_revision).toBe(3);
+    expect(payload.prompt).toContain("低饱和暖灰");
+    expect(payload.user_prompt).toBe("make it brighter");
   });
 
   it("freezes inpaint region and the post-prepare target version", () => {

@@ -45,6 +45,7 @@ export function createReplaceOnDeskTool(ctx: ToolContext) {
     promptGuidelines: [
       "用户要「重新生成/替换/覆盖/在原图上改」时调用 replace_on_desk。",
       "用户要「再出一版/旁边对比」时用 generate_from_desk，不要本工具。",
+      "本工具保持串行：不要对同一卡并行多次 replace；并排多方向用 generate_from_desk。",
       "多选时必须传 source_artifact_id（要覆盖的那张）。",
       "用户点名生图模型时必须传 model；未知 model 失败，禁止默默换引擎。",
       "status=accepted 只表示已开始；禁止说「已生成完成」。",

@@ -3,7 +3,9 @@
  *  - 工具的 ok / fail 协议：{content: [{type:"text", text}], details}
  *  - place/ownedCurrent 工具内复用的高层动作
  *  - 工具不直接 import service，都走 ToolDependencies
+ *  - agentSession / identityPrompt 供 search_tools 动态激活
  */
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ArtifactService } from "../../services/artifact-service.js";
 import type { CanvasGenerateService } from "../../services/canvas-generate-service.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
@@ -12,6 +14,7 @@ import type { ImageGenerator } from "../../services/image-generator.js";
 import type { AgentJobStore } from "../async-job/store.js";
 import type { AssetTaskSubmissionService } from "../../tasks/asset-task-submission.js";
 import type { TaskCancellationService } from "../../tasks/cancellation.js";
+import type { ProjectMemoryService } from "../memory/service.js";
 import type { EventSink } from "../events.js";
 import { mapError, type ErrorCode } from "../tracing/index.js";
 
@@ -29,6 +32,7 @@ export interface ToolDependencies {
   /** 生图 model allowlist（与面板一致）；generate_from_desk 校验/归一化用 */
   imageModelOptions?: string[];
   assetTaskSubmitter?: AssetTaskSubmissionService;
+  memory?: ProjectMemoryService;
 }
 
 export interface ToolSessionRef {
@@ -44,6 +48,10 @@ export interface ToolContext {
   selectedArtifactIds: () => string[];
   /** 当前对话线程 / run（async job 记账） */
   session?: ToolSessionRef;
+  /** pi session（create 后注入；search_tools 激活工具用） */
+  agentSession?: () => AgentSession | undefined;
+  /** 稳定身份 system 前缀 */
+  identityPrompt?: () => string;
   changed: (artifactId?: string, undoable?: boolean) => void;
   ownedCurrent: (artifactId: string) => ReturnType<ArtifactService["currentArtifact"]>;
   place: (artifactId: string, kind: string, x: number, y: number, rot?: number, width?: number) => Promise<void>;
@@ -89,6 +97,10 @@ export function createToolContext(
   deps: ToolDependencies,
   selectedArtifactIds: () => string[] = () => [],
   session?: ToolSessionRef,
+  activation?: {
+    agentSession: () => AgentSession | undefined;
+    identityPrompt: () => string;
+  },
 ): ToolContext {
   const changed = (artifactId?: string, undoable = false) => {
     deps.emit({ type: "object_changed", projectId, artifactId, undoable });
@@ -109,5 +121,15 @@ export function createToolContext(
     });
     changed(artifactId);
   };
-  return { projectId, deps, selectedArtifactIds, session, changed, ownedCurrent, place };
+  return {
+    projectId,
+    deps,
+    selectedArtifactIds,
+    session,
+    agentSession: activation?.agentSession,
+    identityPrompt: activation?.identityPrompt,
+    changed,
+    ownedCurrent,
+    place,
+  };
 }

@@ -22,6 +22,9 @@ import {
 } from "../services/image-caption-sanitize.js";
 import type { ImageCaptionStore } from "../services/image-caption-store.js";
 import type { JobWakeService } from "./async-job/job-wake.js";
+import type { ProjectMemoryService } from "./memory/service.js";
+import { deskIdentityPrompt } from "./system-prompt.js";
+import { applyToolActivation, narrowBaseTools, wakeTools } from "./tools/index.js";
 
 export type { SessionFactoryDependencies as RegistryDependencies } from "./session-factory.js";
 export { agentPrompt } from "./agent-prompt.js";
@@ -52,6 +55,9 @@ export class AgentSessionRegistry {
   private readonly chats: SessionFactoryDependencies["chats"];
   private readonly emit: SessionFactoryDependencies["emit"];
   private readonly traces?: SessionFactoryDependencies["traces"];
+  private readonly memory?: ProjectMemoryService;
+  private readonly agentProvider?: string;
+  private readonly agentModel?: string;
   /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源。 */
   private readonly selectionBySession = new Map<string, string[]>();
   private shuttingDown = false;
@@ -71,6 +77,9 @@ export class AgentSessionRegistry {
     this.chats = deps.chats;
     this.emit = deps.emit;
     this.traces = deps.traces;
+    this.memory = deps.memory;
+    this.agentProvider = deps.config.agentProvider;
+    this.agentModel = deps.config.agentModel;
   }
 
   setJobWake(jobWake: JobWakeService) {
@@ -95,7 +104,7 @@ export class AgentSessionRegistry {
   }): Promise<void> {
     const { projectId, threadId, runId, text } = args;
     try {
-      await this.prompt(projectId, threadId, text, [], runId, []);
+      await this.prompt(projectId, threadId, text, [], runId, [], "system");
       const outcome = await this.chats.summarizeRunTools(runId);
       const statusMessage = await this.chats.finishRun(runId, outcome.status, outcome.error);
       if (statusMessage) this.emit({ type: "chat_message", projectId, message: statusMessage });
@@ -115,6 +124,16 @@ export class AgentSessionRegistry {
     }
   }
 
+  /** 用户 turn：窄 base；wake：硬名单（禁生图 / 禁 search）。须在 prompt 前调用。 */
+  private applyActivationForPrompt(session: Awaited<ReturnType<SessionFactory["create"]>>, promptSource: "designer" | "system") {
+    const identity = deskIdentityPrompt({
+      agentProvider: this.agentProvider,
+      agentModel: this.agentModel,
+    });
+    const tools = promptSource === "system" ? wakeTools() : narrowBaseTools();
+    applyToolActivation(session, tools, identity);
+  }
+
   /**
    * 跑一轮对话：把「用户原文 + 桌面状态 + 后台任务状态 + 选中视觉」喂给模型。
    *  - selectedArtifactIds 来自本条 WS，不做服务端缓存（方案 1：选择跟消息走，不单独推）
@@ -129,6 +148,7 @@ export class AgentSessionRegistry {
     attachments: ChatAttachmentDto[],
     runId: string,
     selectedArtifactIds: string[] = [],
+    promptSource: "designer" | "system" = "designer",
   ) {
     const key = `${projectId}:${threadId}`;
     const pending = this.get(projectId, threadId);
@@ -139,10 +159,20 @@ export class AgentSessionRegistry {
     // 工具闭包读此 map；仅本轮有效
     this.selectionBySession.set(key, selectedArtifactIds);
     try {
+      // 发现式加载：用户 turn 重置窄 base；JOB wake 用硬名单（禁生图）
+      this.applyActivationForPrompt(session, promptSource);
       // snapshot 失败不阻断对话，状态栏降级为「暂不可用」
       const snapshot = await this.desks.snapshot(projectId).catch(() => null);
       const recentJobs = await this.jobStore?.listRecentForStatus(projectId).catch(() => []) ?? [];
       const jobsBlock = formatJobsStatusBlock(recentJobs);
+      let memoryUnavailable = false;
+      const recalled = await this.memory?.forPrompt(projectId).catch(() => {
+        memoryUnavailable = true;
+        return undefined;
+      });
+      const memoryBlock = recalled
+        ? recalled.compiledContext
+        : (this.memory && memoryUnavailable ? "[PROJECT_MEMORY unavailable]" : "");
       const fileNames = snapshot
         ? await this.files.originalFilenames(projectId, deskFileIds(snapshot)).catch(() => ({}))
         : {};
@@ -183,6 +213,7 @@ export class AgentSessionRegistry {
         assembled.text,
         jobsBlock,
         inspectBlock,
+        memoryBlock,
       ].filter(Boolean).join("\n\n");
       const promptText = `${agentPrompt(text, attachments)}\n\n${deskBlocks}`;
       await session.prompt(promptText, {

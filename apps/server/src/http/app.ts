@@ -19,11 +19,13 @@ import type { ChatService } from "../services/chat-service.js";
 import type { AgentSessionRegistry } from "../agent/session-registry.js";
 import type { TaskStore } from "../tasks/task-store.js";
 import type { AssetBatchSubmissionService } from "../tasks/asset-batch-submission.js";
+import type { ProjectMemoryService } from "../agent/memory/service.js";
 import { registerArtifactRoutes } from "./routes/artifacts.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerDeskRoutes } from "./routes/desk.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerProjectRoutes } from "./routes/projects.js";
+import { registerMemoryRoutes } from "./routes/memory.js";
 
 /** HTTP 层依赖：所有 service 单例 + 路由需要用到的 service 子集。 */
 interface HttpDependencies {
@@ -37,6 +39,7 @@ interface HttpDependencies {
   generate?: CanvasGenerateService;
   taskStore?: TaskStore;
   batchSubmitter?: AssetBatchSubmissionService;
+  memory?: ProjectMemoryService;
   bullBoard?: Hono;
 }
 
@@ -105,10 +108,12 @@ export function createHttpApp(deps: HttpDependencies) {
     taskStore: deps.taskStore,
     defaultImageModel: deps.config.imageModel,
     batchSubmitter: deps.batchSubmitter,
+    memory: deps.memory,
   });
   registerChatRoutes(app, deps);
   registerArtifactRoutes(app, deps);
   registerFileRoutes(app, deps);
+  if (deps.memory) registerMemoryRoutes(app, deps.memory);
 
   // 404 / 500 都走 AppError 形态
   app.notFound((c) => c.json({ error: { code: "NOT_FOUND", message: "接口不存在", retryable: false } }, 404));

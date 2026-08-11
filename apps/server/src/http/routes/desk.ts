@@ -12,6 +12,7 @@ import type { DeskStateService } from "../../services/desk-state-service.js";
 import { createPanelImageTaskPayload } from "../../tasks/panel-image-task.js";
 import type { TaskStore } from "../../tasks/task-store.js";
 import type { AssetBatchSubmissionService } from "../../tasks/asset-batch-submission.js";
+import type { ProjectMemoryService } from "../../agent/memory/service.js";
 import { body } from "./shared.js";
 
 export function registerDeskRoutes(app: Hono, deps: {
@@ -21,6 +22,7 @@ export function registerDeskRoutes(app: Hono, deps: {
   taskStore?: TaskStore;
   defaultImageModel?: string;
   batchSubmitter?: AssetBatchSubmissionService;
+  memory?: ProjectMemoryService;
 }) {
   /** GET /desk 一次性返回 project + 全部 artifact + desk_state。 */
   app.get("/api/projects/:id/desk", async (c) => c.json(await deps.desks.snapshot(c.req.param("id"))));
@@ -110,6 +112,7 @@ export function registerDeskRoutes(app: Hono, deps: {
       taskId,
       request: input,
       defaultModel: input.model ?? deps.defaultImageModel ?? "grok-imagine-image-quality",
+      generationMemory: deps.memory ? await deps.memory.freezeForGeneration(projectId) : undefined,
     });
     await deps.taskStore.accept({
       payload,
@@ -132,7 +135,7 @@ export function registerDeskRoutes(app: Hono, deps: {
       },
     });
     // 与 batch 一致：事务内 prepare 不 emit；跨 tab 需 object_changed
-    deps.desks.notifyDeskChanged(projectId);
+    deps.desks.notifyDeskChanged?.(projectId);
     const pending = prepared!.pending;
     return c.json({
       status: "accepted" as const,

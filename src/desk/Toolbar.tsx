@@ -1,4 +1,4 @@
-import { Hand, Image, Redo2, Undo2 } from "lucide-react";
+import { Brain, Hand, Image, Redo2, Undo2 } from "lucide-react";
 
 export function DeskToolbar({
   canUndo,
@@ -7,6 +7,9 @@ export function DeskToolbar({
   onUndo,
   onRedo,
   onImage,
+  memoryCount,
+  memoryVisible,
+  onToggleMemory,
 }: {
   canUndo: boolean;
   canRedo: boolean;
@@ -14,6 +17,10 @@ export function DeskToolbar({
   onUndo: () => void;
   onRedo: () => void;
   onImage: () => void;
+  /** 记忆条目数；onToggleMemory 存在时才渲染记忆开关 */
+  memoryCount?: number;
+  memoryVisible?: boolean;
+  onToggleMemory?: () => void;
 }) {
   return (
     <div className="desk-toolbar" role="toolbar" aria-label="创作工具">
@@ -31,6 +38,24 @@ export function DeskToolbar({
       <button type="button" title="图片" aria-label="图片" onClick={onImage}>
         <Image size={16} />
       </button>
+      {onToggleMemory && (
+        <>
+          <span className="tb-sep" />
+          <button
+            type="button"
+            className={memoryVisible ? "tb-active" : undefined}
+            title={memoryVisible ? "隐藏设计笔记" : "显示设计笔记"}
+            aria-label="设计笔记"
+            aria-pressed={memoryVisible}
+            onClick={onToggleMemory}
+          >
+            <Brain size={16} />
+            {memoryCount !== undefined && memoryCount > 0 && (
+              <span className="tb-badge">{memoryCount}</span>
+            )}
+          </button>
+        </>
+      )}
     </div>
   );
 }
