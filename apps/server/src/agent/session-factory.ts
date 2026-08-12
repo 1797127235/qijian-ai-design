@@ -35,7 +35,7 @@ import {
 import type { EventSink } from "./events.js";
 import { agentSessionDir } from "./session-paths.js";
 import { deskSystemPrompt } from "./system-prompt.js";
-import { activateTools, createDeskTools, narrowBaseTools } from "./tools/index.js";
+import { activateTools, createDeskTools } from "./tools/index.js";
 import type { TurnContextScope } from "./capability-gate.js";
 import type { TraceRegistry } from "./tracing/index.js";
 import type { AssetTaskSubmissionService } from "../tasks/asset-task-submission.js";
@@ -303,12 +303,11 @@ export class SessionFactory {
         resourceStore,
       },
     );
-    const baseTools = narrowBaseTools();
-    // pi SDK: options.tools = allowlist ∩ 初始 active。必须列入全部 desk 工具名，
-    // 否则 setActiveToolsByName 无法激活 search 到的 custom 工具（静默忽略）。
-    // Kernel 在 create 后收敛；后续 search 仅追加工具。
+    // 固定全量工具集：全部 desk 工具即 Kernel，创建时一次激活，运行路径
+    // 不再调用 setActiveToolsByName（它会改变 tools[] 并让 pi 重建 system
+    // prompt，缓存前缀从 system 段起整体失配——基准 r01 断点 #2）。
+    // pi SDK: options.tools = allowlist ∩ 初始 active，与全量注册同名。
     const allToolNames = deskTools.map((tool) => tool.name);
-    requireNames(allToolNames, baseTools, "deskTools 缺少窄 base 工具");
     const registryRevision = sha256(deskTools.map((tool) => ({
       name: tool.name,
       description: tool.description,
@@ -319,7 +318,7 @@ export class SessionFactory {
       filePath: join(sessionDir, "tool-state.json"),
       registryNames: allToolNames,
       registryRevision,
-      kernelNames: baseTools,
+      kernelNames: allToolNames,
     });
     const contextState = await CurrentContextFrameState.open({
       filePath: join(sessionDir, "context-ledger.json"),
@@ -348,7 +347,7 @@ export class SessionFactory {
     const turnObservation = new AgentTurnObservation();
     const previousActive = toolState.snapshot().lastActiveTools;
     const activeAfterCreate = activateTools(session, toolState.desiredActiveTools());
-    requireNames(activeAfterCreate, baseTools, "create 后未能激活 Kernel（检查 pi tools allowlist）");
+    requireNames(activeAfterCreate, allToolNames, "create 后未能固定激活全量工具（检查 pi tools allowlist）");
     toolState.recordBoundary(previousActive, activeAfterCreate);
     this.toolStates.set(session, toolState);
     this.skillStates.set(session, skillState);

@@ -66,17 +66,15 @@ export const CACHE_BENCHMARK_SCENARIOS: readonly CacheBenchmarkScenario[] = Obje
     ],
   },
   {
-    id: "tool_working_set",
-    description: "真实 search_tools → memory 工具链，并验证新增 schema 稳定后的会话工作集。",
+    id: "memory_tool_chain",
+    description: "真实 memory 工具链（固定全量工具集下直接调用），验证工具跟进后的前缀复用。",
     setup: { kind: "empty" },
     turns: [
       {
-        prompt: "这是工具发现链路测试。必须先调用 search_tools 搜索“记录项目记忆”，再调用 record_project_memory 写入 stable_key=benchmark.cache、family=project_procedure、summary=缓存基准测试中。完成后只用一句话确认。",
+        prompt: "这是记忆工具链测试。请调用 record_project_memory 写入 stable_key=benchmark.cache、family=project_procedure、summary=缓存基准测试中。完成后只用一句话确认。",
         cohort: "cold",
         turnKind: "thread_first",
-        followupCohort: "epoch_boundary",
-        followupTurnKind: "tool_epoch_changed",
-        requiredTools: ["search_tools", "record_project_memory"],
+        requiredTools: ["record_project_memory"],
       },
       {
         prompt: "必须调用 inspect_project_memory 核对刚才的 benchmark.cache，然后只用一句话回答。",
@@ -130,12 +128,12 @@ export const CACHE_BENCHMARK_SCENARIOS: readonly CacheBenchmarkScenario[] = Obje
     setup: { kind: "empty" },
     turns: [
       {
-        prompt: "这是生图链路缓存测试。必须先调用 search_tools 搜索“空桌文字起图”，再调用 text_to_image_on_desk 生成一张现代暖木客厅，下午自然光，画面干净。任务受理后只说明已开始，等待系统事件。",
+        prompt: "这是生图链路缓存测试。请调用 text_to_image_on_desk 生成一张现代暖木客厅，下午自然光，画面干净。任务受理后只说明已开始，等待系统事件。",
         cohort: "cold",
         turnKind: "thread_first",
         followupCohort: "visual",
         followupTurnKind: "visual_payload",
-        requiredTools: ["search_tools", "text_to_image_on_desk"],
+        requiredTools: ["text_to_image_on_desk"],
         waitForJob: true,
       },
       ...conciseSteadyTurns("生成后的空间方向"),

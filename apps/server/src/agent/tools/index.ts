@@ -1,8 +1,8 @@
 /**
  * Agent 桌面工具注册入口。
- *  - 全量 customTools 注册；默认窄 base：search_tools + look_*
- *  - 其它能力（含 search_skills/load_skill）经 search_tools 发现激活
- *  - AGENT_DEBUG_IMAGE_TOOL=1 时注册 debug_return_image（仍须 search）
+ *  - 全量 customTools 注册，session 创建时一次性固定激活（缓存前缀稳定的前提）
+ *  - search_tools 仅提供能力说明，不再改变可用工具集
+ *  - AGENT_DEBUG_IMAGE_TOOL=1 时注册 debug_return_image
  */
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createDebugReturnImageTool, isDebugImageToolEnabled } from "./debug-return-image.js";
@@ -59,8 +59,6 @@ export function createDeskTools(
 export type { ToolDependencies, ToolRuntime, ToolSessionRef } from "./shared.js";
 export {
   activateTools,
-  narrowBaseTools,
   SEARCH_TOOLS_NAME,
-  NARROW_BASE_TOOLS,
   searchToolMatches,
 } from "./tool-activation.js";

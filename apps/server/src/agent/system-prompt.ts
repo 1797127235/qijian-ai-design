@@ -32,7 +32,7 @@ ${modelFact}
 - [RESOLUTION] 为 unique 时使用 resolved id；存在歧义时请用户确认。
 
 工具与 Skills：
-- 当前工具能力以 provider 请求中的 tools 定义为准；缺少能力时先用 search_tools 检索并继续调用命中的真实工具。
+- 全部桌面工具始终可用，直接调用；search_tools 仅用于查询能力名称与用法说明，不改变可用工具。
 - 并排比较多个新方向时，在同一轮并行提交 2–4 个 generate_from_desk；覆盖原卡使用 replace_on_desk，并对同一目标串行执行。
 - 空桌纯文字起图使用 text_to_image_on_desk；删除操作使用 remove_from_desk，并以用户明确点名的目标为范围。
 - 用户指定生图模型时原样传入 model；平台校验失败时返回真实结果。get_task 用于按需查询任务状态。

@@ -100,6 +100,8 @@ messages = [
 
 ## 4. 固定 Tool Kernel
 
+> **落地状态（2026-08-12）**：本节机制目标已实现，形态经 r01 对抗审查简化为「固定全量产品工具集」——session 创建时一次激活全部现有工具，`search_tools` 降级为纯推荐，CapabilityGate 不变；`render_on_desk` 三合一、`memory` action union、`search_capabilities`/`invoke_capability` 均未采纳（对缓存目标无贡献且引入新风险，真低频能力出现时再按 §4.3 带外引入）。审查记录见 `benchmarks/real-agent-workflows/runs/2026-08-12-a101-r01/run.md` 断点 #2。当前实现以 `docs/agent-context-management.md` §7 为准。
+
 ### 4.1 为什么不再动态更改 `tools[]`
 
 pi 0.83.0 的 `setActiveToolsByName()` 同时更改 provider-visible schemas 和 SDK 内部 system base。这使“执行权限变化”与“缓存前缀变化”绑在一起。

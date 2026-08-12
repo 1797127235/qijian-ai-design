@@ -11,14 +11,14 @@ describe("CACHE_BENCHMARK_SCENARIOS", () => {
     }
   });
 
-  it("covers dialogue, skills, tool discovery, Desk changes, large resync and image generation", () => {
+  it("covers dialogue, skills, tool use, Desk changes, large resync and image generation", () => {
     expect(CACHE_BENCHMARK_SCENARIOS.map((scenario) => scenario.setup.kind)).toEqual(expect.arrayContaining([
       "empty",
       "large_desk",
       "mutable_desk",
     ]));
     expect(CACHE_BENCHMARK_SCENARIOS.some((scenario) => scenario.turns.some((turn) => (
-      turn.requiredTools?.includes("search_tools")
+      turn.requiredTools?.includes("record_project_memory")
     )))).toBe(true);
     expect(CACHE_BENCHMARK_SCENARIOS.some((scenario) => scenario.turns.some((turn) => turn.waitForJob))).toBe(true);
     expect(CACHE_BENCHMARK_SCENARIOS.some((scenario) => scenario.turns.some((turn) => (

@@ -1,17 +1,10 @@
-/** 发现式工具目录与 additive activation。 */
+/** 发现式工具目录（纯推荐）；全部产品工具在 session 创建时固定激活，provider-visible system+tools[] 在 epoch 内字节稳定。 */
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { isDebugImageToolEnabled } from "./debug-return-image.js";
 import { TEXT_TO_DESK_TOOL_NAME } from "./generate/text-to-desk.js";
 import { READ_CONTEXT_RESOURCE_TOOL_NAME } from "./read-context-resource.js";
 
 export const SEARCH_TOOLS_NAME = "search_tools" as const;
-
-export const NARROW_BASE_TOOLS = [
-  SEARCH_TOOLS_NAME,
-  "look_at",
-  "look_at_desk",
-  READ_CONTEXT_RESOURCE_TOOL_NAME,
-] as const;
 
 export type ToolCatalogEntry = {
   name: string;
@@ -26,26 +19,26 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   {
     name: SEARCH_TOOLS_NAME,
     keywords: ["search", "工具", "发现", "能力"],
-    summary: "按意图检索并激活更多桌面工具",
+    summary: "按意图查询桌面能力说明（仅查询，全部工具始终可用）",
     searchable: false,
   },
   {
     name: "look_at",
     keywords: ["看", "细看", "看图", "验收", "材质", "inspect", "look"],
     summary: "查看指定物件原图像素",
-    searchable: false,
+    searchable: true,
   },
   {
     name: "look_at_desk",
     keywords: ["整桌", "桌面", "布局", "总览", "desk"],
     summary: "查看整桌布局总览",
-    searchable: false,
+    searchable: true,
   },
   {
     name: READ_CONTEXT_RESOURCE_TOOL_NAME,
     keywords: ["resource", "cursor", "继续读取", "分页"],
     summary: "分页读取被预算层截断的工具结果",
-    searchable: false,
+    searchable: true,
   },
   {
     name: "search_skills",
@@ -131,10 +124,6 @@ export function enabledCatalog(env: NodeJS.ProcessEnv = process.env): ToolCatalo
   });
 }
 
-export function narrowBaseTools(env: NodeJS.ProcessEnv = process.env): string[] {
-  return [...NARROW_BASE_TOOLS];
-}
-
 /** 简单关键词检索：query 分词后与 keywords/name/summary 匹配。 */
 export function searchToolMatches(query: string, catalog: ToolCatalogEntry[] = enabledCatalog()): string[] {
   const q = query.trim().toLowerCase();
@@ -158,7 +147,12 @@ export function searchToolMatches(query: string, catalog: ToolCatalogEntry[] = e
   return scored.map((s) => s.name);
 }
 
-/** 激活已注册工具；custom system 由 Session 创建时固定。 */
+/**
+ * 仅在 session 创建时调用一次：固定激活全量产品工具。
+ * setActiveToolsByName 会改变 provider-visible tools[] 并让 pi 按 active 集重建
+ * system prompt（拼接各工具 promptSnippet/promptGuidelines）；运行路径再次调用
+ * 会使缓存前缀从 system 段起整体失配（基准 r01 断点 #2），因此创建后禁止再调。
+ */
 export function activateTools(session: AgentSession, toolNames: string[]): string[] {
   const names = [...new Set(toolNames.map((n) => n.trim()).filter(Boolean))];
   session.setActiveToolsByName(names);

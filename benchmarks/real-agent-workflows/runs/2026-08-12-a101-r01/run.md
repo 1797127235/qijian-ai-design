@@ -89,6 +89,16 @@
 5. 存量 session 上线即 epoch+1 全量 resync，接受一次可观测的重新预热。
 6. 审查记录：单模型对抗审查 5 高/5 中/3 低全部归档（H1 证伪原提案 C4 事实依据并补全本归因；H2/H3/M4/M5 推动提案简化为"固定全量超集"）；用户跳过跨模型复核。残余 wake 边界因素留待 r02 开指纹日志（`AGENT_LOG_USAGE`）继续采集。
 
+**修复落地（2026-08-12 10:30，r02 前）**：
+
+- `session-factory.ts`：session 创建时一次性固定激活全部产品工具（Kernel = Registry），运行路径不再调用 `setActiveToolsByName`；`prepareToolBoundary` 保留为漂移安全网。
+- `tool-activation.ts`：窄 base（NARROW_BASE_TOOLS/narrowBaseTools）移除；目录全部能力可检索；`activateTools` 注释标明创建后禁调及原因。
+- `search-tools.ts`：重写为纯推荐——只返回能力名称与用法说明，不触碰 session 与 active set。
+- `system-prompt.ts`：工具一节改为"全部桌面工具始终可用，直接调用；search_tools 仅查询说明"，随 epoch 冻结。
+- 观测层不变：`SessionToolState` 以 kernelNames=全量传入，Working Set 自清空，`toolEpoch` 仅在 registry 契约变更时推进；fingerprint/trace metadata 结构不动。
+- 测试重写：`tool-activation.test.ts`（目录检索）、`search-tools.test.ts`（纯推荐）、`cache-benchmark-scenarios.ts`（`tool_working_set` → `memory_tool_chain`，移除"必须先 search_tools"与 epoch_boundary cohort）、`session-registry.test.ts`（prompt 文案断言）；`npm test` 542 绿 + `build:server` 通过。
+- 文档同步：`docs/agent-context-management.md` §1/§3.3/§7/§8.2/§15/§17/§18 改为固定全量集语义；`docs/agent-context-cache-v2-architecture.md` §4 加落地状态注记。
+
 ## 最终桌面与方案叙事
 
 - 三个关键空间：均已产出且经 Agent 验收——客厅、厨餐、主卧（08:46 按彩平重生版，连同主卫/女儿房/儿子房/洗衣房/Flex 共 8 张效果图）

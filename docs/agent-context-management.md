@@ -16,7 +16,7 @@
 当前上下文不是每轮重新拼一份巨大提示词，而是五层共同组成：
 
 1. **Stable System 稳定系统提示词**：会话创建时确定，整个 Pi session 生命周期内保持字节一致。
-2. **Provider Tool View**：常驻四个 Kernel 工具，低频工具通过 `search_tools` 发现并进入有界 Session Working Set。
+2. **Provider Tool View**：全部产品工具在 session 创建时一次性固定激活（固定全量超集），运行路径不再改变 active set；`search_tools` 仅提供能力说明。
 3. **Append-only Trajectory**：Pi 持久化的 user、assistant、toolResult 和 compaction 消息轨迹。
 4. **Current Context Frame**：每轮由代码生成的当前 Desk、Jobs、Memory、Skills、Tools 与执行模式，按 `full / delta / unchanged` 追加到轨迹末尾。
 5. **Images**：本轮附件与 Inspect 原图，和文本中的 image index 对齐，不写进 Stable System。
@@ -27,7 +27,7 @@
 flowchart TB
   subgraph Request["Provider Request"]
     S["Stable System\n会话内字节一致"]
-    T["Active tools[]\nKernel + Session Working Set"]
+    T["Active tools[]\n固定全量产品工具"]
     H["Pi trajectory\nuser / assistant / toolResult / ledger"]
     F["Current Context Frame\nDesk + Jobs + Memory + Skills + Tools"]
     U["Current user request or JOB event"]
@@ -54,7 +54,7 @@ flowchart TB
 | `deskSystemPrompt`         | 生成稳定 System Prompt，声明身份、状态协议、工具纪律和信任边界                    | 创建 Pi session 时固定                   |
 | `CurrentContextFrameState` | 生成 canonical frame；计算状态差异；提交 revision ledger；处理 resync    | `context-ledger.json`               |
 | `DeskAliasRegistry`        | 为项目内 artifact 分配稳定 `A01…` 别名                              | 项目级 `desk-aliases.json`             |
-| `SessionToolState`         | 维护 Kernel、LRU Working Set、registry revision 和 `toolEpoch` | `tool-state.json`                   |
+| `SessionToolState`         | 维护固定工具集（Kernel = Registry）、registry revision 和 `toolEpoch` | `tool-state.json`                   |
 | `SessionSkillState`        | 维护 Skill catalog revision、loaded revision 与 emit-once 状态  | `skill-state.json`                  |
 | `ContextResourceStore`     | 保存被预算层截断的完整文本，按内容哈希分页恢复                                   | `resources/<sha256>.json`           |
 | `ToolBatchLedger`          | Pi compaction 时保留目标、结论与已经闭合的工具事实                          | Pi 隐藏 custom message                |
@@ -78,7 +78,7 @@ flowchart TB
 1. 用 `deskSystemPrompt()` 生成 Stable System。
 2. 关闭 Pi 默认 extensions、skills、prompt templates 和 context files，避免外部文件隐式污染上下文。
 3. 用 `SessionManager.continueRecent()` 恢复该线程的 Pi 轨迹。
-4. 注册全部产品工具定义，但只激活 Kernel 与已恢复的 Working Set。
+4. 注册全部产品工具定义，并一次性固定激活全量（Kernel = Registry）。
 5. 打开 Context、Tool、Skill、Resource 和 Desk Alias 状态。
 6. 校验持久化 Context Ledger 的 trajectory anchor 是否仍对应当前 Pi 历史。
 
@@ -103,14 +103,14 @@ type TurnContext = {
 
 它通过 `AsyncLocalStorage` 绑定到当前异步调用链。并发 thread 或并发 run 不会读到彼此的权限与选择状态。
 
-### 3.3 在请求边界稳定工具集合
+### 3.3 请求边界的工具集合校验
 
-发送模型请求前，`prepareToolBoundary()` 比较 Pi 当前 active tools 与 `SessionToolState.desiredActiveTools()`：
+发送模型请求前，`prepareToolBoundary()` 比较 Pi 当前 active tools 与 `SessionToolState.desiredActiveTools()`（固定全量产品工具）：
 
-- 一致：保持不变。
-- 不一致：按固定 registry 顺序收敛为 Kernel + Working Set，并推进 `toolEpoch`。
+- 一致（正常路径）：保持不变。
+- 不一致（异常漂移）：收敛回固定全量集并推进 `toolEpoch`，形成明确、可观测的请求边界。
 
-这一步发生在读取动态 Desk 状态之前，使 Provider Tool View 的变化成为明确、可观测的请求边界。
+运行路径不存在正常触发的集合替换——`setActiveToolsByName` 只在 session 创建时调用一次（它同时改变 provider-visible `tools[]` 并让 pi 按 active 集重建 system prompt，详见 §7）。
 
 ### 3.4 读取并蒸馏当前状态
 
@@ -206,7 +206,7 @@ Pi 当前公开 prompt API 接受一条 user message，所以 Frame 和 Request 
   <jobs revision="..." state="unchanged" />
   <memory revision="12" state="unchanged" />
   <skills loaded="design-language@sha256:..." reload_required="" />
-  <tools epoch="3" active="search_tools,look_at,look_at_desk,read_context_resource" />
+  <tools epoch="3" active="search_tools,look_at,look_at_desk,read_context_resource,search_skills,load_skill,generate_from_desk,replace_on_desk,text_to_image_on_desk,remove_from_desk,get_task,inspect_project_memory,search_project_memory,record_project_memory,forget_project_memory" />
   <execution policy_revision="capability-gate-v1" />
 </system_context_frame>
 
@@ -295,7 +295,7 @@ Ledger 是生成下一轮 delta 的 baseline，不是业务真源。Desk、Job S
 | ----------------- | -------------------------------------------- | --------------------------- |
 | `contextEpoch`    | Stable System 或 Skill catalog revision 改变    | 旧 Frame baseline 整体失效       |
 | `trajectoryEpoch` | compaction、resume 轨迹失配、显式 resync             | 提醒模型当前轨迹已进入新的状态同步阶段         |
-| `toolEpoch`       | Tool registry schema 变化或请求边界发生 active set 替换 | 标记 Provider Tool View 的缓存边界 |
+| `toolEpoch`       | Tool registry schema 变化（或异常漂移后的边界收敛） | 标记 Provider Tool View 的缓存边界 |
 
 
 ### 5.3 Resume 校验
@@ -363,7 +363,7 @@ Desk 首帧、full resync 或超大 delta 提升为 full 后，XML 转义正文�
 
 ---
 
-## 7. 工具上下文：Registry、Kernel 与 Working Set
+## 7. 工具上下文：固定全量工具集
 
 ### 7.1 三个集合
 
@@ -372,42 +372,31 @@ Desk 首帧、full resync 或超大 delta 提升为 full 后，XML 转义正文�
 
 | 集合                  | 内容                                 | Provider 是否看见      |
 | ------------------- | ---------------------------------- | ------------------ |
-| Registry            | `createDeskTools()` 创建的全部工具定义，顺序固定 | 只有 active 子集进入当前请求 |
-| Kernel              | 每个请求默认常驻的四个工具                      | 是                  |
-| Session Working Set | 最近发现或成功使用的低频工具，默认容量 5              | 是，在请求边界恢复          |
+| Registry            | `createDeskTools()` 创建的全部工具定义，顺序固定 | 是，全部进入每次请求 |
+| Kernel              | 与 Registry 相同：固定全量产品工具          | 是                  |
+| Session Working Set | 已移除（原低频工具有界工作集，见 §18）       | —                 |
 
 
-当前 Kernel 顺序为：
+固定全量工具集在创建 Pi session 时作为 allowlist 和 custom definitions 注册并一次激活；此后运行路径不再调用 `setActiveToolsByName`。原因：SDK 的 `setActiveToolsByName()` 会同时改写 provider-visible `tools[]` 并按 active 集重建 system prompt（拼接各工具的 `promptSnippet`/`promptGuidelines`），任何 mid-run 激活都会让缓存前缀从 system 段起整体失配（基准 r01 断点 #2：4 次全量冷读合计 182,670 tokens，均与 `toolEpoch` 递增对齐）。
 
-```text
-search_tools
-look_at
-look_at_desk
-read_context_resource
-```
-
-全部工具在创建 Pi session 时作为 allowlist 和 custom definitions 注册，是为了保证以后能被激活；它们不会永久全部占据每次 Provider 的 `tools[]`。
-
-### 7.2 搜索与激活流程
+### 7.2 能力查询流程
 
 ```text
-模型缺少业务工具
+模型不确定该用哪个工具
   → 调用 search_tools(query)
   → 在静态 TOOL_CATALOG 中按中英文关键词匹配
-  → 按 registry 固定顺序 additive activation
-  → 当前 run 立即调用新工具
-  → 成功发现/使用记录到 LRU Working Set
-  → 下一请求边界收敛为 Kernel + 最近 5 个工具
+  → 返回能力名称与用法说明（纯推荐，全部工具始终可用）
+  → 模型直接调用对应业务工具
 ```
 
-同一个 run 内只做追加激活，避免工具调用进行中突然删除 schema。容量裁剪在状态层完成，并在下一请求边界规范化 active set。
+search_tools 不触碰 session 与 active set；执行权限始终由 CapabilityGate 按 TurnContext 决策（schema 可见性不承担安全职责）。
 
 ### 7.3 Tool registry 变更
 
 `registryRevision` 对所有工具的 name、description、parameters 与 constrained sampling 做 hash：
 
-- revision 相同：恢复 Working Set 与 last active tools。
-- revision 变化：清空旧 Working Set，推进 `toolEpoch`，重新从 Kernel 预热。
+- revision 相同：恢复 last active tools（固定全量集）。
+- revision 变化：推进 `toolEpoch`，按新 Registry 全量预热。
 
 这会产生一次明确的缓存 epoch 切换，同时保证旧 schema 不会被错误恢复。
 
@@ -430,9 +419,7 @@ Catalog metadata 包含 id、name、title、description、summary、revision 和
 **自然语言发现：**
 
 ```text
-search_tools("领域 skill")
-  → 激活 search_skills + load_skill
-  → search_skills(query) 只返回 metadata
+search_skills(query) 只返回 metadata
   → load_skill(skill_id) 首次返回正文
 ```
 
@@ -568,7 +555,7 @@ data/agent-sessions/<projectId>/
 └── <threadId>/
     ├── <Pi SessionManager files>     # Pi 轨迹
     ├── context-ledger.json           # Frame baseline + epochs + anchor
-    ├── tool-state.json               # registry、toolEpoch、Working Set
+    ├── tool-state.json               # registry、toolEpoch、last active tools
     ├── skill-state.json              # catalog、loaded/emitted revisions
     └── resources/
         └── <sha256>.json             # 被截断的完整上下文/工具文本
@@ -665,9 +652,9 @@ npm run benchmark:cache -- --repeat=3
 | Context/Tool/Skill 状态 flush 失败 | 记录 warning；下次根据持久状态恢复或 resync                           | 是             |
 | Prompt 失败                      | 不提交 Frame；显式 Skill 标记 resync                            | 否，本轮失败        |
 | Resume trajectory hash 不一致     | 清除 delta baseline，下一轮 full resync                       | 是             |
-| Tool registry revision 改变      | 清空 Working Set，推进 tool epoch                            | 是             |
+| Tool registry revision 改变      | 推进 tool epoch，按新 Registry 全量预热                            | 是             |
 | Skill catalog revision 改变      | 开启新 Skill trajectory，重新按需 emit                          | 是             |
-| Wake 调用写工具                     | Gate 返回 `POLICY_DENIED`                                 | 是，工具失败可说明     |
+| Wake 调用写工具                     | Gate 返回 `POLICY_DENIED`（正常工具返回，不污染 run 终态）       | 是，模型按原因调整    |
 | Provider 无 cache usage signal  | Benchmark fail-closed，不把 0 当命中                          | 对话可继续，SLO 不通过 |
 
 
@@ -684,8 +671,8 @@ npm run benchmark:cache -- --repeat=3
 5. `seq` 单调递增；compaction/resume mismatch 推进 `trajectoryEpoch`。
 6. Desk/Jobs/Memory 的 delta 由结构化 baseline 计算，不让 LLM 从历史文本猜。
 7. Request-scoped Selection、Focus 和 Inspect 不因 Desk unchanged 被省略。
-8. Tool Registry 顺序稳定；同 run 内工具只做 additive activation。
-9. Working Set 有界，当前容量为 5。
+8. Tool Registry 顺序稳定；`setActiveToolsByName` 只在 session 创建时调用一次，运行路径不替换 active set。
+9. search_tools 纯推荐：查询能力说明不触碰 session 与 active set。
 10. 同一 Skill revision 在同一 trajectory 中只发一次正文。
 11. 长文本有明确预算、截断标记和可验证的 resource ref。
 12. Compaction Ledger 只保留闭合工具批次。
@@ -749,13 +736,12 @@ npm run benchmark:cache -- --repeat=3
 
 ### 17.2 新增工具
 
-1. 在 `createDeskTools()` 的确定位置注册定义。
-2. 在 `TOOL_CATALOG` 增加检索 metadata。
-3. 判断是否属于 Kernel；大多数业务工具应进入 searchable working set。
-4. 在 `CapabilityGate` 明确 wake 权限。
-5. 在 Result Budget 分类中确认文本上限。
-6. 验证 registry revision 变化会开启新的 tool epoch。
-7. 运行真实工具工作集缓存场景。
+1. 在 `createDeskTools()` 的确定位置注册定义（注册即进入固定全量 Kernel，直接常驻 provider-visible `tools[]`）。
+2. 在 `TOOL_CATALOG` 增加检索 metadata（search_tools 纯推荐用）。
+3. 在 `CapabilityGate` 明确 wake 权限。
+4. 在 Result Budget 分类中确认文本上限。
+5. 验证 registry revision 变化会开启新的 tool epoch。
+6. 运行真实工具链缓存场景（memory_tool_chain）。
 
 ### 17.3 新增 Skill
 
@@ -770,7 +756,7 @@ npm run benchmark:cache -- --repeat=3
 
 ## 18. 已知边界与权衡
 
-- Provider-visible `tools[]` 不是永久全量固定。当前设计固定 Kernel，并让低频 schema 进入有界 Working Set；工具集合替换会形成显式 tool epoch。
+- Provider-visible `tools[]` 为固定全量产品工具：session 创建时一次激活，运行路径不再替换；只有 registry 契约变更会形成显式 tool epoch。原"Kernel + 有界 Working Set"发现式激活已移除（基准 r01 断点 #2：`setActiveToolsByName` 同时改写 tools[] 与 system prompt 导致缓存前缀整体失配）。未来出现真低频能力时计划以 `search_capabilities`/`invoke_capability` 带外引入，不进 SDK 注册表。
 - `CacheContract` 当前硬锁 System，tools/history/frame 依靠指纹、状态机与测试发现漂移。它们尚未全部升级为请求前 fail-fast 断言。
 - 大桌 12,000 字符限制约束 full Desk body，不代表整条 user message 的总字符上限。
 - Tool/Skill catalog 是进程内 snapshot，运行中编辑定义需要重启才会形成新 revision。
