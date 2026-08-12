@@ -1,0 +1,291 @@
+# HELP qijian_http_requests_total HTTP requests by route and status class
+# TYPE qijian_http_requests_total counter
+qijian_http_requests_total{method="GET",route="/ready",status_class="2xx",service="qijian-api"} 1
+
+# HELP qijian_http_request_duration_seconds HTTP request duration by route
+# TYPE qijian_http_request_duration_seconds histogram
+qijian_http_request_duration_seconds_bucket{le="0.01",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="0.025",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="0.05",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="0.1",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="0.25",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="0.5",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="1",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="2.5",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="5",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="15",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="60",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_bucket{le="+Inf",service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+qijian_http_request_duration_seconds_sum{service="qijian-api",method="GET",route="/ready",status_class="2xx"} 0.0034291380000067875
+qijian_http_request_duration_seconds_count{service="qijian-api",method="GET",route="/ready",status_class="2xx"} 1
+
+# HELP qijian_agent_runs_total Agent product runs by outcome and source
+# TYPE qijian_agent_runs_total counter
+
+# HELP qijian_agent_run_duration_seconds Agent product run duration
+# TYPE qijian_agent_run_duration_seconds histogram
+
+# HELP qijian_agent_tool_calls_total Agent tool calls by tool and outcome
+# TYPE qijian_agent_tool_calls_total counter
+
+# HELP qijian_agent_tool_duration_seconds Agent tool execution duration
+# TYPE qijian_agent_tool_duration_seconds histogram
+
+# HELP qijian_agent_model_tokens_total Agent model tokens by usage kind
+# TYPE qijian_agent_model_tokens_total counter
+
+# HELP qijian_agent_cache_read_hit_ratio Per-model-turn prompt cache read hit ratio
+# TYPE qijian_agent_cache_read_hit_ratio histogram
+qijian_agent_cache_read_hit_ratio_bucket{le="0.1",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="0.25",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="0.5",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="0.75",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="0.9",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="0.92",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="0.95",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="0.98",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="1",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_bucket{le="+Inf",service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_sum{service="qijian-api"} 0
+qijian_agent_cache_read_hit_ratio_count{service="qijian-api"} 0
+
+# HELP qijian_tasks_total Background task outcomes
+# TYPE qijian_tasks_total counter
+
+# HELP qijian_task_duration_seconds Background task processing duration
+# TYPE qijian_task_duration_seconds histogram
+
+# HELP qijian_dispatcher_tasks_total Outbox dispatcher task outcomes
+# TYPE qijian_dispatcher_tasks_total counter
+
+# HELP qijian_reconciler_actions_total Queue reconciler actions and dependency errors
+# TYPE qijian_reconciler_actions_total counter
+
+# HELP qijian_queue_workers BullMQ workers visible to the queue
+# TYPE qijian_queue_workers gauge
+qijian_queue_workers{service="qijian-api"} 1
+
+# HELP qijian_queue_oldest_waiting_seconds Age of the oldest waiting or delayed BullMQ job
+# TYPE qijian_queue_oldest_waiting_seconds gauge
+qijian_queue_oldest_waiting_seconds{service="qijian-api"} 0
+
+# HELP qijian_queue_snapshot_available Whether the latest BullMQ queue snapshot collection succeeded
+# TYPE qijian_queue_snapshot_available gauge
+qijian_queue_snapshot_available{service="qijian-api"} 1
+
+# HELP qijian_subsystem_ready Dependency readiness (1 ready, 0 unavailable)
+# TYPE qijian_subsystem_ready gauge
+qijian_subsystem_ready{subsystem="postgres",service="qijian-api"} 1
+qijian_subsystem_ready{subsystem="redis",service="qijian-api"} 1
+qijian_subsystem_ready{subsystem="worker",service="qijian-api"} 1
+
+# HELP qijian_agent_stale_runs_interrupted_total Agent runs interrupted by the background watchdog
+# TYPE qijian_agent_stale_runs_interrupted_total counter
+qijian_agent_stale_runs_interrupted_total{service="qijian-api"} 0
+
+# HELP qijian_trace_export_dropped_total Trace export operations dropped by the bounded exporter queue
+# TYPE qijian_trace_export_dropped_total counter
+qijian_trace_export_dropped_total{service="qijian-api"} 0
+
+# HELP qijian_trace_export_errors_total Trace export operations that failed
+# TYPE qijian_trace_export_errors_total counter
+qijian_trace_export_errors_total{service="qijian-api"} 0
+
+# HELP qijian_alert_notifications_total Alertmanager webhook notifications received by status
+# TYPE qijian_alert_notifications_total counter
+
+# HELP qijian_queue_jobs BullMQ jobs by scheduling state
+# TYPE qijian_queue_jobs gauge
+qijian_queue_jobs{state="waiting",service="qijian-api"} 0
+qijian_queue_jobs{state="delayed",service="qijian-api"} 0
+qijian_queue_jobs{state="active",service="qijian-api"} 0
+qijian_queue_jobs{state="failed",service="qijian-api"} 1
+
+# HELP qijian_node_process_cpu_user_seconds_total Total user CPU time spent in seconds.
+# TYPE qijian_node_process_cpu_user_seconds_total counter
+qijian_node_process_cpu_user_seconds_total{service="qijian-api"} 3.09237
+
+# HELP qijian_node_process_cpu_system_seconds_total Total system CPU time spent in seconds.
+# TYPE qijian_node_process_cpu_system_seconds_total counter
+qijian_node_process_cpu_system_seconds_total{service="qijian-api"} 0.35351
+
+# HELP qijian_node_process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE qijian_node_process_cpu_seconds_total counter
+qijian_node_process_cpu_seconds_total{service="qijian-api"} 3.44588
+
+# HELP qijian_node_process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE qijian_node_process_start_time_seconds gauge
+qijian_node_process_start_time_seconds{service="qijian-api"} 1786493690
+
+# HELP qijian_node_process_resident_memory_bytes Resident memory size in bytes.
+# TYPE qijian_node_process_resident_memory_bytes gauge
+qijian_node_process_resident_memory_bytes{service="qijian-api"} 352063488
+
+# HELP qijian_node_process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE qijian_node_process_virtual_memory_bytes gauge
+qijian_node_process_virtual_memory_bytes{service="qijian-api"} 23545126912
+
+# HELP qijian_node_process_heap_bytes Process heap size in bytes.
+# TYPE qijian_node_process_heap_bytes gauge
+qijian_node_process_heap_bytes{service="qijian-api"} 2536271872
+
+# HELP qijian_node_process_open_fds Number of open file descriptors.
+# TYPE qijian_node_process_open_fds gauge
+qijian_node_process_open_fds{service="qijian-api"} 37
+
+# HELP qijian_node_process_max_fds Maximum number of open file descriptors.
+# TYPE qijian_node_process_max_fds gauge
+qijian_node_process_max_fds{service="qijian-api"} 1048576
+
+# HELP qijian_node_nodejs_eventloop_lag_seconds Lag of event loop in seconds.
+# TYPE qijian_node_nodejs_eventloop_lag_seconds gauge
+qijian_node_nodejs_eventloop_lag_seconds{service="qijian-api"} 0
+
+# HELP qijian_node_nodejs_eventloop_lag_min_seconds The minimum recorded event loop delay.
+# TYPE qijian_node_nodejs_eventloop_lag_min_seconds gauge
+qijian_node_nodejs_eventloop_lag_min_seconds{service="qijian-api"} 0.008863744
+
+# HELP qijian_node_nodejs_eventloop_lag_max_seconds The maximum recorded event loop delay.
+# TYPE qijian_node_nodejs_eventloop_lag_max_seconds gauge
+qijian_node_nodejs_eventloop_lag_max_seconds{service="qijian-api"} 0.030097407
+
+# HELP qijian_node_nodejs_eventloop_lag_mean_seconds The mean of the recorded event loop delays.
+# TYPE qijian_node_nodejs_eventloop_lag_mean_seconds gauge
+qijian_node_nodejs_eventloop_lag_mean_seconds{service="qijian-api"} 0.010082082637813721
+
+# HELP qijian_node_nodejs_eventloop_lag_stddev_seconds The standard deviation of the recorded event loop delays.
+# TYPE qijian_node_nodejs_eventloop_lag_stddev_seconds gauge
+qijian_node_nodejs_eventloop_lag_stddev_seconds{service="qijian-api"} 0.00021582117561306494
+
+# HELP qijian_node_nodejs_eventloop_lag_p50_seconds The 50th percentile of the recorded event loop delays.
+# TYPE qijian_node_nodejs_eventloop_lag_p50_seconds gauge
+qijian_node_nodejs_eventloop_lag_p50_seconds{service="qijian-api"} 0.010076159
+
+# HELP qijian_node_nodejs_eventloop_lag_p90_seconds The 90th percentile of the recorded event loop delays.
+# TYPE qijian_node_nodejs_eventloop_lag_p90_seconds gauge
+qijian_node_nodejs_eventloop_lag_p90_seconds{service="qijian-api"} 0.010100735
+
+# HELP qijian_node_nodejs_eventloop_lag_p99_seconds The 99th percentile of the recorded event loop delays.
+# TYPE qijian_node_nodejs_eventloop_lag_p99_seconds gauge
+qijian_node_nodejs_eventloop_lag_p99_seconds{service="qijian-api"} 0.010838015
+
+# HELP qijian_node_nodejs_active_resources Number of active resources that are currently keeping the event loop alive, grouped by async resource type.
+# TYPE qijian_node_nodejs_active_resources gauge
+qijian_node_nodejs_active_resources{type="TCPSocketWrap",service="qijian-api"} 5
+qijian_node_nodejs_active_resources{type="TCPServerWrap",service="qijian-api"} 1
+qijian_node_nodejs_active_resources{type="Timeout",service="qijian-api"} 7
+qijian_node_nodejs_active_resources{type="Immediate",service="qijian-api"} 1
+
+# HELP qijian_node_nodejs_active_resources_total Total number of active resources.
+# TYPE qijian_node_nodejs_active_resources_total gauge
+qijian_node_nodejs_active_resources_total{service="qijian-api"} 14
+
+# HELP qijian_node_nodejs_active_handles Number of active libuv handles grouped by handle type. Every handle type is C++ class name.
+# TYPE qijian_node_nodejs_active_handles gauge
+qijian_node_nodejs_active_handles{type="Socket",service="qijian-api"} 5
+qijian_node_nodejs_active_handles{type="Server",service="qijian-api"} 1
+
+# HELP qijian_node_nodejs_active_handles_total Total number of active handles.
+# TYPE qijian_node_nodejs_active_handles_total gauge
+qijian_node_nodejs_active_handles_total{service="qijian-api"} 6
+
+# HELP qijian_node_nodejs_active_requests Number of active libuv requests grouped by request type. Every request type is C++ class name.
+# TYPE qijian_node_nodejs_active_requests gauge
+
+# HELP qijian_node_nodejs_active_requests_total Total number of active requests.
+# TYPE qijian_node_nodejs_active_requests_total gauge
+qijian_node_nodejs_active_requests_total{service="qijian-api"} 0
+
+# HELP qijian_node_nodejs_heap_size_total_bytes Process heap size from Node.js in bytes.
+# TYPE qijian_node_nodejs_heap_size_total_bytes gauge
+qijian_node_nodejs_heap_size_total_bytes{service="qijian-api"} 164274176
+
+# HELP qijian_node_nodejs_heap_size_used_bytes Process heap size used from Node.js in bytes.
+# TYPE qijian_node_nodejs_heap_size_used_bytes gauge
+qijian_node_nodejs_heap_size_used_bytes{service="qijian-api"} 155003120
+
+# HELP qijian_node_nodejs_external_memory_bytes Node.js external memory size in bytes.
+# TYPE qijian_node_nodejs_external_memory_bytes gauge
+qijian_node_nodejs_external_memory_bytes{service="qijian-api"} 16449394
+
+# HELP qijian_node_nodejs_heap_space_size_total_bytes Process heap space size total from Node.js in bytes.
+# TYPE qijian_node_nodejs_heap_space_size_total_bytes gauge
+qijian_node_nodejs_heap_space_size_total_bytes{space="read_only",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_total_bytes{space="new",service="qijian-api"} 4194304
+qijian_node_nodejs_heap_space_size_total_bytes{space="old",service="qijian-api"} 120979456
+qijian_node_nodejs_heap_space_size_total_bytes{space="code",service="qijian-api"} 3670016
+qijian_node_nodejs_heap_space_size_total_bytes{space="shared",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_total_bytes{space="trusted",service="qijian-api"} 7184384
+qijian_node_nodejs_heap_space_size_total_bytes{space="shared_trusted",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_total_bytes{space="new_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_total_bytes{space="large_object",service="qijian-api"} 28082176
+qijian_node_nodejs_heap_space_size_total_bytes{space="code_large_object",service="qijian-api"} 163840
+qijian_node_nodejs_heap_space_size_total_bytes{space="shared_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_total_bytes{space="shared_trusted_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_total_bytes{space="trusted_large_object",service="qijian-api"} 0
+
+# HELP qijian_node_nodejs_heap_space_size_used_bytes Process heap space size used from Node.js in bytes.
+# TYPE qijian_node_nodejs_heap_space_size_used_bytes gauge
+qijian_node_nodejs_heap_space_size_used_bytes{space="read_only",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_used_bytes{space="new",service="qijian-api"} 1458520
+qijian_node_nodejs_heap_space_size_used_bytes{space="old",service="qijian-api"} 116136328
+qijian_node_nodejs_heap_space_size_used_bytes{space="code",service="qijian-api"} 3127744
+qijian_node_nodejs_heap_space_size_used_bytes{space="shared",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_used_bytes{space="trusted",service="qijian-api"} 6100960
+qijian_node_nodejs_heap_space_size_used_bytes{space="shared_trusted",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_used_bytes{space="new_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_used_bytes{space="large_object",service="qijian-api"} 28026560
+qijian_node_nodejs_heap_space_size_used_bytes{space="code_large_object",service="qijian-api"} 163584
+qijian_node_nodejs_heap_space_size_used_bytes{space="shared_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_used_bytes{space="shared_trusted_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_used_bytes{space="trusted_large_object",service="qijian-api"} 0
+
+# HELP qijian_node_nodejs_heap_space_size_available_bytes Process heap space size available from Node.js in bytes.
+# TYPE qijian_node_nodejs_heap_space_size_available_bytes gauge
+qijian_node_nodejs_heap_space_size_available_bytes{space="read_only",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_available_bytes{space="new",service="qijian-api"} 638504
+qijian_node_nodejs_heap_space_size_available_bytes{space="old",service="qijian-api"} 4673400
+qijian_node_nodejs_heap_space_size_available_bytes{space="code",service="qijian-api"} 541824
+qijian_node_nodejs_heap_space_size_available_bytes{space="shared",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_available_bytes{space="trusted",service="qijian-api"} 1077344
+qijian_node_nodejs_heap_space_size_available_bytes{space="shared_trusted",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_available_bytes{space="new_large_object",service="qijian-api"} 2097152
+qijian_node_nodejs_heap_space_size_available_bytes{space="large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_available_bytes{space="code_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_available_bytes{space="shared_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_available_bytes{space="shared_trusted_large_object",service="qijian-api"} 0
+qijian_node_nodejs_heap_space_size_available_bytes{space="trusted_large_object",service="qijian-api"} 0
+
+# HELP qijian_node_nodejs_version_info Node.js version info.
+# TYPE qijian_node_nodejs_version_info gauge
+qijian_node_nodejs_version_info{version="v24.18.0",major="24",minor="18",patch="0",service="qijian-api"} 1
+
+# HELP qijian_node_nodejs_gc_duration_seconds Garbage collection duration by kind, one of major, minor, incremental or weakcb.
+# TYPE qijian_node_nodejs_gc_duration_seconds histogram
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.001",service="qijian-api",kind="minor"} 237
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.01",service="qijian-api",kind="minor"} 240
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.1",service="qijian-api",kind="minor"} 241
+qijian_node_nodejs_gc_duration_seconds_bucket{le="1",service="qijian-api",kind="minor"} 241
+qijian_node_nodejs_gc_duration_seconds_bucket{le="2",service="qijian-api",kind="minor"} 241
+qijian_node_nodejs_gc_duration_seconds_bucket{le="5",service="qijian-api",kind="minor"} 241
+qijian_node_nodejs_gc_duration_seconds_bucket{le="+Inf",service="qijian-api",kind="minor"} 241
+qijian_node_nodejs_gc_duration_seconds_sum{service="qijian-api",kind="minor"} 0.09182751800003464
+qijian_node_nodejs_gc_duration_seconds_count{service="qijian-api",kind="minor"} 241
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.001",service="qijian-api",kind="major"} 0
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.01",service="qijian-api",kind="major"} 2
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.1",service="qijian-api",kind="major"} 3
+qijian_node_nodejs_gc_duration_seconds_bucket{le="1",service="qijian-api",kind="major"} 3
+qijian_node_nodejs_gc_duration_seconds_bucket{le="2",service="qijian-api",kind="major"} 3
+qijian_node_nodejs_gc_duration_seconds_bucket{le="5",service="qijian-api",kind="major"} 3
+qijian_node_nodejs_gc_duration_seconds_bucket{le="+Inf",service="qijian-api",kind="major"} 3
+qijian_node_nodejs_gc_duration_seconds_sum{service="qijian-api",kind="major"} 0.033940748000051826
+qijian_node_nodejs_gc_duration_seconds_count{service="qijian-api",kind="major"} 3
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.001",service="qijian-api",kind="incremental"} 2
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.01",service="qijian-api",kind="incremental"} 2
+qijian_node_nodejs_gc_duration_seconds_bucket{le="0.1",service="qijian-api",kind="incremental"} 2
+qijian_node_nodejs_gc_duration_seconds_bucket{le="1",service="qijian-api",kind="incremental"} 2
+qijian_node_nodejs_gc_duration_seconds_bucket{le="2",service="qijian-api",kind="incremental"} 2
+qijian_node_nodejs_gc_duration_seconds_bucket{le="5",service="qijian-api",kind="incremental"} 2
+qijian_node_nodejs_gc_duration_seconds_bucket{le="+Inf",service="qijian-api",kind="incremental"} 2
+qijian_node_nodejs_gc_duration_seconds_sum{service="qijian-api",kind="incremental"} 0.0012272079999092965
+qijian_node_nodejs_gc_duration_seconds_count{service="qijian-api",kind="incremental"} 2
