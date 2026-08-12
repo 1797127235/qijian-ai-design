@@ -6,20 +6,35 @@ import type { DeskManifestEntry } from "../desk-context.js";
 export const MAX_DESK_FULL_CONTEXT_CHARS = 12_000;
 
 export type DeskFullContextBudgetMetrics = Readonly<{
+  /** 指标结构版本，便于观测/外部消费方演进兼容。 */
   schema_version: 1;
+  /** 本次预算使用的硬上限（与 MAX_DESK_FULL_CONTEXT_CHARS 同步回显，便于审计）。 */
   max_frame_chars: number;
+  /** 是否发生降级：true 表示用 compact manifest 替代了全量 XML。 */
   truncated: boolean;
+  /** 输入原文长度（未做 XML 转义前的字符数，方便算压缩比）。 */
   original_text_chars: number;
+  /** 输入按 XML 转义归一化后的字符数——这才是真正用来与上限比较的值。 */
   original_frame_chars: number;
+  /** 输出文本长度（未做 XML 转义前）。 */
   emitted_text_chars: number;
+  /** 输出按 XML 转义归一化后的字符数；保证 ≤ max_frame_chars。 */
   emitted_frame_chars: number;
+  /** 节省的帧字符数（original_frame_chars − emitted_frame_chars，下限 0）。 */
   saved_frame_chars: number;
+  /** 桌面上物件总数（降级前 / 不降级时也照填，便于横比）。 */
   total_objects: number;
+  /** 实际写入 compact manifest 的物件数。 */
   emitted_objects: number;
+  /** 被砍掉的物件数；与 manifest 尾部的 omitted_objects= 同步。 */
   omitted_objects: number;
+  /** 在 manifest 中实际存在的 priority 物件数（priorityArtifactIds 经 manifest 过滤后）。 */
   priority_objects: number;
+  /** 全文 resource 的处置：未触发降级 / 已写入 store 可回拉 / 写入失败只能看 manifest。 */
   resource_status: "not_needed" | "stored" | "unavailable";
+  /** 已写入 resource store 的全文引用；agent 可凭此 + next_cursor 拉回原始 XML。 */
   resource_ref?: string;
+  /** 回拉分页游标；当前实现只发一整块，因此始终为 "0"。 */
   next_cursor?: "0";
 }>;
 
