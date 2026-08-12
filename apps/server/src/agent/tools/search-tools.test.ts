@@ -23,10 +23,10 @@ describe("search_tools 能力说明（纯推荐）", () => {
     expect(result.details).toMatchObject({ ok: true, matched: expect.arrayContaining(["look_at"]) });
   });
 
-  it("fails with the full catalog when nothing matches", async () => {
+  it("treats zero hits as a normal exploration result, not a failure", async () => {
     const result = await tool.execute("call-3", { query: "量子波动" }, undefined, undefined, {} as never);
 
-    expect(result.details).toMatchObject({ ok: false, reason: "no_match" });
+    expect(result.details).toMatchObject({ ok: true, reason: "no_match", matched: [] });
     expect(textOf(result)).toContain("目录");
   });
 });

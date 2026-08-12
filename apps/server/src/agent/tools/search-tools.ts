@@ -5,7 +5,7 @@
  */
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
-import { fail, ok, type ToolContext } from "./shared.js";
+import { ok, type ToolContext } from "./shared.js";
 import {
   SEARCH_TOOLS_NAME,
   enabledCatalog,
@@ -38,10 +38,11 @@ export function createSearchToolsTool(_ctx: ToolContext) {
       const catalog = enabledCatalog();
       const matches = searchToolMatches(params.query, catalog);
       if (matches.length === 0) {
+        // 零命中是正常探索结果：告知目录即可，不算工具失败
         const searchable = catalog.filter((e) => e.searchable).map((e) => `${e.name}（${e.summary}）`);
-        return fail(
+        return ok(
           `未匹配到能力说明。可尝试：生图、替换、删除、项目记忆、查任务、领域 skill。目录：${searchable.join("；")}`,
-          { reason: "no_match", query: params.query },
+          { reason: "no_match", query: params.query, matched: [] },
         );
       }
       const summaries = new Map(catalog.map((e) => [e.name, e.summary]));

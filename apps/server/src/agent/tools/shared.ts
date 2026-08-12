@@ -70,9 +70,9 @@ export interface ToolContext {
   place: (artifactId: string, kind: string, x: number, y: number, rot?: number, width?: number) => Promise<void>;
 }
 
-/** 工具成功结果：text 给 LLM 读，details 持久化到 chat_tool_calls。 */
+/** 工具成功结果：text 给 LLM 读，details 持久化到 chat_tool_calls。显式 ok:true 供失败判定采信（正文散文里的"失败/无法"等词不构成失败）。 */
 export function ok(text: string, details: Record<string, unknown> = {}) {
-  return { content: [{ type: "text" as const, text }], details };
+  return { content: [{ type: "text" as const, text }], details: { ...details, ok: true } };
 }
 
 /** 工具失败结果：details 自动带 ok:false + error_code（H7）。 */

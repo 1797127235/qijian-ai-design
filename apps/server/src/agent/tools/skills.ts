@@ -34,12 +34,13 @@ export function createSearchSkillsTool() {
     async execute(_toolCallId, params) {
       const hits = searchSkillMeta(params.query).slice(0, 10);
       if (hits.length === 0) {
+        // 零命中是正常探索结果：告知目录即可，不算工具失败
         const all = listSkillMeta();
-        return fail(
+        return ok(
           all.length
             ? `未匹配 skill。已安装：${all.map((s) => s.id).join(", ")}`
             : "未安装任何内置 skill。",
-          { reason: "no_match", query: params.query },
+          { reason: "no_match", query: params.query, hits: [] },
         );
       }
       const text = hits

@@ -27,6 +27,14 @@ describe("isToolBusinessFailure", () => {
       details: { ok: false, error_code: "POLICY_DENIED", code: "WAKE_READ_ONLY" },
     }, false)).toBe(false);
   });
+
+  it("trusts the explicit ok marker over failure keywords in prose", () => {
+    // ok() 返回的正文散文可能含"失败/无法"等词（如 skill 正文），显式标记优先
+    expect(isToolBusinessFailure({
+      content: [{ type: "text", text: "不要把失败案例当成既定事实；无法确认时直接说明。" }],
+      details: { ok: true, skill_id: "desk-loop" },
+    }, false)).toBe(false);
+  });
 });
 
 describe("toolFailureMessage", () => {
