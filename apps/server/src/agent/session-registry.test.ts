@@ -86,6 +86,14 @@ describe("system prompt identity", () => {
     expect(prompt).toContain("系统事件轮用于读取并汇报任务结果");
   });
 
+  it("defaults to short user-facing replies while allowing expand and itemization", () => {
+    const prompt = deskSystemPrompt();
+    expect(prompt).toContain("面向用户的回复默认短");
+    expect(prompt).toContain("先给结论");
+    expect(prompt).toContain("谈风格/方向");
+    expect(prompt).toContain("分项说明");
+  });
+
   it("falls back without inventing a model name when config is missing", () => {
     const prompt = deskSystemPrompt({});
     expect(prompt).toContain("由平台配置的对话模型");
