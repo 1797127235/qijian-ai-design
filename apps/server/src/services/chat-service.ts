@@ -1,155 +1,60 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, ne } from "drizzle-orm";
 import type { Database } from "../db/client.js";
-import { chatMessageAttachments, chatMessages, chatRuns, chatThreads, chatToolCalls, storedFiles } from "../db/schema.js";
+import { chatMessageAttachments, chatMessages, chatModelTurns, chatRuns, chatThreads, chatToolCalls, storedFiles } from "../db/schema.js";
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+} from "../domain/attachment-limits.js";
 import { AppError } from "../lib/errors.js";
+import { loadAttachmentMap, messageReferencesFile } from "./chat/attachment-map.js";
+import {
+  formatChatContext,
+  runStatusMessage,
+  isInternalSystemChatMessage,
+  toMessageDto,
+  toModelTurnDto,
+  toRunDto,
+  toThreadDto,
+  toToolCallDto,
+  type ChatMessageDto,
+  type ChatModelTurnDto,
+  type ChatRole,
+  type ChatRunDto,
+  type ChatRunStatus,
+  type ChatThreadDto,
+  type ChatToolCallDto,
+  type ChatToolCallStatus,
+} from "./chat/types.js";
 
-export type ChatRole = "user" | "assistant";
+export type {
+  ChatAttachmentDto,
+  ChatMessageDto,
+  ChatModelTurnDto,
+  ChatRole,
+  ChatRunDto,
+  ChatRunStatus,
+  ChatThreadDto,
+  ChatToolCallDto,
+  ChatToolCallStatus,
+} from "./chat/types.js";
+export { formatChatContext, isInternalSystemChatMessage, runStatusMessage } from "./chat/types.js";
 
-export interface ChatMessageDto {
-  id: string;
-  threadId: string;
-  projectId: string;
-  role: ChatRole;
-  text: string;
-  attachments: ChatAttachmentDto[];
-  createdAt: string;
-}
-
-export interface ChatAttachmentDto {
-  id: string;
-  originalFilename: string;
-  mediaType: string;
-  sizeBytes: number;
-  pageCount?: number;
-  position: number;
-}
-
-export interface ChatThreadDto {
-  id: string;
-  projectId: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type ChatRunStatus = "running" | "completed" | "failed" | "stopped" | "interrupted";
-
-export interface ChatRunDto {
-  id: string;
-  threadId: string;
-  projectId: string;
-  userMessageId: string;
-  status: ChatRunStatus;
-  error?: string;
-  startedAt: string;
-  finishedAt?: string;
-}
-
-export type ChatToolCallStatus = "running" | "succeeded" | "failed" | "interrupted";
-
-export interface ChatToolCallDto {
-  id: string;
-  runId: string;
-  toolCallId: string;
-  toolName: string;
-  status: ChatToolCallStatus;
-  args: unknown;
-  result?: unknown;
-  error?: string;
-  cost?: unknown;
-  startedAt: string;
-  finishedAt?: string;
-}
-
-function toDto(row: typeof chatMessages.$inferSelect, attachments: ChatAttachmentDto[] = []): ChatMessageDto {
-  return {
-    id: row.id,
-    threadId: row.threadId,
-    projectId: row.projectId,
-    role: row.role,
-    text: row.text,
-    attachments,
-    createdAt: row.createdAt.toISOString(),
-  };
-}
-
-function toThreadDto(row: typeof chatThreads.$inferSelect): ChatThreadDto {
-  return {
-    id: row.id,
-    projectId: row.projectId,
-    title: row.title,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function toRunDto(row: typeof chatRuns.$inferSelect): ChatRunDto {
-  return {
-    id: row.id,
-    threadId: row.threadId,
-    projectId: row.projectId,
-    userMessageId: row.userMessageId,
-    status: row.status,
-    error: row.error ?? undefined,
-    startedAt: row.startedAt.toISOString(),
-    finishedAt: row.finishedAt?.toISOString(),
-  };
-}
-
-function toToolCallDto(row: typeof chatToolCalls.$inferSelect): ChatToolCallDto {
-  return {
-    id: row.id,
-    runId: row.runId,
-    toolCallId: row.toolCallId,
-    toolName: row.toolName,
-    status: row.status,
-    args: row.args,
-    result: row.result ?? undefined,
-    error: row.error ?? undefined,
-    cost: row.cost ?? undefined,
-    startedAt: row.startedAt.toISOString(),
-    finishedAt: row.finishedAt?.toISOString(),
-  };
-}
-
-export function runStatusMessage(run: ChatRunDto): ChatMessageDto | undefined {
-  const text = run.status === "interrupted"
-    ? "上一次任务因服务重启或异常退出而中断。为避免重复修改画布，系统没有自动重试；你可以重新发送这条要求。"
-    : run.status === "stopped"
-      ? "任务已停止。"
-      : run.status === "failed"
-        ? `任务执行失败：${run.error ?? "未知错误"}`
-        : undefined;
-  if (!text) return undefined;
-  return {
-    id: `run-status:${run.id}`,
-    threadId: run.threadId,
-    projectId: run.projectId,
-    role: "assistant",
-    text,
-    attachments: [],
-    createdAt: run.finishedAt ?? run.startedAt,
-  };
-}
-
-export function formatChatContext(
-  messages: Array<Pick<ChatMessageDto, "role" | "text">>,
-  maxCharacters = 30_000,
-): string {
-  const lines = messages.map((message) => `${message.role === "user" ? "设计师" : "设计助手"}：${message.text}`);
-  const selected: string[] = [];
-  let length = 0;
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index];
-    if (length + line.length > maxCharacters && selected.length > 0) break;
-    selected.unshift(line.slice(Math.max(0, line.length - maxCharacters)));
-    length += line.length;
-  }
-  return selected.join("\n\n");
-}
-
+/**
+ * 聊天服务：thread/message/run/tool_call 的 CRUD 与协作语义。
+ *
+ * 关键并发模型：
+ *  - 同一 thread 只能有一个 running run（DB partial unique 索引兜底）
+ *  - instanceId（进程 UUID）标识「我」创建/拥有的 run，方便别人清扫我挂死的 run
+ *  - 陈旧 run 自动清理：本实例以外的 running run 自动标 interrupted
+ *    自己的 run 超过 10 分钟未结束也视作挂死（模型无超时兜底）
+ *
+ * 幂等：
+ *  - chat_messages.external_id 唯一（前端断网重发同一消息不重复入库）
+ *  - 同 external_id 但内容不一致 → 409
+ */
 export class ChatService {
+  /** 当前进程 UUID，挂在每个 run 的 ownerId 上，便于跨实例清扫。 */
   private readonly instanceId = randomUUID();
 
   constructor(private readonly db: Database) {}
@@ -159,6 +64,10 @@ export class ChatService {
     return toThreadDto(thread);
   }
 
+  /**
+   * 解析 thread：传 threadId 时校验归属；不传则取最新；都没有就新建（一个项目起步时也有 thread）。
+   * 历史数据中的 latest 也兼容「无 thread」的情况。
+   */
   async resolveThread(projectId: string, threadId?: string) {
     if (threadId) {
       const [thread] = await this.db
@@ -182,7 +91,6 @@ export class ChatService {
   }
 
   async listThreads(projectId: string): Promise<ChatThreadDto[]> {
-    await this.resolveThread(projectId);
     const rows = await this.db
       .select()
       .from(chatThreads)
@@ -199,6 +107,15 @@ export class ChatService {
     if (!deleted) throw new Error("对话不存在或不属于当前项目");
   }
 
+  async referencesFile(fileId: string, executor: Parameters<typeof messageReferencesFile>[0] = this.db): Promise<boolean> {
+    return messageReferencesFile(executor, fileId);
+  }
+
+  /**
+   * 追加一条非 user 消息（assistant 文本、状态文案等）。
+   * externalId 可选：传了则按幂等键去重；不传则直接 insert。
+   * 不做 running 互斥检查（这是 user prompt 路径的职责，见 appendPrompt）。
+   */
   async append(
     projectId: string,
     threadId: string,
@@ -212,7 +129,7 @@ export class ChatService {
 
     if (externalId) {
       const [existing] = await this.db.select().from(chatMessages).where(eq(chatMessages.externalId, externalId));
-      if (existing) return { message: toDto(existing), created: false };
+      if (existing) return { message: toMessageDto(existing), created: false };
     }
 
     const thread = await this.resolveThread(projectId, threadId);
@@ -236,13 +153,20 @@ export class ChatService {
         .update(chatThreads)
         .set({ title, updatedAt: now })
         .where(eq(chatThreads.id, thread.id));
-      return { message: toDto(created), created: true };
+      return { message: toMessageDto(created), created: true };
     }
     const [existing] = await this.db.select().from(chatMessages).where(eq(chatMessages.externalId, externalId!));
     if (!existing) throw new Error("聊天消息保存失败");
-    return { message: toDto(existing), created: false };
+    return { message: toMessageDto(existing), created: false };
   }
 
+  /**
+   * 核心入口：用户发送 prompt。
+   * 事务内完成：参数校验 → 附件所有权校验 → 插 user_message → 插关联附件 → 起 run。
+   * 互斥语义：发现本 thread 有 running run 时，区分「我自己的」与「他实例的」；
+   *  他实例的立刻 interrupted，本实例超过 10 分钟也视作挂死清掉。
+   *  互斥的意图不是「拒绝重发」，而是「不要在已有任务上再叠一个」。
+   */
   async appendPrompt(
     projectId: string,
     threadId: string,
@@ -258,7 +182,9 @@ export class ChatService {
     if (uniqueAttachmentIds.length !== attachmentIds.length) {
       throw new AppError(422, "VALIDATION_FAILED", "附件列表包含重复项");
     }
-    if (attachmentIds.length > 8) throw new AppError(422, "VALIDATION_FAILED", "每条消息最多添加 8 个附件");
+    if (attachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+      throw new AppError(422, "VALIDATION_FAILED", `每条消息最多添加 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件`);
+    }
 
     return this.db.transaction(async (tx) => {
       const [thread] = await tx
@@ -271,12 +197,12 @@ export class ChatService {
       if (externalId) {
         const [existing] = await tx.select().from(chatMessages).where(eq(chatMessages.externalId, externalId));
         if (existing) {
-          const attachments = (await this.attachmentMap([existing.id], tx)).get(existing.id) ?? [];
+          const attachments = (await loadAttachmentMap(tx, [existing.id])).get(existing.id) ?? [];
           const sameAttachments = attachments.map((item) => item.id).join(",") === attachmentIds.join(",");
           if (existing.projectId !== projectId || existing.threadId !== threadId || existing.text !== trimmed || !sameAttachments) {
             throw new AppError(409, "CONFLICT", "同一个消息标识不能用于不同内容");
           }
-          return { message: toDto(existing, attachments), created: false };
+          return { message: toMessageDto(existing, attachments), created: false };
         }
       }
 
@@ -285,18 +211,38 @@ export class ChatService {
         .from(chatRuns)
         .where(and(eq(chatRuns.threadId, threadId), eq(chatRuns.status, "running")))
         .limit(1);
-      if (running) throw new AppError(409, "ATTACHMENT_BUSY", "当前对话仍有任务在执行，请稍后再发送", true);
+      if (running) {
+        // 仅超时才清扫；owner 不等不等于已死（多实例误杀活任务）
+        const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
+        const swept = await tx
+          .update(chatRuns)
+          .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: new Date() })
+          .where(and(
+            eq(chatRuns.id, running.id),
+            eq(chatRuns.status, "running"),
+            lt(chatRuns.startedAt, staleBefore),
+          ))
+          .returning({ id: chatRuns.id });
+        if (swept.length === 0) {
+          throw new AppError(409, "ATTACHMENT_BUSY", "当前对话仍有任务在执行，请稍后再发送", true);
+        }
+        await tx
+          .update(chatToolCalls)
+          .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: new Date() })
+          .where(and(inArray(chatToolCalls.runId, swept.map((run) => run.id)), eq(chatToolCalls.status, "running")));
+      }
 
+      // FOR UPDATE：与 FileStorage.deleteUnattached 互斥，避免消息挂上已删/正删文件
       const files = uniqueAttachmentIds.length === 0
         ? []
         : await tx.select().from(storedFiles).where(and(
             eq(storedFiles.projectId, projectId),
-            inArray(storedFiles.id, uniqueAttachmentIds),
-          ));
+            inArray(storedFiles.id, [...uniqueAttachmentIds].sort()),
+          )).for("update");
       if (files.length !== uniqueAttachmentIds.length) {
         throw new AppError(422, "ATTACHMENT_NOT_FOUND", "一个或多个附件不存在或不属于当前项目");
       }
-      if (files.reduce((total, file) => total + file.sizeBytes, 0) > 60 * 1024 * 1024) {
+      if (files.reduce((total, file) => total + file.sizeBytes, 0) > MAX_TOTAL_ATTACHMENT_BYTES) {
         throw new AppError(422, "VALIDATION_FAILED", "每条消息的附件总大小不能超过 60MB");
       }
       const fileById = new Map(files.map((file) => [file.id, file]));
@@ -310,8 +256,8 @@ export class ChatService {
       if (!message) {
         const [existing] = await tx.select().from(chatMessages).where(eq(chatMessages.externalId, externalId!));
         if (!existing) throw new Error("聊天消息保存失败");
-        const attachments = (await this.attachmentMap([existing.id], tx)).get(existing.id) ?? [];
-        return { message: toDto(existing, attachments), created: false };
+        const attachments = (await loadAttachmentMap(tx, [existing.id])).get(existing.id) ?? [];
+        return { message: toMessageDto(existing, attachments), created: false };
       }
       if (attachmentIds.length > 0) {
         await tx.insert(chatMessageAttachments).values(attachmentIds.map((fileId, position) => ({
@@ -329,14 +275,18 @@ export class ChatService {
           sizeBytes: file.sizeBytes,
           pageCount: file.pageCount ?? undefined,
           position,
-        } satisfies ChatAttachmentDto;
+        };
       });
       const now = new Date();
+      // job-wake 等系统回注不要抢线程标题
+      const isSystem = isInternalSystemChatMessage({ text: trimmed, externalId });
       const titleSource = trimmed || attachments[0]?.originalFilename || "新对话";
       await tx
         .update(chatThreads)
         .set({
-          title: thread.title === "新对话" ? titleSource.replace(/\s+/g, " ").slice(0, 28) : thread.title,
+          title: !isSystem && thread.title === "新对话"
+            ? titleSource.replace(/\s+/g, " ").slice(0, 28)
+            : thread.title,
           updatedAt: now,
         })
         .where(eq(chatThreads.id, thread.id));
@@ -344,19 +294,43 @@ export class ChatService {
         .insert(chatRuns)
         .values({ projectId, threadId, userMessageId: message.id, ownerId: this.instanceId })
         .returning();
-      return { message: toDto(message, attachments), run: toRunDto(run), created: true };
+      return { message: toMessageDto(message, attachments), run: toRunDto(run), created: true };
     });
   }
 
-  async startToolCall(runId: string, toolCallId: string, toolName: string, args: unknown) {
+  /** H7：把 LangSmith root id 写回 chat_runs，便于对照本地 run。 */
+  async setSmithRunId(runId: string, smithRunId: string) {
+    await this.db
+      .update(chatRuns)
+      .set({ smithRunId })
+      .where(eq(chatRuns.id, runId));
+  }
+
+  /** 工具开始：插入 chat_tool_calls 行（onConflictDoNothing 用于重放）。 */
+  async startToolCall(
+    runId: string,
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    observation: {
+      turnIndex?: number;
+      argumentCharacters?: number;
+      argumentBytes?: number;
+      promptTokensBefore?: number;
+    } = {},
+  ) {
     const [created] = await this.db
       .insert(chatToolCalls)
-      .values({ runId, toolCallId, toolName, args })
+      .values({ runId, toolCallId, toolName, args, ...observation })
       .onConflictDoNothing({ target: [chatToolCalls.runId, chatToolCalls.toolCallId] })
       .returning();
     return created ? toToolCallDto(created) : undefined;
   }
 
+  /**
+   * 工具结束：upsert 同一 (runId, toolCallId) 行，标 succeeded/failed 写 result/error/观测尺寸。
+   * error 截断 2000 字符防爆库。
+   */
   async finishToolCall(
     runId: string,
     toolCallId: string,
@@ -364,7 +338,12 @@ export class ChatService {
     result: unknown,
     isError: boolean,
     error?: string,
-    cost?: unknown,
+    observation: {
+      turnIndex?: number;
+      resultCharacters?: number;
+      resultBytes?: number;
+      promptTokensBefore?: number;
+    } = {},
   ) {
     const finishedAt = new Date();
     const [row] = await this.db
@@ -377,7 +356,7 @@ export class ChatService {
         args: {},
         result,
         error: error?.slice(0, 2_000),
-        cost,
+        ...observation,
         finishedAt,
       })
       .onConflictDoUpdate({
@@ -387,7 +366,7 @@ export class ChatService {
           status: isError ? "failed" : "succeeded",
           result,
           error: error?.slice(0, 2_000),
-          cost,
+          ...observation,
           finishedAt,
         },
       })
@@ -395,6 +374,82 @@ export class ChatService {
     return toToolCallDto(row);
   }
 
+  async completeToolTokenContext(
+    runId: string,
+    toolCallId: string,
+    input: {
+      promptTokensAfter: number;
+      promptTokenDelta?: number;
+      sharedBatchSize: number;
+    },
+  ): Promise<void> {
+    await this.db
+      .update(chatToolCalls)
+      .set(input)
+      .where(and(eq(chatToolCalls.runId, runId), eq(chatToolCalls.toolCallId, toolCallId)));
+  }
+
+  async startModelTurn(runId: string, turnIndex: number, model: string): Promise<void> {
+    await this.db
+      .insert(chatModelTurns)
+      .values({ runId, turnIndex, model })
+      .onConflictDoNothing({ target: [chatModelTurns.runId, chatModelTurns.turnIndex] });
+  }
+
+  async finishModelTurn(
+    runId: string,
+    turnIndex: number,
+    model: string,
+    usage: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      totalTokens: number;
+    },
+  ): Promise<void> {
+    const finishedAt = new Date();
+    const values = {
+      model,
+      inputTokens: usage.input,
+      outputTokens: usage.output,
+      cacheReadTokens: usage.cacheRead,
+      cacheWriteTokens: usage.cacheWrite,
+      promptTokens: usage.input + usage.cacheRead + usage.cacheWrite,
+      totalTokens: usage.totalTokens,
+      finishedAt,
+    };
+    await this.db
+      .insert(chatModelTurns)
+      .values({ runId, turnIndex, ...values })
+      .onConflictDoUpdate({
+        target: [chatModelTurns.runId, chatModelTurns.turnIndex],
+        set: values,
+      });
+  }
+
+  /** prompt 正常返回后扫一遍：run 是否有 failed 工具 → run 标 failed，否则 completed。 */
+  async summarizeRunTools(runId: string): Promise<{ status: "completed" | "failed"; error?: string }> {
+    const rows = await this.db
+      .select({
+        status: chatToolCalls.status,
+        error: chatToolCalls.error,
+        toolName: chatToolCalls.toolName,
+      })
+      .from(chatToolCalls)
+      .where(eq(chatToolCalls.runId, runId));
+    const failed = rows.find((row) => row.status === "failed");
+    if (!failed) return { status: "completed" };
+    return {
+      status: "failed",
+      error: failed.error?.trim() || `${failed.toolName} 失败`,
+    };
+  }
+
+  /**
+   * 收尾：把 run 标 stopped/completed/failed，并把该 run 下所有 still-running tool_calls 一起结束。
+   * 一次事务内做完，状态机不允许 run=stopped 时仍有 tool=runnning。
+   */
   async finishRun(runId: string, status: Exclude<ChatRunStatus, "running" | "interrupted">, error?: string) {
     const run = await this.db.transaction(async (tx) => {
       const [finished] = await tx
@@ -417,6 +472,10 @@ export class ChatService {
     return run ? runStatusMessage(toRunDto(run)) : undefined;
   }
 
+  /**
+   * 用户主动停当前 thread 上「我拥有」的 running run（前端 stop 按钮调用）。
+   * 只动本实例的 run，不会去打扰其他实例仍在执行的任务。
+   */
   async finishRunningRuns(projectId: string, threadId: string, status: "stopped" | "failed", error?: string) {
     const rows = await this.db.transaction(async (tx) => {
       const finished = await tx
@@ -447,31 +506,71 @@ export class ChatService {
     });
   }
 
+  /** Periodic watchdog: close stale runs across every project, independent of UI traffic. */
+  async interruptStaleRunsGlobal(
+    staleMs = 10 * 60 * 1_000,
+    now = new Date(),
+  ): Promise<number> {
+    const staleBefore = new Date(now.getTime() - Math.max(1, staleMs));
+    return this.db.transaction(async (tx) => {
+      const interrupted = await tx
+        .update(chatRuns)
+        .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: now })
+        .where(and(eq(chatRuns.status, "running"), lt(chatRuns.startedAt, staleBefore)))
+        .returning({ id: chatRuns.id });
+      if (interrupted.length > 0) {
+        await tx
+          .update(chatToolCalls)
+          .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: now })
+          .where(and(
+            inArray(chatToolCalls.runId, interrupted.map((run) => run.id)),
+            eq(chatToolCalls.status, "running"),
+          ));
+      }
+      return interrupted.length;
+    });
+  }
+
+  /**
+   * 私有：仅清理超时 running run（按 startedAt，不按 ownerId）。
+   * 多实例部署下 owner 不等不等于已死；误 interrupt 会杀活任务。
+   */
   private async interruptStaleRuns(projectId: string, threadId: string) {
+    const staleBefore = new Date(Date.now() - 10 * 60 * 1000);
     await this.db.transaction(async (tx) => {
       const interrupted = await tx
         .update(chatRuns)
-        .set({ status: "interrupted", finishedAt: new Date() })
+        .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: new Date() })
         .where(and(
           eq(chatRuns.projectId, projectId),
           eq(chatRuns.threadId, threadId),
           eq(chatRuns.status, "running"),
-          ne(chatRuns.ownerId, this.instanceId),
+          lt(chatRuns.startedAt, staleBefore),
         ))
         .returning({ id: chatRuns.id });
       if (interrupted.length > 0) {
         await tx
           .update(chatToolCalls)
-          .set({ status: "interrupted", error: "服务重启或异常退出", finishedAt: new Date() })
+          .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: new Date() })
           .where(and(inArray(chatToolCalls.runId, interrupted.map((run) => run.id)), eq(chatToolCalls.status, "running")));
       }
     });
   }
 
-  async history(projectId: string, threadId?: string): Promise<{ threadId: string; messages: ChatMessageDto[]; toolCalls: ChatToolCallDto[] }> {
+  /**
+   * 拉对话历史：消息按 sequence 升序，并把 run 状态注入为「虚拟 assistant 消息」
+   * （status 文案由 runStatusMessage 生成，前端不用单独处理 run 状态）。
+   * 一次往返：消息 + 未完结的 run + 100 条最近 tool calls。
+   */
+  async history(projectId: string, threadId?: string): Promise<{
+    threadId: string;
+    messages: ChatMessageDto[];
+    toolCalls: ChatToolCallDto[];
+    modelTurns: ChatModelTurnDto[];
+  }> {
     const thread = await this.resolveThread(projectId, threadId);
     await this.interruptStaleRuns(projectId, thread.id);
-    const [rows, runs, toolCalls] = await Promise.all([
+    const [rows, runs, toolCalls, modelTurns] = await Promise.all([
       this.db
         .select()
         .from(chatMessages)
@@ -488,11 +587,18 @@ export class ChatService {
         .where(and(eq(chatRuns.projectId, projectId), eq(chatRuns.threadId, thread.id)))
         .orderBy(desc(chatToolCalls.startedAt))
         .limit(100),
+      this.db
+        .select({ modelTurn: chatModelTurns })
+        .from(chatModelTurns)
+        .innerJoin(chatRuns, eq(chatModelTurns.runId, chatRuns.id))
+        .where(and(eq(chatRuns.projectId, projectId), eq(chatRuns.threadId, thread.id)))
+        .orderBy(desc(chatModelTurns.startedAt))
+        .limit(200),
     ]);
-    const attachmentByMessage = await this.attachmentMap(rows.map((row) => row.id));
+    const attachmentByMessage = await loadAttachmentMap(this.db, rows.map((row) => row.id));
     const statusByMessage = new Map(runs.map((run) => [run.userMessageId, runStatusMessage(toRunDto(run))]));
     const messages = rows.flatMap((row) => {
-      const message = toDto(row, attachmentByMessage.get(row.id));
+      const message = toMessageDto(row, attachmentByMessage.get(row.id));
       const status = statusByMessage.get(message.id);
       return status ? [message, status] : [message];
     });
@@ -500,9 +606,11 @@ export class ChatService {
       threadId: thread.id,
       messages,
       toolCalls: toolCalls.reverse().map(({ toolCall }) => toToolCallDto(toolCall)),
+      modelTurns: modelTurns.reverse().map(({ modelTurn }) => toModelTurnDto(modelTurn)),
     };
   }
 
+  /** 给 Agent 提供最近 N 条消息的可读文本（注入到 system prompt 的对话背景段）。 */
   async recentContext(projectId: string, threadId: string, limit = 80): Promise<string> {
     const rows = await this.db
       .select()
@@ -521,42 +629,7 @@ export class ChatService {
       .orderBy(desc(chatMessages.sequence))
       .limit(limit);
     rows.reverse();
-    const attachmentByMessage = await this.attachmentMap(rows.map((row) => row.id));
-    return rows.map((row) => toDto(row, attachmentByMessage.get(row.id)));
-  }
-
-  private async attachmentMap(
-    messageIds: string[],
-    executor: Pick<Database, "select"> = this.db,
-  ): Promise<Map<string, ChatAttachmentDto[]>> {
-    const result = new Map<string, ChatAttachmentDto[]>();
-    if (messageIds.length === 0) return result;
-    const rows = await executor
-      .select({
-        messageId: chatMessageAttachments.messageId,
-        id: storedFiles.id,
-        originalFilename: storedFiles.originalFilename,
-        mediaType: storedFiles.mediaType,
-        sizeBytes: storedFiles.sizeBytes,
-        pageCount: storedFiles.pageCount,
-        position: chatMessageAttachments.position,
-      })
-      .from(chatMessageAttachments)
-      .innerJoin(storedFiles, eq(storedFiles.id, chatMessageAttachments.fileId))
-      .where(inArray(chatMessageAttachments.messageId, messageIds))
-      .orderBy(asc(chatMessageAttachments.position));
-    for (const row of rows) {
-      const items = result.get(row.messageId) ?? [];
-      items.push({
-        id: row.id,
-        originalFilename: row.originalFilename,
-        mediaType: row.mediaType,
-        sizeBytes: row.sizeBytes,
-        pageCount: row.pageCount ?? undefined,
-        position: row.position,
-      });
-      result.set(row.messageId, items);
-    }
-    return result;
+    const attachmentByMessage = await loadAttachmentMap(this.db, rows.map((row) => row.id));
+    return rows.map((row) => toMessageDto(row, attachmentByMessage.get(row.id)));
   }
 }

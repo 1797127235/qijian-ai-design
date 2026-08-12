@@ -1,0 +1,55 @@
+{
+  "id": "GT-18",
+  "title": "当前桌压过历史（已删材质不进目录）",
+  "desk": {
+    "project": { "id": "p1", "name": "静安两居" },
+    "artifacts": [
+      {
+        "id": "art-living",
+        "artifactType": "canvas_image",
+        "versionId": "v1",
+        "versionNo": 1,
+        "status": "draft",
+        "payload": { "file_id": "file-living" },
+        "inputRefs": [],
+        "createdBy": "designer",
+        "createdAt": "2026-08-06T00:00:00.000Z"
+      },
+      {
+        "id": "art-fx1",
+        "artifactType": "effect_image",
+        "versionId": "v3",
+        "versionNo": 1,
+        "status": "draft",
+        "payload": { "file_id": "file-fx1", "user_prompt": "换暖光", "pending": false },
+        "inputRefs": [],
+        "createdBy": "agent",
+        "createdAt": "2026-08-06T00:00:00.000Z"
+      }
+    ],
+    "deskState": {
+      "objects": [
+        { "artifact_id": "art-living", "kind": "canvas_image", "x": 0, "y": 0, "rot": 0 },
+        { "artifact_id": "art-fx1", "kind": "effect_image", "x": 800, "y": 0, "rot": 0 }
+      ],
+      "connections": [
+        { "id": "c1", "from": "art-living", "to": "art-fx1" }
+      ],
+      "viewport": { "x": 0, "y": 0, "zoom": 1 },
+      "updatedAt": "2026-08-06T14:00:00.000Z"
+    }
+  },
+  "fileNames": {
+    "file-living": "客厅平面.png",
+    "file-fx1": "暖光效果.jpg"
+  },
+  "historyDeskMentions": ["art-mat"],
+  "selection": [],
+  "userText": "材质还在吗",
+  "expect": {
+    "codes": ["C1", "S1", "H1", "H2"],
+    "textIncludes": ["current=true", "art-living", "art-fx1"],
+    "textExcludes": ["art-mat"],
+    "hasBlocks": ["DESK_CONTEXT"]
+  }
+}

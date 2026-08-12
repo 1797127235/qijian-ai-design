@@ -1,0 +1,13 @@
+{
+  "id": "GT-06",
+  "title": "选中含 pending 不进 L3",
+  "desk": "s1",
+  "fileNames": "s1",
+  "selection": ["art-pending", "art-living"],
+  "userText": "看选中",
+  "expect": {
+    "codes": ["I1", "I2"],
+    "inspectIncluded": ["art-living"],
+    "inspectSkipped": [{ "artifactId": "art-pending", "reason": "pending" }]
+  }
+}

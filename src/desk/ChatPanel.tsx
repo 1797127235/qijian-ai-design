@@ -1,29 +1,29 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { ArrowUp, FileText, History, LoaderCircle, MessageSquarePlus, PanelRightOpen, Paperclip, Plus, RotateCcw, Square, Trash2, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { api, type ChatAttachment, type ChatConnectionStatus, type ChatThread } from "../lib/api";
-import { ATTACHMENT_ACCEPT } from "./attachments";
-import { safeMarkdownUrl } from "./markdown";
-import type { ChatItem } from "./types";
+import { History, LoaderCircle, MessageSquarePlus, PanelRightClose, PanelRightOpen } from "lucide-react";
+import type { ChatConnectionStatus, ChatThread } from "../lib/api";
+import { MAX_SELECTED_ARTIFACTS } from "../shared/selection-limits";
+import type { ChatItem, DeskObject } from "./types";
 import { useAttachmentDraft } from "./useAttachmentDraft";
+import { useExitTransition } from "./useExitTransition";
+import { ChatComposer, connectionLabels } from "./chat/ChatComposer";
+import { ChatMessageList, MarkdownMessage } from "./chat/ChatMessageList";
+import { ChatThreadList } from "./chat/ChatThreadList";
 
-const connectionLabels: Record<ChatConnectionStatus, string> = {
-  connecting: "连接中",
-  connected: "已连接",
-  reconnecting: "正在重连",
-  disconnected: "已离线",
-};
-
-const suggestions = [
-  { title: "整理项目理解", description: "读取当前画布与户型图，提炼空间问题和设计机会" },
-  { title: "出三个设计方向", description: "基于当前约束，形成三个真正可比较的方案方向" },
-  { title: "给客厅出效果图", description: "结合已确认方向，为重点空间生成视觉方案" },
-];
+export { MarkdownMessage };
 
 const DEFAULT_CHAT_WIDTH = 506;
 const MIN_CHAT_WIDTH = 360;
 const MAX_CHAT_WIDTH = 720;
+
+/**
+ * StrictMode 二次挂载：同一 handoff 只注入草稿一次；
+ * autoSend 意图与 seed 选中放模块级，remount 后仍能发出。
+ */
+const appliedHandoffIds = new Set<string>();
+const pendingAutoSendByHandoff = new Map<string, {
+  text: string;
+  seedSelectedIds: string[];
+}>();
 
 function storedChatWidth() {
   const stored = window.localStorage.getItem("qijian.chat.width");
@@ -41,57 +41,6 @@ function clampChatWidth(width: number) {
   return Math.round(Math.min(availableChatWidth(), Math.max(MIN_CHAT_WIDTH, width)));
 }
 
-function PlainMessageText({ text }: { text: string }) {
-  const parts = text.split(/(https?:\/\/[^\s]+)/g);
-  return <>{parts.map((part, index) => part.startsWith("http://") || part.startsWith("https://")
-    ? <a key={`${part}-${index}`} href={part} target="_blank" rel="noreferrer">{part}</a>
-    : part)}</>;
-}
-
-export function MarkdownMessage({ text }: { text: string }) {
-  return (
-    <div className="markdown-content">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        urlTransform={safeMarkdownUrl}
-        components={{
-          a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
-          img: ({ alt, ...props }) => <img {...props} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" />,
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  );
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
-  if (attachments.length === 0) return null;
-  return (
-    <div className="message-attachments" aria-label="消息附件">
-      {attachments.map((attachment) => (
-        <a
-          key={attachment.id}
-          className="message-attachment"
-          href={api.fileUrl(attachment.id)}
-          target="_blank"
-          rel="noreferrer"
-          title={attachment.originalFilename}
-        >
-          {attachment.mediaType === "application/pdf" ? <FileText size={15} /> : <Paperclip size={15} />}
-          <span>{attachment.originalFilename}</span>
-        </a>
-      ))}
-    </div>
-  );
-}
-
 export function ChatPanel({
   projectId,
   items,
@@ -101,8 +50,11 @@ export function ChatPanel({
   threads,
   activeThreadId,
   threadChanging,
+  handoffId,
   initialText,
   initialFiles,
+  autoSend = false,
+  seedSelectedArtifactIds,
   submissionOutcome,
   onSend,
   onStop,
@@ -111,6 +63,8 @@ export function ChatPanel({
   onDeleteThread,
   onInitialFilesConsumed,
   onDraftStateChange,
+  selectedObjects = [],
+  onClearSelection,
 }: {
   projectId: string;
   items: ChatItem[];
@@ -120,45 +74,82 @@ export function ChatPanel({
   threads: ChatThread[];
   activeThreadId?: string;
   threadChanging: boolean;
+  handoffId?: string;
   initialText?: string;
   initialFiles?: File[];
+  /** 首页创建进入桌面：自动展开助手并发出首条任务 */
+  autoSend?: boolean;
+  /** 落桌图 id（桌面 snapshot 尚未映射前也能随首条消息带上选中） */
+  seedSelectedArtifactIds?: string[];
   submissionOutcome?: { clientMessageId: string; status: "acknowledged" | "rejected" };
-  onSend: (input: { text: string; attachmentIds: string[]; clientMessageId: string }) => boolean;
+  onSend: (input: {
+    text: string;
+    attachmentIds: string[];
+    clientMessageId: string;
+    selectedArtifactIds?: string[];
+  }) => boolean;
   onStop: () => void;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void;
   onInitialFilesConsumed?: () => void;
   onDraftStateChange?: (hasDraft: boolean) => void;
+  /** 画布当前选中；有则 composer 立刻显示 chip，发送时写入 selectedArtifactIds */
+  selectedObjects?: DeskObject[];
+  /** 传 id 移除单项；不传清空全部 */
+  onClearSelection?: (id?: string) => void;
 }) {
   const [input, setInput] = useState("");
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("qijian.chat.collapsed") === "true");
   const [panelWidth, setPanelWidth] = useState(storedChatWidth);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const historyMenu = useExitTransition(historyOpen ? true : undefined, 120);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const historyMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottom = useRef(true);
   const panelWidthRef = useRef(panelWidth);
   const resizing = useRef<{ startX: number; startWidth: number }>();
-  const submittedRef = useRef<{
-    clientMessageId: string;
-    text: string;
-    localIds: string[];
-  }>();
+  const submittedRef = useRef<{ clientMessageId: string; text: string; localIds: string[] }>();
+  const seedSelectedRef = useRef<string[]>([]);
+  const activeHandoffIdRef = useRef<string>();
   const [pendingClientMessageId, setPendingClientMessageId] = useState<string>();
+  const [autoSendArmed, setAutoSendArmed] = useState(false);
   const attachments = useAttachmentDraft(projectId);
   const draftLocked = Boolean(pendingClientMessageId);
   const attachmentsReady = attachments.items.every((item) => item.status === "uploaded");
   const hasContent = Boolean(input.trim()) || attachments.items.some((item) => item.status === "uploaded");
   const sendDisabled = busy || draftLocked || connection !== "connected" || !attachmentsReady;
 
+  // 首页 handoff：草稿注入去重；autoSend 状态进模块 Map，remount 后恢复 armed。
   useEffect(() => {
-    if (!initialText && !initialFiles?.length) return;
-    if (initialText) setInput(initialText);
+    if (!handoffId) return;
+    activeHandoffIdRef.current = handoffId;
+    const pending = pendingAutoSendByHandoff.get(handoffId);
+    if (pending) {
+      setInput((cur) => cur || pending.text);
+      seedSelectedRef.current = pending.seedSelectedIds;
+      setCollapsed(false);
+      setAutoSendArmed(true);
+    }
+    if (appliedHandoffIds.has(handoffId)) return;
+    if (!initialText && !initialFiles?.length && !autoSend && !seedSelectedArtifactIds?.length) return;
+    appliedHandoffIds.add(handoffId);
+    const text = initialText ?? "";
+    const seeds = seedSelectedArtifactIds?.length ? [...seedSelectedArtifactIds] : [];
+    if (text) setInput(text);
     if (initialFiles?.length) attachments.addFiles(initialFiles);
+    if (seeds.length) seedSelectedRef.current = seeds;
+    if (autoSend) {
+      pendingAutoSendByHandoff.set(handoffId, { text, seedSelectedIds: seeds });
+      setCollapsed(false);
+      setAutoSendArmed(true);
+      return;
+    }
     onInitialFilesConsumed?.();
-  }, [initialText, initialFiles, attachments.addFiles, onInitialFilesConsumed]);
+  }, [handoffId, initialText, initialFiles, autoSend, seedSelectedArtifactIds, attachments.addFiles, onInitialFilesConsumed]);
 
   useEffect(() => onDraftStateChange?.(attachments.items.length > 0), [attachments.items.length, onDraftStateChange]);
 
@@ -199,9 +190,25 @@ export function ChatPanel({
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setHistoryOpen(false);
     };
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (historyMenuRef.current?.contains(target)) return;
+      if (historyButtonRef.current?.contains(target)) return;
+      setHistoryOpen(false);
+    };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    window.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("pointerdown", closeOnOutsidePointer);
+    };
   }, [historyOpen]);
+
+  // 对话删空后收起历史菜单，避免只剩个空壳标题
+  useEffect(() => {
+    if (threads.length === 0) setHistoryOpen(false);
+  }, [threads.length]);
 
   const submit = () => {
     const text = input.trim();
@@ -215,11 +222,39 @@ export function ChatPanel({
       && retry.localIds.every((id, index) => id === localIds[index])
       ? retry.clientMessageId
       : globalThis.crypto?.randomUUID?.() ?? `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    if (!onSend({ text, attachmentIds: ready.map((item) => item.stored!.id), clientMessageId })) return;
+    // 选中：桌面 chip 优先；首页 handoff 的落桌图 id 作 seed（snapshot 尚未映射时仍能指认）
+    const fromUi = selectedObjects.map((o) => o.id);
+    const fromSeed = seedSelectedRef.current;
+    const selectedArtifactIds = (fromUi.length > 0 ? fromUi : fromSeed).slice(0, MAX_SELECTED_ARTIFACTS);
+    if (!onSend({
+      text,
+      attachmentIds: ready.map((item) => item.stored!.id),
+      clientMessageId,
+      ...(selectedArtifactIds.length > 0 ? { selectedArtifactIds } : {}),
+    })) return;
+    const hid = activeHandoffIdRef.current;
+    if (hid && pendingAutoSendByHandoff.has(hid)) {
+      pendingAutoSendByHandoff.delete(hid);
+      setAutoSendArmed(false);
+      seedSelectedRef.current = [];
+      onInitialFilesConsumed?.();
+    }
     submittedRef.current = { clientMessageId, text, localIds };
     setPendingClientMessageId(clientMessageId);
     stickToBottom.current = true;
   };
+
+  // 首页创建 handoff：连接就绪且草稿齐后自动发出首条任务
+  useEffect(() => {
+    if (!autoSendArmed) return;
+    const hid = activeHandoffIdRef.current;
+    if (!hid || !pendingAutoSendByHandoff.has(hid)) return;
+    if (sendDisabled) return;
+    if (!input.trim() && !attachments.items.some((item) => item.status === "uploaded")) return;
+    if (attachments.items.some((item) => item.status === "queued" || item.status === "uploading" || item.status === "error")) return;
+    submit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- readiness-driven; submit closes over latest onSend/selection
+  }, [autoSendArmed, sendDisabled, input, attachments.items, connection, busy]);
 
   const discardDraftBefore = (action: () => void) => {
     if (attachments.items.length > 0 && !window.confirm("当前消息还有未发送的附件。离开后将丢弃这些附件，是否继续？")) return;
@@ -276,275 +311,128 @@ export function ChatPanel({
         </button>
       ) : (
         <>
-      <div
-        className="chat-resize-handle"
-        role="separator"
-        tabIndex={0}
-        aria-label="调整设计助手宽度"
-        aria-orientation="vertical"
-        aria-valuemin={MIN_CHAT_WIDTH}
-        aria-valuemax={availableChatWidth()}
-        aria-valuenow={panelWidth}
-        title="拖动调整宽度，双击恢复默认"
-        onPointerDown={beginResize}
-        onPointerMove={moveResize}
-        onPointerUp={endResize}
-        onPointerCancel={endResize}
-        onDoubleClick={() => setAndStorePanelWidth(DEFAULT_CHAT_WIDTH)}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowLeft") {
-            event.preventDefault();
-            setAndStorePanelWidth(panelWidth + 16);
-          } else if (event.key === "ArrowRight") {
-            event.preventDefault();
-            setAndStorePanelWidth(panelWidth - 16);
-          } else if (event.key === "Home") {
-            event.preventDefault();
-            setAndStorePanelWidth(DEFAULT_CHAT_WIDTH);
-          }
-        }}
-      />
-      <div className="chat-head">
-        <div className="chat-head-copy">
-          <span className="chat-title" title={activeThread?.title}>{activeThread?.title ?? "新对话"}</span>
-          <span className="chat-beta">Beta</span>
-          <span className={`chat-connection ${connection}`}>{connectionLabels[connection]}</span>
-        </div>
-        <div className="chat-head-actions">
-          <button
-            type="button"
-            className="chat-icon-button"
-            disabled={busy || threadChanging}
-            aria-label="新建对话"
-            title={busy ? "请等待当前任务完成" : "新建对话"}
-            onClick={() => {
-              discardDraftBefore(() => {
-                setHistoryOpen(false);
-                onNewThread();
-              });
+          <div
+            className="chat-resize-handle"
+            role="separator"
+            tabIndex={0}
+            aria-label="调整设计助手宽度"
+            aria-orientation="vertical"
+            aria-valuemin={MIN_CHAT_WIDTH}
+            aria-valuemax={availableChatWidth()}
+            aria-valuenow={panelWidth}
+            title="拖动调整宽度，双击恢复默认"
+            onPointerDown={beginResize}
+            onPointerMove={moveResize}
+            onPointerUp={endResize}
+            onPointerCancel={endResize}
+            onDoubleClick={() => setAndStorePanelWidth(DEFAULT_CHAT_WIDTH)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                setAndStorePanelWidth(panelWidth + 16);
+              } else if (event.key === "ArrowRight") {
+                event.preventDefault();
+                setAndStorePanelWidth(panelWidth - 16);
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                setAndStorePanelWidth(DEFAULT_CHAT_WIDTH);
+              }
             }}
-          >
-            {threadChanging ? <LoaderCircle className="is-spinning" size={17} /> : <MessageSquarePlus size={17} strokeWidth={1.7} />}
-          </button>
-          <button
-            type="button"
-            className="chat-icon-button"
-            disabled={threads.length === 0}
-            aria-label="对话历史"
-            title="对话历史"
-            aria-expanded={historyOpen}
-            onClick={() => setHistoryOpen((open) => !open)}
-          >
-            <History size={17} strokeWidth={1.7} />
-          </button>
-          <button
-            type="button"
-            className="chat-icon-button"
-            aria-label="折叠设计助手"
-            title="折叠设计助手"
-            aria-expanded={true}
-            onClick={() => setCollapsed(true)}
-          >
-            <X size={18} strokeWidth={1.7} />
-          </button>
-        </div>
-        {historyOpen && (
-          <div className="chat-thread-menu" role="dialog" aria-label="对话历史">
-            <span className="chat-thread-menu-title">对话历史</span>
-            <div className="chat-thread-list">
-              {threads.map((thread) => (
-                <div key={thread.id} className={`chat-thread-row ${thread.id === activeThreadId ? "active" : ""}`}>
-                  <button
-                    type="button"
-                    className="chat-thread-select"
-                    disabled={threadChanging || busy}
-                    onClick={() => {
-                      discardDraftBefore(() => {
-                        setHistoryOpen(false);
-                        onSelectThread(thread.id);
-                      });
-                    }}
-                  >
-                    <strong>{thread.title}</strong>
-                    <span>{new Date(thread.updatedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="chat-thread-delete"
-                    disabled={threadChanging || busy}
-                    aria-label={`删除对话：${thread.title}`}
-                    title="删除对话"
-                    onClick={() => {
-                      if (window.confirm(`确定删除“${thread.title}”吗？删除后无法恢复。`)) onDeleteThread(thread.id);
-                    }}
-                  >
-                    <Trash2 size={14} strokeWidth={1.7} />
-                  </button>
-                </div>
-              ))}
+          />
+          <div className="chat-head">
+            <div className="chat-head-copy">
+              <span className="chat-title" title={activeThread?.title}>{activeThread?.title ?? "设计助手"}</span>
+              <span className="chat-beta">Beta</span>
+              <span className={`chat-connection ${connection}`}>{connectionLabels[connection]}</span>
             </div>
-          </div>
-        )}
-      </div>
-      <div
-        className="chat-list"
-        ref={listRef}
-        role="log"
-        aria-live="polite"
-        aria-relevant="additions text"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-        }}
-      >
-        {items.length === 0 && !streaming && (
-          <div className="chat-empty">
-            <div className="chat-empty-intro">
-              <span>砌间设计助手</span>
-              <h2>想从哪一步开始？</h2>
-              <p>我会读取当前画布，再和你一起推进方案。</p>
+            <div className="chat-head-actions">
+              <button
+                type="button"
+                className="chat-icon-button"
+                disabled={busy || threadChanging}
+                aria-label="新建对话"
+                title={busy ? "请等待当前任务完成" : "新建对话"}
+                onClick={() => {
+                  discardDraftBefore(() => {
+                    setHistoryOpen(false);
+                    onNewThread();
+                  });
+                }}
+              >
+                {threadChanging ? <LoaderCircle className="is-spinning" size={17} /> : <MessageSquarePlus size={17} strokeWidth={1.7} />}
+              </button>
+              <button
+                type="button"
+                className="chat-icon-button"
+                disabled={threads.length === 0}
+                aria-label="对话历史"
+                title="对话历史"
+                aria-expanded={historyOpen}
+                ref={historyButtonRef}
+                onClick={() => setHistoryOpen((open) => !open)}
+              >
+                <History size={17} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                className="chat-icon-button"
+                aria-label="折叠设计助手"
+                title="折叠设计助手"
+                aria-expanded={true}
+                onClick={() => setCollapsed(true)}
+              >
+                <PanelRightClose size={18} strokeWidth={1.7} />
+              </button>
             </div>
-            <div className="chat-suggestions">
-              {suggestions.map((suggestion) => (
-                <button key={suggestion.title} type="button" disabled={sendDisabled} onClick={() => {
-                  setInput(suggestion.title);
-                  requestAnimationFrame(() => inputRef.current?.focus());
-                }}>
-                  <strong>{suggestion.title}</strong>
-                  <span>{suggestion.description}</span>
-                </button>
-              ))}
-            </div>
+            {historyMenu.rendered && (
+              <ChatThreadList
+                ref={historyMenuRef}
+                closing={historyMenu.closing}
+                threads={threads}
+                activeThreadId={activeThreadId}
+                threadChanging={threadChanging}
+                busy={busy}
+                onSelect={(threadId) => {
+                  discardDraftBefore(() => {
+                    setHistoryOpen(false);
+                    onSelectThread(threadId);
+                  });
+                }}
+                onDelete={(threadId) => onDeleteThread(threadId)}
+              />
+            )}
           </div>
-        )}
-        {items.map((m) => (
-          <div key={m.id} className={`msg ${m.role}`}>
-            {m.role === "agent" ? <MarkdownMessage text={m.text} /> : m.text ? <PlainMessageText text={m.text} /> : null}
-            {m.role === "user" && <MessageAttachments attachments={m.attachments ?? []} />}
-          </div>
-        ))}
-        {streaming && <div className="msg agent"><MarkdownMessage text={streaming} /></div>}
-        {busy && !streaming && <div className="msg activity" role="status">正在处理…</div>}
-      </div>
-      <div
-        className="chat-input"
-        onDragOver={(event) => {
-          if (event.dataTransfer.types.includes("Files")) event.preventDefault();
-        }}
-        onDrop={(event) => {
-          if (draftLocked || !event.dataTransfer.files.length) return;
-          event.preventDefault();
-          attachments.addFiles(Array.from(event.dataTransfer.files));
-        }}
-      >
-        {attachments.items.length > 0 && (
-          <div className="composer-attachments" aria-label="待发送附件">
-            {attachments.items.map((item) => (
-              <div key={item.localId} className={`composer-attachment ${item.status}`}>
-                <div className="composer-attachment-preview" aria-hidden="true">
-                  {item.previewUrl
-                    ? <img src={item.previewUrl} alt="" />
-                    : <FileText size={19} strokeWidth={1.6} />}
-                </div>
-                <div className="composer-attachment-copy">
-                  <span title={item.file.name}>{item.file.name}</span>
-                  <small>
-                    {item.status === "queued" && "等待上传"}
-                    {item.status === "uploading" && "上传中"}
-                    {item.status === "uploaded" && `${formatBytes(item.file.size)}${item.stored?.pageCount ? ` · ${item.stored.pageCount} 页` : ""}`}
-                    {item.status === "error" && item.error}
-                  </small>
-                </div>
-                {item.status === "uploading" && <LoaderCircle className="is-spinning composer-attachment-status" size={15} aria-label="上传中" />}
-                {item.status === "error" && !item.error?.includes("仅支持") && !item.error?.includes("30MB") && !item.error?.includes("60MB") && !item.error?.includes("内容为空") && (
-                  <button
-                    type="button"
-                    className="composer-attachment-action"
-                    aria-label={`重试上传 ${item.file.name}`}
-                    title="重试上传"
-                    disabled={draftLocked}
-                    onClick={() => attachments.retry(item.localId)}
-                  >
-                    <RotateCcw size={15} />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="composer-attachment-action"
-                  aria-label={`移除 ${item.file.name}`}
-                  title="移除附件"
-                  disabled={draftLocked}
-                  onClick={() => attachments.remove(item.localId)}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="sr-only" role="status" aria-live="polite">
-          {attachments.items.some((item) => item.status === "uploading") ? "附件正在上传" : ""}
-          {attachments.items.some((item) => item.status === "error") ? "有附件上传失败" : ""}
-        </div>
-        <label className="sr-only" htmlFor="design-assistant-input">给设计助手发送消息</label>
-        <textarea
-          ref={inputRef}
-          id="design-assistant-input"
-          value={input}
-          disabled={draftLocked}
-          rows={3}
-          placeholder={connection === "connected" ? "描述你想推进的设计工作…" : `${connectionLabels[connection]}，可先输入消息`}
-          onChange={(e) => setInput(e.target.value)}
-          onPaste={(event) => {
-            if (draftLocked) return;
-            const files = Array.from(event.clipboardData.files);
-            if (files.length > 0) attachments.addFiles(files);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-        />
-        <div className="composer-toolbar">
-          <div className="composer-tools">
-            <button
-              type="button"
-              className="composer-tool"
-              aria-label="添加附件"
-              title="添加附件"
-              disabled={draftLocked}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Plus size={17} strokeWidth={1.7} />
-            </button>
-            <input
-              ref={fileInputRef}
-              className="sr-only"
-              type="file"
-              multiple
-              accept={ATTACHMENT_ACCEPT}
-              onChange={(event) => {
-                attachments.addFiles(Array.from(event.target.files ?? []));
-                event.target.value = "";
-              }}
-            />
-          </div>
-          <div className="composer-actions">
-            <button
-              type="button"
-              className="send"
-              aria-label={busy ? "停止生成" : "发送消息"}
-              title={connection === "connected" ? (busy ? "停止生成" : "发送消息") : connectionLabels[connection]}
-              onClick={busy ? onStop : submit}
-              disabled={connection !== "connected" || (!busy && (!hasContent || !attachmentsReady))}
-            >
-              {busy ? <Square size={14} fill="currentColor" strokeWidth={1.5} /> : <ArrowUp size={18} strokeWidth={1.8} />}
-            </button>
-          </div>
-        </div>
-      </div>
+          <ChatMessageList
+            items={items}
+            streaming={streaming}
+            busy={busy}
+            sendDisabled={sendDisabled}
+            listRef={listRef}
+            stickToBottom={stickToBottom}
+            onPickSuggestion={(title) => {
+              setInput(title);
+              requestAnimationFrame(() => inputRef.current?.focus());
+            }}
+          />
+          <ChatComposer
+            input={input}
+            setInput={setInput}
+            draftLocked={draftLocked}
+            connection={connection}
+            busy={busy}
+            hasContent={hasContent}
+            attachmentsReady={attachmentsReady}
+            items={attachments.items}
+            selectedObjects={selectedObjects}
+            onClearSelection={onClearSelection}
+            fileInputRef={fileInputRef}
+            inputRef={inputRef}
+            onSubmit={submit}
+            onStop={onStop}
+            onAddFiles={attachments.addFiles}
+            onRetry={attachments.retry}
+            onRemove={attachments.remove}
+          />
         </>
       )}
     </aside>

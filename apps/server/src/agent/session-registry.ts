@@ -1,119 +1,478 @@
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { DeskSnapshot } from "../domain/types.js";
+import type { ChatAttachmentDto } from "../services/chat-service.js";
+import type { AgentImageContent } from "../services/file-storage.js";
+import { formatJobsStatusBlock, jobFrameEntries } from "./async-job/protocol.js";
+import { agentPrompt } from "./agent-prompt.js";
+import { EventWriteTracker, jsonSnapshot, persistToolEvent } from "./agent-event-persister.js";
 import {
-  createAgentSession,
-  DefaultResourceLoader,
-  getAgentDir,
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-  type AgentSession,
-  type AgentSessionEvent,
-} from "@earendil-works/pi-coding-agent";
-import type { ServerConfig } from "../config.js";
-import type { ArtifactService } from "../services/artifact-service.js";
-import type { DeskStateService } from "../services/desk-state-service.js";
-import type { ExportService } from "../services/export-service.js";
-import type { ImageGenerator } from "../services/image-generator.js";
-import type { ChatAttachmentDto, ChatMessageDto, ChatService } from "../services/chat-service.js";
-import type { AgentImageContent, FileStorage } from "../services/file-storage.js";
-import type { EventSink } from "./events.js";
-import { deskSystemPrompt } from "./system-prompt.js";
-import { createDeskTools } from "./tools/index.js";
+  assembleDeskContext,
+  deskFileIds,
+  formatInspectBlock,
+  planInspectSelection,
+  type DeskObjectView,
+  type InspectImageRef,
+  type InspectPlan,
+  type ReferenceResolution,
+} from "./desk-status.js";
+import { SessionFactory, type SessionFactoryDependencies } from "./session-factory.js";
+import {
+  CAPTION_ANALYZER_VERSION,
+  sanitizeCaptionText,
+} from "../services/image-caption-sanitize.js";
+import type { ImageCaptionStore } from "../services/image-caption-store.js";
+import type { JobWakeService } from "./async-job/job-wake.js";
+import type { ProjectMemoryService } from "./memory/service.js";
+import { TurnContextScope, type TurnContext } from "./capability-gate.js";
+import { CacheContract, sha256 } from "./cache-contract.js";
+import { compileContext, type MemoryEntry } from "./memory/domain.js";
+import type { TraceRegistry } from "./tracing/registry.js";
+import type { RuntimeMetrics } from "../observability/metrics.js";
 
-interface RegistryDependencies {
-  artifacts: ArtifactService;
-  desks: DeskStateService;
-  effects: ImageGenerator;
-  exports: ExportService;
-  chats: ChatService;
-  files: FileStorage;
-  emit: EventSink;
-  config: Pick<ServerConfig, "agentProvider" | "agentModel">;
-}
+export type { SessionFactoryDependencies as RegistryDependencies } from "./session-factory.js";
+export { agentPrompt } from "./agent-prompt.js";
+export { jsonSnapshot, persistToolEvent, assistantTextFromEvent } from "./agent-event-persister.js";
+export { agentSessionDir } from "./session-paths.js";
 
+/**
+ * AgentSessionRegistry：每个 (projectId, threadId) 一个 pi session，懒加载 + 空闲回收。
+ *
+ *  - sessions: key = "projectId:threadId" → Promise<AgentSession>（用 promise 让并发 get 去重）
+ *  - idleTimers: N 分钟无活动则 dispose，腾出 pi 内部 LLM 上下文内存
+ *  - activeRunIds: 记录 thread 忙碌状态；工具上下文由 AsyncLocalStorage 隔离
+ */
 const DEFAULT_SESSION_IDLE_MS = 30 * 60 * 1000;
-const MAX_RESTORED_AGENT_IMAGES = 12;
-const MAX_RESTORED_AGENT_BASE64_CHARACTERS = 24 * 1024 * 1024;
-
-type RestoredVisuals = Map<string, { images: AgentImageContent[]; unavailable: string[] }>;
-
-export async function loadHistoricalVisuals(
-  projectId: string,
-  messages: ChatMessageDto[],
-  files: Pick<FileStorage, "loadAgentImages">,
-  limits = {
-    maxImages: MAX_RESTORED_AGENT_IMAGES,
-    maxBase64Characters: MAX_RESTORED_AGENT_BASE64_CHARACTERS,
-  },
-): Promise<RestoredVisuals> {
-  const restored = new Map<string, { images: AgentImageContent[]; unavailable: string[] }>();
-  let remainingImages = limits.maxImages;
-  let remainingCharacters = limits.maxBase64Characters;
-
-  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
-    const message = messages[messageIndex];
-    if (message.role !== "user" || message.attachments.length === 0) continue;
-    const images: AgentImageContent[] = [];
-    const unavailable: string[] = [];
-    for (const attachment of message.attachments) {
-      if (remainingImages === 0 || remainingCharacters === 0) {
-        unavailable.push(attachment.originalFilename);
-        continue;
-      }
-      try {
-        const loaded = await files.loadAgentImages(projectId, [attachment]);
-        const characterCount = loaded.reduce((total, image) => total + image.data.length, 0);
-        if (loaded.length > remainingImages || characterCount > remainingCharacters) {
-          unavailable.push(attachment.originalFilename);
-          continue;
-        }
-        images.push(...loaded);
-        remainingImages -= loaded.length;
-        remainingCharacters -= characterCount;
-      } catch {
-        unavailable.push(attachment.originalFilename);
-      }
-    }
-    restored.set(message.id, { images, unavailable });
-  }
-  return restored;
-}
 
 export class AgentSessionRegistry {
   private readonly sessions = new Map<string, Promise<AgentSession>>();
   private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly activeRunIds = new Map<string, string[]>();
-  private readonly eventWrites = new Set<Promise<void>>();
-  private readonly runWrites = new Map<string, Set<Promise<void>>>();
-  private readonly runWriteErrors = new Map<string, unknown>();
-  private modelRuntime?: Promise<ModelRuntime>;
+  /** 同一 thread 的 prompt 串行，避免 context ledger prepare/commit 撞车 */
+  private readonly promptChains = new Map<string, Promise<void>>();
+  private readonly writes: EventWriteTracker;
+  private readonly factory: SessionFactory;
+  private readonly desks: SessionFactoryDependencies["desks"];
+  private readonly taskCancellation: SessionFactoryDependencies["taskCancellation"];
+  private readonly jobStore: SessionFactoryDependencies["jobStore"];
+  private readonly files: SessionFactoryDependencies["files"];
+  private readonly captions?: ImageCaptionStore;
+  private readonly chats: SessionFactoryDependencies["chats"];
+  private readonly emit: SessionFactoryDependencies["emit"];
+  private readonly traces?: TraceRegistry;
+  private readonly memory?: ProjectMemoryService;
+  private readonly metrics?: RuntimeMetrics;
+  private readonly turnContext = new TurnContextScope();
+  private readonly cacheContract = new CacheContract();
   private shuttingDown = false;
+  private jobWake?: JobWakeService;
 
   constructor(
-    private readonly deps: RegistryDependencies,
+    deps: SessionFactoryDependencies,
     private readonly idleTimeoutMs = DEFAULT_SESSION_IDLE_MS,
-  ) {}
+  ) {
+    this.writes = new EventWriteTracker(deps.emit);
+    this.factory = new SessionFactory(deps, this.writes, this.turnContext);
+    this.desks = deps.desks;
+    this.taskCancellation = deps.taskCancellation;
+    this.jobStore = deps.jobStore;
+    this.files = deps.files;
+    this.captions = deps.captions;
+    this.chats = deps.chats;
+    this.emit = deps.emit;
+    this.traces = deps.traces;
+    this.memory = deps.memory;
+    this.metrics = deps.metrics;
+  }
 
-  async prompt(projectId: string, threadId: string, text: string, attachments: ChatAttachmentDto[], runId: string) {
+  setJobWake(jobWake: JobWakeService) {
+    this.jobWake = jobWake;
+  }
+
+  /** thread 是否有进行中的 agent run（wake 互斥）。 */
+  isThreadBusy(projectId: string, threadId: string): boolean {
+    const runs = this.activeRunIds.get(`${projectId}:${threadId}`);
+    return Boolean(runs && runs.length > 0);
+  }
+
+  /**
+   * Job 终态 wake：DESK + JOB_EVENT 已写在 text 里时仍刷新桌面局面。
+   * 调用方须已 appendPrompt 得到 runId；本方法只跑模型与 finish。
+   */
+  async runJobWake(args: {
+    projectId: string;
+    threadId: string;
+    runId: string;
+    text: string;
+  }): Promise<void> {
+    const { projectId, threadId, runId, text } = args;
+    const startedAt = performance.now();
+    try {
+      await this.prompt(projectId, threadId, text, [], runId, [], "system");
+      const outcome = await this.chats.summarizeRunTools(runId);
+      const statusMessage = await this.chats.finishRun(runId, outcome.status, outcome.error);
+      if (statusMessage) this.emit({ type: "chat_message", projectId, message: statusMessage });
+      this.traces?.markProductFinished(runId, {
+        status: outcome.status === "failed" ? "error" : "ok",
+        outputs: { run_status: outcome.status, wake: true },
+      });
+      this.metrics?.observeAgentRun({
+        status: outcome.status,
+        source: "job_wake",
+        durationSeconds: Math.max(0, performance.now() - startedAt) / 1_000,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "job wake 失败";
+      const statusMessage = await this.chats.finishRun(runId, "failed", message);
+      if (statusMessage) this.emit({ type: "chat_message", projectId, message: statusMessage });
+      this.traces?.markProductFinished(runId, {
+        status: "error",
+        outputs: { run_status: "failed", wake: true },
+      });
+      this.metrics?.observeAgentRun({
+        status: "failed",
+        source: "job_wake",
+        durationSeconds: Math.max(0, performance.now() - startedAt) / 1_000,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * 跑一轮对话：把「用户原文 + 桌面状态 + 后台任务状态 + 选中视觉」喂给模型。
+   *  - selectedArtifactIds 来自本条 WS，不做服务端缓存（方案 1：选择跟消息走，不单独推）
+   *  - 状态栏只进当轮 prompt，不写入 chat_messages（KV cache 友好）
+   *  - 附件与选中视觉去重：避免同一张图作为附件和选中各传一份 base64
+   *  - 完成后 awaits writes（等本次 run 的所有异步写库结束）
+   */
+  async prompt(
+    projectId: string,
+    threadId: string,
+    text: string,
+    attachments: ChatAttachmentDto[],
+    runId: string,
+    selectedArtifactIds: string[] = [],
+    promptSource: "designer" | "system" = "designer",
+  ) {
+    return this.enqueueThreadPrompt(`${projectId}:${threadId}`, () =>
+      this.runPrompt(projectId, threadId, text, attachments, runId, selectedArtifactIds, promptSource));
+  }
+
+  /** 同一 thread 串行执行 prompt；前序失败不阻断后续排队任务。 */
+  private enqueueThreadPrompt(key: string, task: () => Promise<void>): Promise<void> {
+    const previous = this.promptChains.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(task);
+    const settled = next.then(() => undefined, () => undefined);
+    this.promptChains.set(key, settled);
+    void settled.then(() => {
+      if (this.promptChains.get(key) === settled) this.promptChains.delete(key);
+    });
+    return next;
+  }
+
+  private async runPrompt(
+    projectId: string,
+    threadId: string,
+    text: string,
+    attachments: ChatAttachmentDto[],
+    runId: string,
+    selectedArtifactIds: string[],
+    promptSource: "designer" | "system",
+  ) {
     const key = `${projectId}:${threadId}`;
     const pending = this.get(projectId, threadId);
     const session = await pending;
     const activeRuns = this.activeRunIds.get(key) ?? [];
     activeRuns.push(runId);
     this.activeRunIds.set(key, activeRuns);
+    const context: TurnContext = Object.freeze({
+      projectId,
+      threadId,
+      runId,
+      source: promptSource === "system" ? "job_event" : "interactive",
+      mode: promptSource === "system" ? "wake" : "designer",
+      authority: promptSource === "system" ? "system_event" : "user_explicit",
+      policyRevision: "capability-gate-v1",
+      selectedArtifactIds: Object.freeze([...selectedArtifactIds]),
+    });
     try {
-      const images = await this.deps.files.loadAgentImages(projectId, attachments);
-      await session.prompt(agentPrompt(text, attachments), {
-        images,
-        source: "interactive",
-        streamingBehavior: session.isStreaming ? "followUp" : undefined,
+      const toolState = this.factory.prepareToolBoundary(session);
+      this.cacheContract.observe(session, toolState);
+      await this.turnContext.run(context, async () => {
+        // snapshot 失败不阻断对话，状态栏降级为「暂不可用」
+        const snapshot = await this.desks.snapshot(projectId).catch(() => null);
+        const recentJobs = await this.jobStore?.listRecentForStatus(projectId).catch(() => []) ?? [];
+        const jobsBlock = formatJobsStatusBlock(recentJobs);
+        const jobEntries = jobFrameEntries(recentJobs);
+        let memoryRevision: number | string = "disabled";
+        let memoryBlock = "";
+        let memoryEntries: Record<string, MemoryEntry> = {};
+        if (this.memory) {
+          const recalled = await this.memory.get(projectId).catch(() => null);
+          if (recalled) {
+            memoryRevision = recalled.revision;
+            memoryEntries = recalled.entries;
+            memoryBlock = recalled.compiledContext
+              || compileContext(recalled.entries, recalled.revision);
+          } else {
+            memoryRevision = "unavailable";
+            memoryBlock = "[PROJECT_MEMORY unavailable]";
+          }
+        }
+        const fileNames = snapshot
+          ? await this.files.originalFilenames(projectId, deskFileIds(snapshot)).catch(() => ({}))
+          : {};
+        const aliases = snapshot
+          ? await this.factory.deskAliases(
+              projectId,
+              snapshot.deskState.objects.map((object) => object.artifact_id),
+            )
+          : {};
+        // 先无 caption 装配一次，拿到 core focus file_ids，再批量 preload（超时则跳过）
+        const draft = assembleDeskContext(snapshot, selectedArtifactIds, {
+          fileNames,
+          aliases,
+          userText: text,
+        });
+        const captions = await this.preloadCaptions(projectId, draft.objects, selectedArtifactIds, draft.resolution);
+        const assembled = captions && Object.keys(captions).length > 0
+          ? assembleDeskContext(snapshot, selectedArtifactIds, {
+            fileNames,
+            aliases,
+            userText: text,
+            captions,
+          })
+          : draft;
+        const aliasById = new Map(assembled.objects.map((o) => [o.id, o.alias]));
+        const attachmentImages = await this.factory.loadAgentImages(projectId, attachments);
+        // Inspect：选中 ∪ 唯一指代结果（assemble 已合并进 inspectPlan）
+        const inspectIds = [
+          ...selectedArtifactIds,
+          ...(assembled.resolution?.unique ? assembled.resolution.resolvedIds : []),
+        ];
+        const { selectedImages, inspectPlan, imageRefs } = await this.loadInspectVisuals(
+          projectId,
+          snapshot,
+          inspectIds,
+          attachments,
+          attachmentImages.length,
+        );
+        const inspectBlock = formatInspectBlock(
+          inspectPlan,
+          attachmentImages.length + 1,
+          imageRefs,
+          aliasById,
+        );
+        const explicitSkills = this.factory.resolveExplicitSkills(session, text);
+        const skillState = this.factory.skillStateSnapshot(session);
+        const preparedFrame = await this.factory.prepareContextFrame(session, runId, {
+          source: context.source,
+          mode: context.mode,
+          authority: context.authority,
+          policyRevision: context.policyRevision,
+          desk: {
+            revision: assembled.revision,
+            fullText: assembled.stateText,
+            requestText: assembled.requestText,
+            manifest: assembled.manifest,
+            priorityArtifactIds: [...new Set([
+              ...assembled.report.focusIds,
+              ...assembled.report.hop1Ids,
+              ...inspectPlan.included.map((entry) => entry.artifactId),
+            ])],
+          },
+          jobs: {
+            revision: sha256(jobEntries),
+            fullText: jobsBlock,
+            entries: jobEntries,
+          },
+          memory: {
+            revision: memoryRevision,
+            fullText: memoryBlock,
+            entries: Object.fromEntries(Object.entries(memoryEntries).map(([key, entry]) => [key, {
+              stableKey: entry.stableKey,
+              family: entry.family,
+              summary: entry.summary,
+              body: entry.body,
+            }])),
+          },
+          inspectText: inspectBlock,
+          toolEpoch: toolState?.toolEpoch ?? 1,
+          activeTools: session.getActiveToolNames(),
+          loadedSkillRevisions: skillState?.loadedRevisions ?? {},
+          emittedSkillRevisions: skillState?.emittedRevisions ?? {},
+          injectedSkills: explicitSkills.injected,
+          userRequest: agentPrompt(text, attachments),
+        });
+        try {
+          await session.prompt(preparedFrame.promptText, {
+            images: [...attachmentImages, ...selectedImages],
+            source: "interactive",
+            streamingBehavior: session.isStreaming ? "followUp" : undefined,
+          });
+        } catch (error) {
+          if (explicitSkills.injected.length > 0) this.factory.forceSkillResync(session);
+          this.factory.markContextCompacted(session);
+          throw error;
+        }
+        try {
+          this.factory.commitContextFrame(session, preparedFrame);
+        } catch (error) {
+          this.factory.markContextCompacted(session);
+          throw error;
+        }
+        await this.writes.awaitRun(runId);
       });
-      await this.awaitRunWrites(runId);
+      this.cacheContract.observe(session, this.factory.toolStateSnapshot(session), { onViolation: "accept" });
     } finally {
+      await this.factory.flushToolState(session);
+      await this.factory.flushSkillState(session);
+      await this.factory.flushContextFrame(session);
+      await this.factory.flushDeskAliases(projectId);
+      this.factory.releaseRunContext(runId);
       const index = activeRuns.indexOf(runId);
       if (index >= 0) activeRuns.splice(index, 1);
       if (activeRuns.length === 0) this.activeRunIds.delete(key);
       this.scheduleIdle(key, pending);
+      // 通知 wake 队列：本 thread 可能已空闲
+      this.jobWake?.notifyThreadIdle(projectId, threadId);
     }
+  }
+
+  /**
+   * 预加载 core focus 的 caption（仅 cache hit；失败/超时 → 空，不堵流）。
+   * Survey 不读 caption。
+   */
+  private async preloadCaptions(
+    projectId: string,
+    objects: DeskObjectView[],
+    selectedArtifactIds: string[],
+    resolution: ReferenceResolution | null,
+  ): Promise<Record<string, string>> {
+    if (!this.captions) return {};
+    const byId = new Map(objects.map((o) => [o.id, o]));
+    const coreIds: string[] = [];
+    for (const id of selectedArtifactIds) {
+      if (byId.has(id) && !coreIds.includes(id)) coreIds.push(id);
+    }
+    if (resolution?.unique) {
+      for (const id of resolution.resolvedIds) {
+        if (byId.has(id) && !coreIds.includes(id)) coreIds.push(id);
+      }
+    }
+    const fileIds = coreIds
+      .map((id) => byId.get(id)?.fileId)
+      .filter((id): id is string => Boolean(id));
+    if (fileIds.length === 0) return {};
+
+    const work = async (): Promise<Record<string, string>> => {
+      const hashes = await this.captions!.fileHashes(projectId, fileIds);
+      const keys = fileIds
+        .map((fileId) => {
+          const contentHash = hashes.get(fileId);
+          if (!contentHash) return null;
+          return { fileId, contentHash, analyzerVersion: CAPTION_ANALYZER_VERSION };
+        })
+        .filter((k): k is { fileId: string; contentHash: string; analyzerVersion: string } => Boolean(k));
+      if (keys.length === 0) return {};
+      const hits = await this.captions!.getMany(projectId, keys);
+      const out: Record<string, string> = {};
+      for (const [fileId, hit] of hits) {
+        const safe = sanitizeCaptionText(hit.text);
+        if (safe) out[fileId] = safe;
+      }
+      return out;
+    };
+
+    try {
+      return await Promise.race([
+        work(),
+        new Promise<Record<string, string>>((resolve) => {
+          setTimeout(() => resolve({}), 80);
+        }),
+      ]);
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * 选中 → Inspect 计划 → 加载像素（与附件 file 去重）→ imageRefs 供 [INSPECT] 文本。
+   */
+  private async loadInspectVisuals(
+    projectId: string,
+    snapshot: DeskSnapshot | null,
+    selectedArtifactIds: string[],
+    attachments: ChatAttachmentDto[],
+    attachmentImageCount: number,
+  ): Promise<{
+    selectedImages: AgentImageContent[];
+    inspectPlan: InspectPlan;
+    imageRefs: InspectImageRef[];
+  }> {
+    const plan = planInspectSelection(snapshot, selectedArtifactIds);
+    if (plan.included.length === 0) {
+      return { selectedImages: [], inspectPlan: plan, imageRefs: [] };
+    }
+    const attachmentFileIds = new Set(attachments.map((a) => a.id));
+    const viaAttachment = plan.included.filter((item) => attachmentFileIds.has(item.fileId));
+    const toLoad = plan.included.filter((item) => !attachmentFileIds.has(item.fileId));
+
+    let selectedImages: AgentImageContent[] = [];
+    let loadFailed = false;
+    if (toLoad.length > 0) {
+      try {
+        selectedImages = await this.factory.loadAgentImages(
+          projectId,
+          toLoad.map((item) => ({
+            id: item.fileId,
+            originalFilename: `selected-${item.artifactId}`,
+            mediaType: "image/png",
+          })),
+        );
+      } catch {
+        loadFailed = true;
+        selectedImages = [];
+      }
+    }
+
+    const imageRefs: InspectImageRef[] = [];
+    const skipped = [...plan.skipped];
+    const includedOk: InspectPlan["included"] = [];
+
+    for (const item of viaAttachment) {
+      includedOk.push(item);
+      imageRefs.push({ artifactId: item.artifactId, fileId: item.fileId, kind: "attachment" });
+    }
+
+    if (loadFailed) {
+      for (const item of toLoad) {
+        skipped.push({ artifactId: item.artifactId, reason: "empty" });
+      }
+    } else {
+      // loader 按 attachments 顺序返回；张数不足则尾部视为失败
+      const loadedCount = Math.min(selectedImages.length, toLoad.length);
+      for (let i = 0; i < loadedCount; i++) {
+        const item = toLoad[i];
+        includedOk.push(item);
+        imageRefs.push({
+          artifactId: item.artifactId,
+          fileId: item.fileId,
+          kind: "image",
+          imageIndex: attachmentImageCount + i + 1,
+        });
+      }
+      for (let i = loadedCount; i < toLoad.length; i++) {
+        skipped.push({ artifactId: toLoad[i].artifactId, reason: "empty" });
+      }
+      // 若 loader 返回更少，截断 selectedImages 与 refs 对齐
+      selectedImages = selectedImages.slice(0, loadedCount);
+    }
+
+    return {
+      selectedImages,
+      inspectPlan: { included: includedOk, skipped },
+      imageRefs,
+    };
   }
 
   async ensure(projectId: string, threadId: string) {
@@ -123,12 +482,19 @@ export class AgentSessionRegistry {
     this.scheduleIdle(key, pending);
   }
 
+  /**
+   * 停止 thread 上的运行：先 abort 图像 HTTP + 取消 async job，再 abort session。
+   * 顺序很重要：先掐外部副作用再掐 LLM loop，避免 LLM 停了但 HTTP 还在跑。
+   */
   async stop(projectId: string, threadId: string) {
     const key = `${projectId}:${threadId}`;
     const pending = this.sessions.get(key);
-    if (!pending) return false;
+    // 只 cancel 本 thread 的 jobs（job signal 会 abort complete）；不 abortProject，避免杀面板生图
+    await this.taskCancellation?.cancelThread(projectId, threadId);
+    if (!pending) return true;
     try {
-      return await stopAgentSession(await pending);
+      const aborted = await stopAgentSession(await pending);
+      return aborted || true;
     } finally {
       this.scheduleIdle(key, pending);
     }
@@ -153,6 +519,7 @@ export class AgentSessionRegistry {
     return pending.length;
   }
 
+  /** 关停：清空闲计时器 → 取消 job → 释放所有 session（abort+dispose）→ drain 写库。 */
   async shutdown() {
     this.shuttingDown = true;
     for (const timer of this.idleTimers.values()) clearTimeout(timer);
@@ -160,16 +527,20 @@ export class AgentSessionRegistry {
     const pending = [...this.sessions.values()];
     this.sessions.clear();
     await Promise.allSettled(pending.map(async (session) => releaseAgentSession(await session, true)));
-    await Promise.allSettled([...this.eventWrites]);
+    await this.writes.drain();
   }
 
+  /**
+   * 懒加载 session：不存在就建；并发 get 同一 key 共用同一个 promise（避免 race condition 双建）。
+   * 异常时从 map 移除，下次重新尝试。
+   */
   private get(projectId: string, threadId: string) {
     if (this.shuttingDown) throw new Error("Agent 服务正在关闭");
     const key = `${projectId}:${threadId}`;
     this.clearIdle(key);
     let session = this.sessions.get(key);
     if (!session) {
-      session = this.create(projectId, threadId).catch((error) => {
+      session = this.factory.create(projectId, threadId).catch((error) => {
         this.sessions.delete(key);
         throw error;
       });
@@ -192,6 +563,7 @@ export class AgentSessionRegistry {
     this.idleTimers.delete(key);
   }
 
+  /** 排一个空闲回收 timer：unref 不阻塞进程退出；只有 map 里的 promise 仍是当前这个才排。 */
   private scheduleIdle(key: string, pending: Promise<AgentSession>) {
     if (this.shuttingDown || this.sessions.get(key) !== pending) return;
     this.clearIdle(key);
@@ -211,207 +583,6 @@ export class AgentSessionRegistry {
     this.take(key);
     session?.dispose();
   }
-
-  private async create(projectId: string, threadId: string) {
-    const key = `${projectId}:${threadId}`;
-    const recentMessages = await this.deps.chats.recentMessages(projectId, threadId);
-    const restoredVisuals = await loadHistoricalVisuals(projectId, recentMessages, this.deps.files);
-    const settingsManager = SettingsManager.inMemory({ compaction: { enabled: true } });
-    const loader = new DefaultResourceLoader({
-      cwd: process.cwd(),
-      agentDir: getAgentDir(),
-      settingsManager,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noContextFiles: true,
-      systemPrompt: deskSystemPrompt(),
-    });
-    await loader.reload();
-    this.modelRuntime ??= ModelRuntime.create();
-    const modelRuntime = await this.modelRuntime;
-    const model = modelRuntime.getModel(this.deps.config.agentProvider, this.deps.config.agentModel);
-    if (!model) throw new Error(`未找到 Agent 模型：${this.deps.config.agentProvider}/${this.deps.config.agentModel}`);
-    const sessionManager = SessionManager.inMemory();
-    restoreChatMessages(sessionManager, recentMessages, model, restoredVisuals);
-    const { session } = await createAgentSession({
-      modelRuntime,
-      model,
-      resourceLoader: loader,
-      sessionManager,
-      settingsManager,
-      noTools: "builtin",
-      customTools: createDeskTools(projectId, this.deps),
-    });
-    session.subscribe((event) => {
-      this.deps.emit({ type: "agent_event", event: { projectId, threadId, ...event } });
-      const runId = this.activeRunIds.get(key)?.[0];
-      if (runId && isToolExecutionEvent(event)) {
-        this.trackEventWrite(projectId, persistToolEvent(this.deps.chats, runId, event), runId);
-      }
-      const text = assistantTextFromEvent(event);
-      if (!text) return;
-      this.trackEventWrite(projectId, this.deps.chats
-        .append(projectId, threadId, "assistant", text, undefined, runId)
-        .then(({ message }) => this.deps.emit({ type: "chat_message", projectId, message }))
-        .then(() => undefined), runId);
-    });
-    return session;
-  }
-
-  private trackEventWrite(projectId: string, pending: Promise<void>, runId?: string) {
-    const tracked = pending
-      .catch((error) => {
-        if (runId) this.runWriteErrors.set(runId, error);
-        this.deps.emit({
-          type: "error",
-          projectId,
-          error: {
-            code: "INTERNAL_ERROR",
-            message: error instanceof Error ? `运行记录保存失败：${error.message}` : "运行记录保存失败",
-            retryable: true,
-          },
-        });
-      })
-      .finally(() => {
-        this.eventWrites.delete(tracked);
-        if (runId) {
-          const writes = this.runWrites.get(runId);
-          writes?.delete(tracked);
-          if (writes?.size === 0) this.runWrites.delete(runId);
-        }
-      });
-    this.eventWrites.add(tracked);
-    if (runId) {
-      const writes = this.runWrites.get(runId) ?? new Set<Promise<void>>();
-      writes.add(tracked);
-      this.runWrites.set(runId, writes);
-    }
-  }
-
-  private async awaitRunWrites(runId: string) {
-    while (this.runWrites.get(runId)?.size) {
-      await Promise.all([...this.runWrites.get(runId)!]);
-    }
-    const error = this.runWriteErrors.get(runId);
-    this.runWriteErrors.delete(runId);
-    if (error) throw error;
-  }
-}
-
-type ToolExecutionEvent = Extract<AgentSessionEvent, {
-  type: "tool_execution_start" | "tool_execution_end";
-}>;
-
-function isToolExecutionEvent(event: AgentSessionEvent): event is ToolExecutionEvent {
-  return event.type === "tool_execution_start" || event.type === "tool_execution_end";
-}
-
-export function jsonSnapshot(value: unknown, maxCharacters = 250_000): unknown {
-  try {
-    const serialized = JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item) ?? "null";
-    if (serialized.length <= maxCharacters) return JSON.parse(serialized) as unknown;
-    return { truncated: true, preview: serialized.slice(0, maxCharacters), originalCharacters: serialized.length };
-  } catch (error) {
-    return { serializationError: error instanceof Error ? error.message : "无法序列化工具数据" };
-  }
-}
-
-function resultError(result: unknown): string | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  const content = (result as { content?: unknown }).content;
-  if (!Array.isArray(content)) return undefined;
-  const text = content
-    .flatMap((item) => item && typeof item === "object" && typeof (item as { text?: unknown }).text === "string"
-      ? [(item as { text: string }).text]
-      : [])
-    .join("\n")
-    .trim();
-  return text || undefined;
-}
-
-function resultCost(result: unknown): unknown {
-  if (!result || typeof result !== "object") return undefined;
-  const details = (result as { details?: unknown }).details;
-  if (!details || typeof details !== "object") return undefined;
-  const direct = (details as { cost?: unknown }).cost;
-  if (direct !== undefined) return jsonSnapshot(direct);
-  const usage = (details as { usage?: unknown }).usage;
-  return usage && typeof usage === "object" ? jsonSnapshot((usage as { cost?: unknown }).cost) : undefined;
-}
-
-export async function persistToolEvent(
-  chats: Pick<ChatService, "startToolCall" | "finishToolCall">,
-  runId: string,
-  event: ToolExecutionEvent,
-) {
-  if (event.type === "tool_execution_start") {
-    await chats.startToolCall(runId, event.toolCallId, event.toolName, jsonSnapshot(event.args));
-    return;
-  }
-  await chats.finishToolCall(
-    runId,
-    event.toolCallId,
-    event.toolName,
-    jsonSnapshot(event.result),
-    event.isError,
-    event.isError ? resultError(event.result) : undefined,
-    resultCost(event.result),
-  );
-}
-
-type RestoredModelIdentity = NonNullable<ReturnType<ModelRuntime["getModel"]>>;
-
-export function restoreChatMessages(
-  sessionManager: SessionManager,
-  messages: Array<Pick<ChatMessageDto, "role" | "text" | "createdAt"> & { id?: string; attachments?: ChatAttachmentDto[] }>,
-  model: RestoredModelIdentity,
-  restoredVisuals = new Map<string, { images: AgentImageContent[]; unavailable: string[] }>(),
-) {
-  for (const message of messages) {
-    const timestamp = Date.parse(message.createdAt) || Date.now();
-    if (message.role === "user") {
-      const attachments = message.attachments ?? [];
-      const restored = message.id ? restoredVisuals.get(message.id) : undefined;
-      const text = restored?.unavailable.length
-        ? `${agentPrompt(message.text, attachments)}\n\n[以下历史附件当前不可用：${restored.unavailable.join("、")}]`
-        : agentPrompt(message.text, attachments);
-      const content = restored?.images.length
-        ? [{ type: "text" as const, text }, ...restored.images]
-        : text;
-      sessionManager.appendMessage({ role: "user", content, timestamp });
-      continue;
-    }
-    sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: message.text }],
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-      timestamp,
-    });
-  }
-}
-
-export function agentPrompt(text: string, attachments: ChatAttachmentDto[]) {
-  const base = text.trim() || "请分析这些附件，并根据当前项目上下文继续设计。";
-  if (attachments.length === 0) return base;
-  const list = attachments.map((attachment) => {
-    const pageNote = attachment.mediaType === "application/pdf"
-      ? `，PDF ${attachment.pageCount ?? "未知"} 页${(attachment.pageCount ?? 0) > 8 ? "，本次提供前 8 页视觉内容" : ""}`
-      : "";
-    return `- ${attachment.originalFilename}${pageNote} [source_file_id: ${attachment.id}]`;
-  }).join("\n");
-  return `${base}\n\n本条消息附件：\n${list}`;
 }
 
 export async function stopAgentSession(session: Pick<AgentSession, "isStreaming" | "abort"> | undefined) {
@@ -429,24 +600,4 @@ export async function releaseAgentSession(
   } finally {
     session.dispose();
   }
-}
-
-export function assistantTextFromEvent(event: unknown): string | undefined {
-  if (!event || typeof event !== "object" || (event as { type?: unknown }).type !== "message_end") return undefined;
-  const message = (event as { message?: unknown }).message;
-  if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "assistant") return undefined;
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") return content.trim() || undefined;
-  if (!Array.isArray(content)) return undefined;
-  const text = content
-    .filter((block): block is { type: "text"; text: string } => (
-      Boolean(block)
-      && typeof block === "object"
-      && (block as { type?: unknown }).type === "text"
-      && typeof (block as { text?: unknown }).text === "string"
-    ))
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-  return text || undefined;
 }

@@ -1,14 +1,35 @@
+/**
+ * 文件存储：上传、读取、删除、附件引用检查。
+ *
+ *  - 上传：先 inspect（PDF 页数/图片尺寸校验）→ 写盘 → 写库；落盘与入库任一失败要回滚
+ *  - objectKey = `${projectId}/${uuid}${ext}`，用项目前缀方便 rmProjectFiles 整目录删
+ *  - 引用检查依赖外部注入的 FileReferenceChecker（ChatService/ArtifactService），
+ *    因为只有它们知道 file_id 出现在哪些业务表里
+ */
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { createCanvas } from "@napi-rs/canvas";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { Database } from "../db/client.js";
-import { artifactVersions, chatMessageAttachments, projects, storedFiles } from "../db/schema.js";
+import { projects, storedFiles } from "../db/schema.js";
 import type { ServerConfig } from "../config.js";
 import { AppError, HttpError } from "../lib/errors.js";
+import { loadAgentImages, type AgentImageContent, type VisualAttachment } from "./agent-image-loader.js";
+import { inspectUpload } from "./upload-inspector.js";
 
+// 重导出，让上游 services/file-storage 单一入口可拿 AgentImageContent / VisualAttachment / inspectUpload
+export type { AgentImageContent, VisualAttachment } from "./agent-image-loader.js";
+export { inspectUpload } from "./upload-inspector.js";
+
+/** 引用检查可在删除事务内执行（同一连接可见未提交快照 + 行锁）。 */
+export type FileReferenceExecutor = Pick<Database, "select">;
+
+/** 谁能告诉我 file_id 是否还被引用？由 ChatService / ArtifactService 实现。 */
+export interface FileReferenceChecker {
+  referencesFile(fileId: string, executor?: FileReferenceExecutor): Promise<boolean>;
+}
+
+/** 上传后返回给前端的精简视图（不暴露 objectKey 等内部字段）。 */
 export interface StoredFileResult {
   id: string;
   originalFilename: string;
@@ -18,85 +39,44 @@ export interface StoredFileResult {
   url: string;
 }
 
-export interface VisualAttachment {
-  id: string;
-  originalFilename: string;
-  mediaType: string;
-  pageCount?: number;
-}
-
-export interface AgentImageContent {
-  type: "image";
-  data: string;
-  mimeType: string;
-}
-
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-const MAX_PDF_PAGES_FOR_AGENT = 8;
-const MAX_RENDER_EDGE = 1_600;
-const MAX_AGENT_IMAGES = 12;
-const MAX_AGENT_BASE64_CHARACTERS = 24 * 1024 * 1024;
-
-function startsWith(bytes: Uint8Array, signature: number[]) {
-  return signature.every((value, index) => bytes[index] === value);
-}
-
-function imageDimensions(bytes: Uint8Array, mediaType: string): { width: number; height: number } | undefined {
-  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (mediaType === "image/png") {
-    if (!startsWith(bytes, PNG_SIGNATURE) || buffer.length < 24 || buffer.toString("ascii", 12, 16) !== "IHDR") return undefined;
-    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
-  }
-  if (mediaType !== "image/jpeg" || !startsWith(bytes, [0xff, 0xd8, 0xff])) return undefined;
-  let offset = 2;
-  while (offset + 8 < buffer.length) {
-    if (buffer[offset] !== 0xff) {
-      offset += 1;
-      continue;
-    }
-    const marker = buffer[offset + 1];
-    offset += 2;
-    if (marker === 0xd8 || marker === 0xd9) continue;
-    if (offset + 2 > buffer.length) return undefined;
-    const length = buffer.readUInt16BE(offset);
-    if (length < 2 || offset + length > buffer.length) return undefined;
-    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
-      return { width: buffer.readUInt16BE(offset + 5), height: buffer.readUInt16BE(offset + 3) };
-    }
-    offset += length;
-  }
-  return undefined;
-}
-
-export async function inspectUpload(bytes: Uint8Array, mediaType: string): Promise<{ pageCount?: number }> {
-  const dimensions = imageDimensions(bytes, mediaType);
-  if (dimensions) {
-    if (dimensions.width < 1 || dimensions.height < 1) {
-      throw new AppError(422, "INVALID_FILE_CONTENT", "图片尺寸无效");
-    }
-    if (dimensions.width * dimensions.height > 80_000_000) {
-      throw new AppError(422, "INVALID_FILE_CONTENT", "图片像素尺寸过大");
-    }
-    return {};
-  }
-  if (mediaType !== "application/pdf" || !startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) {
-    throw new AppError(422, "INVALID_FILE_CONTENT", "文件内容与声明的 PDF、JPG 或 PNG 类型不一致");
-  }
-  try {
-    const loading = getDocument({ data: Uint8Array.from(bytes) });
-    const document = await loading.promise;
-    const pageCount = document.numPages;
-    await loading.destroy();
-    return { pageCount };
-  } catch (error) {
-    const message = error instanceof Error && /password/i.test(error.message) ? "暂不支持加密 PDF" : "PDF 文件损坏或无法读取";
-    throw new AppError(422, "INVALID_FILE_CONTENT", message);
-  }
-}
-
+/**
+ * 文件存储服务：
+ *  - 落盘在 config.uploadDir/<projectId>/<uuid><ext>
+ *  - 数据库记元信息 + contentHash
+ *  - 删除前必须通过所有 referenceCheckers（防止删了消息里还在引用的图）
+ */
 export class FileStorage {
+  private referenceCheckers: FileReferenceChecker[] = [];
+
   constructor(private readonly db: Database, private readonly config: ServerConfig) {}
 
+  /** 注入引用检查器（必须从外部装配，构造时未知）。 */
+  setReferenceCheckers(checkers: FileReferenceChecker[]) {
+    this.referenceCheckers = checkers;
+  }
+
+  async getById(fileId: string) {
+    const [stored] = await this.db.select().from(storedFiles).where(eq(storedFiles.id, fileId));
+    return stored ?? null;
+  }
+
+  /** 批量取 original_filename，供桌面 Survey label；缺 id 跳过。 */
+  async originalFilenames(projectId: string, fileIds: string[]): Promise<Record<string, string>> {
+    const unique = [...new Set(fileIds.filter(Boolean))];
+    if (unique.length === 0) return {};
+    const rows = await this.db
+      .select({ id: storedFiles.id, originalFilename: storedFiles.originalFilename })
+      .from(storedFiles)
+      .where(and(eq(storedFiles.projectId, projectId), inArray(storedFiles.id, unique)));
+    const out: Record<string, string> = {};
+    for (const row of rows) out[row.id] = row.originalFilename;
+    return out;
+  }
+
+  /**
+   * 上传文件：写盘前先 inspect（类型/尺寸/PDF 页数）→ 落盘 → 入库；入库失败回滚盘上文件。
+   * objectKey 用项目前缀做软隔离，删除项目时整目录 rm 即可。
+   */
   async put(projectId: string, filename: string, mediaType: string, bytes: Uint8Array): Promise<StoredFileResult> {
     const [project] = await this.db.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId));
     if (!project) throw new HttpError(404, "未找到该设计项目");
@@ -130,68 +110,83 @@ export class FileStorage {
     return readFile(join(this.config.uploadDir, objectKey));
   }
 
+  /**
+   * 把附件转成 Agent 可消费的多模态内容：JPEG/PNG 直接 base64；PDF 用 @napi-rs/canvas + pdfjs 渲染前 N 页成 PNG。
+   * 注入 readBytes 便于测试（不必真读盘）。
+   */
   async loadAgentImages(projectId: string, attachments: VisualAttachment[]): Promise<AgentImageContent[]> {
-    if (attachments.length === 0) return [];
-    const rows = await this.db
-      .select()
-      .from(storedFiles)
-      .where(and(eq(storedFiles.projectId, projectId), inArray(storedFiles.id, attachments.map((item) => item.id))));
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    const images: AgentImageContent[] = [];
-    for (const attachment of attachments) {
-      const stored = byId.get(attachment.id);
-      if (!stored) throw new AppError(404, "ATTACHMENT_NOT_FOUND", `附件不存在：${attachment.originalFilename}`);
-      const bytes = await this.read(stored.objectKey);
-      if (stored.mediaType === "image/jpeg" || stored.mediaType === "image/png") {
-        images.push({ type: "image", data: bytes.toString("base64"), mimeType: stored.mediaType });
-      } else {
-        const remainingPages = MAX_AGENT_IMAGES - images.length;
-        if (remainingPages < Math.min(stored.pageCount ?? MAX_PDF_PAGES_FOR_AGENT, MAX_PDF_PAGES_FOR_AGENT)) {
-          throw new AppError(422, "VALIDATION_FAILED", "附件视觉内容超过模型处理上限，请减少文件或 PDF 页数");
-        }
-        images.push(...await this.renderPdf(bytes, stored.pageCount ?? undefined, remainingPages));
-      }
-      if (images.length > MAX_AGENT_IMAGES || images.reduce((total, image) => total + image.data.length, 0) > MAX_AGENT_BASE64_CHARACTERS) {
-        throw new AppError(422, "VALIDATION_FAILED", "附件视觉内容超过模型处理上限，请减少文件或 PDF 页数");
-      }
-    }
-    return images;
+    return loadAgentImages(this.db, (objectKey) => this.read(objectKey), projectId, attachments);
   }
 
+  /**
+   * 删除文件：事务内 FOR UPDATE 锁行 → 查引用 → 删行 → 再 unlink 磁盘。
+   * 与 artifact/chat 写引用路径对同一 stored_files 行加锁，避免「检查无引用后被引用」的 TOCTOU。
+   */
   async deleteUnattached(projectId: string, fileId: string) {
-    const [stored] = await this.db.select().from(storedFiles).where(and(eq(storedFiles.id, fileId), eq(storedFiles.projectId, projectId)));
+    const stored = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(storedFiles)
+        .where(and(eq(storedFiles.id, fileId), eq(storedFiles.projectId, projectId)))
+        .for("update");
+      if (!row) return null;
+      for (const checker of this.referenceCheckers) {
+        if (await checker.referencesFile(fileId, tx)) {
+          throw new AppError(409, "CONFLICT", "附件已被消息或画布使用，不能删除");
+        }
+      }
+      await tx.delete(storedFiles).where(eq(storedFiles.id, fileId));
+      return row;
+    });
     if (!stored) return false;
-    const [[messageRef], [artifactRef]] = await Promise.all([
-      this.db.select({ fileId: chatMessageAttachments.fileId }).from(chatMessageAttachments).where(eq(chatMessageAttachments.fileId, fileId)).limit(1),
-      this.db.select({ id: artifactVersions.id }).from(artifactVersions).where(sql`${artifactVersions.inputRefs}::text LIKE ${`%${fileId}%`} OR ${artifactVersions.payload}::text LIKE ${`%${fileId}%`}`).limit(1),
-    ]);
-    if (messageRef || artifactRef) throw new AppError(409, "CONFLICT", "附件已被消息或画布使用，不能删除");
-    await this.db.delete(storedFiles).where(eq(storedFiles.id, fileId));
     await unlink(join(this.config.uploadDir, stored.objectKey)).catch(() => undefined);
     return true;
   }
 
-  private async renderPdf(bytes: Uint8Array, knownPageCount?: number, remainingPages = MAX_PDF_PAGES_FOR_AGENT): Promise<AgentImageContent[]> {
-    const loading = getDocument({ data: Uint8Array.from(bytes) });
-    const document = await loading.promise;
-    try {
-      const pageCount = Math.min(knownPageCount ?? document.numPages, MAX_PDF_PAGES_FOR_AGENT, Math.max(0, remainingPages));
-      const images: AgentImageContent[] = [];
-      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-        const page = await document.getPage(pageNumber);
-        const natural = page.getViewport({ scale: 1 });
-        const scale = Math.min(2, MAX_RENDER_EDGE / Math.max(natural.width, natural.height));
-        const viewport = page.getViewport({ scale });
-        const canvas = createCanvas(Math.max(1, Math.ceil(viewport.width)), Math.max(1, Math.ceil(viewport.height)));
-        const context = canvas.getContext("2d");
-        await page.render({ canvas: canvas as never, canvasContext: context as never, viewport }).promise;
-        images.push({ type: "image", data: canvas.toBuffer("image/png").toString("base64"), mimeType: "image/png" });
-        page.cleanup();
+  /**
+   * 清理无引用 stored_files（孤儿 GC）。
+   *  - minAgeMs：跳过「刚上传 / 会话 undo 窗口」内的文件，默认 1h
+   *  - 逐条复用 deleteUnattached 的引用检查 + 行锁，避免 TOCTOU
+   *  - 不抛单文件失败，累计 deleted/skipped/errors
+   */
+  async gcUnattached(options: {
+    projectId?: string;
+    minAgeMs?: number;
+    limit?: number;
+    now?: Date;
+  } = {}): Promise<{ scanned: number; deleted: number; skipped: number; errors: number }> {
+    const minAgeMs = options.minAgeMs ?? 60 * 60 * 1000;
+    const limit = Math.max(1, Math.min(options.limit ?? 200, 1000));
+    const now = options.now ?? new Date();
+    const cutoff = new Date(now.getTime() - minAgeMs);
+
+    const conditions = [sql`${storedFiles.createdAt} <= ${cutoff}`];
+    if (options.projectId) conditions.push(eq(storedFiles.projectId, options.projectId));
+
+    const candidates = await this.db
+      .select({ id: storedFiles.id, projectId: storedFiles.projectId })
+      .from(storedFiles)
+      .where(and(...conditions))
+      .orderBy(storedFiles.createdAt)
+      .limit(limit);
+
+    let deleted = 0;
+    let skipped = 0;
+    let errors = 0;
+    for (const row of candidates) {
+      try {
+        const ok = await this.deleteUnattached(row.projectId, row.id);
+        if (ok) deleted += 1;
+        else skipped += 1;
+      } catch (error) {
+        if (error instanceof AppError && error.status === 409) {
+          skipped += 1;
+          continue;
+        }
+        errors += 1;
       }
-      return images;
-    } finally {
-      await loading.destroy();
     }
+    return { scanned: candidates.length, deleted, skipped, errors };
   }
 
   async removeProjectFiles(projectId: string, objectKeys: string[]) {

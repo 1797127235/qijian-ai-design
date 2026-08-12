@@ -1,150 +1,195 @@
-import { basename } from "node:path";
+/**
+ * Hono 应用工厂。
+ *  - 中间件：logger / secureHeaders（CORS 资源策略 cross-origin 允许 /api/files 给前端图）/ api CORS
+ *  - 路由按实体拆：projects / desk / chat / artifacts / files
+ *  - 统一错误：AppError → JSON {code, message, retryable, details}；其他 → 500 INTERNAL_ERROR
+ */
 import { cors } from "hono/cors";
-import { Hono } from "hono";
-import { logger } from "hono/logger";
+import { Hono, type Context, type Next } from "hono";
 import { secureHeaders } from "hono/secure-headers";
-import { eq } from "drizzle-orm";
-import { z } from "zod";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ServerConfig } from "../config.js";
-import type { Database } from "../db/client.js";
-import { storedFiles } from "../db/schema.js";
-import { artifactTypes } from "../domain/types.js";
-import { AppError, HttpError } from "../lib/errors.js";
+import { AppError } from "../lib/errors.js";
 import type { ArtifactService } from "../services/artifact-service.js";
+import type { CanvasGenerateService } from "../services/canvas-generate-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
-import type { ExportService } from "../services/export-service.js";
 import type { FileStorage } from "../services/file-storage.js";
 import type { ChatService } from "../services/chat-service.js";
 import type { AgentSessionRegistry } from "../agent/session-registry.js";
+import type { TaskStore } from "../tasks/task-store.js";
+import type { AssetBatchSubmissionService } from "../tasks/asset-batch-submission.js";
+import type { ProjectMemoryService } from "../agent/memory/service.js";
+import { registerArtifactRoutes } from "./routes/artifacts.js";
+import { registerChatRoutes } from "./routes/chat.js";
+import { registerDeskRoutes } from "./routes/desk.js";
+import { registerFileRoutes } from "./routes/files.js";
+import { registerProjectRoutes } from "./routes/projects.js";
+import { registerMemoryRoutes } from "./routes/memory.js";
+import { registerSkillRoutes } from "./routes/skills.js";
+import type { RuntimeMetrics } from "../observability/metrics.js";
+import type { StructuredLogger } from "../observability/logger.js";
 
+export type ReadinessResult = Readonly<{
+  ok: boolean;
+  checks: Readonly<Record<string, boolean>>;
+}>;
+
+/** HTTP 层依赖：所有 service 单例 + 路由需要用到的 service 子集。 */
 interface HttpDependencies {
   config: ServerConfig;
-  db: Database;
   artifacts: ArtifactService;
   desks: DeskStateService;
   files: FileStorage;
-  exports: ExportService;
   chats: ChatService;
   sessions: AgentSessionRegistry;
+  /** 面板生图：CanvasGenerate + 持久任务队列 */
+  generate?: CanvasGenerateService;
+  taskStore?: TaskStore;
+  batchSubmitter?: AssetBatchSubmissionService;
+  memory?: ProjectMemoryService;
+  bullBoard?: Hono;
+  metrics?: RuntimeMetrics;
+  logger?: StructuredLogger;
+  readiness?: () => Promise<ReadinessResult>;
 }
 
-const artifactTypeSchema = z.enum(artifactTypes);
-const versionSchema = z.object({
-  payload: z.record(z.string(), z.unknown()),
-  inputRefs: z.array(z.unknown()).optional(),
-  status: z.enum(["draft", "confirmed"]).optional(),
-  createdBy: z.enum(["designer", "agent"]).default("designer"),
-  changeReason: z.string().max(500).optional(),
-});
+function requestId(raw: string | undefined): string {
+  const normalized = raw?.trim();
+  return normalized && /^[a-zA-Z0-9._:-]{1,128}$/.test(normalized) ? normalized : randomUUID();
+}
 
-async function body<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
-  const parsed = schema.safeParse(await request.json());
-  if (!parsed.success) throw new HttpError(422, parsed.error.issues.map((issue) => issue.message).join("; "));
-  return parsed.data;
+function hasBullBoardCredentials(c: Context, expectedUsername: string, expectedPassword: string): boolean {
+  const authorization = c.req.header("authorization") ?? "";
+  if (!authorization.startsWith("Basic ")) return false;
+  let supplied = "";
+  try {
+    supplied = Buffer.from(authorization.slice(6).trim(), "base64").toString("utf8");
+  } catch {
+    return false;
+  }
+  const expectedBytes = Buffer.from(`${expectedUsername}:${expectedPassword}`);
+  const suppliedBytes = Buffer.from(supplied);
+  return expectedBytes.length === suppliedBytes.length
+    && timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
+async function protectBullBoard(c: Context, next: Next, username?: string, password?: string) {
+  if (!username || !password || hasBullBoardCredentials(c, username, password)) return next();
+  c.header("WWW-Authenticate", "Basic realm=\"Bull Board\", charset=\"UTF-8\"");
+  return c.text("Bull Board credentials required", 401);
 }
 
 export function createHttpApp(deps: HttpDependencies) {
   const app = new Hono();
-  app.use(logger());
+  app.use("*", async (c, next) => {
+    const startedAt = performance.now();
+    const id = requestId(c.req.header("x-request-id"));
+    c.header("x-request-id", id);
+    let status = 500;
+    try {
+      await next();
+      status = c.res.status;
+    } finally {
+      const durationSeconds = Math.max(0, performance.now() - startedAt) / 1_000;
+      const route = c.req.routePath || "unmatched";
+      deps.metrics?.observeHttp({ method: c.req.method, route, status, durationSeconds });
+      deps.logger?.info("http_request_completed", {
+        request_id: id,
+        method: c.req.method,
+        route,
+        status,
+        duration_ms: Math.round(durationSeconds * 1_000),
+      });
+    }
+  });
+  // 允许前端从另一个 origin 加载 /api/files 的图片：cross-origin
   app.use(secureHeaders({ crossOriginResourcePolicy: "cross-origin", xFrameOptions: false }));
+  // /api/* 才走 CORS：避免污染 /health
   app.use("/api/*", cors({ origin: deps.config.corsOrigins, credentials: true }));
 
+  // 健康检查：livenessProbe 用
   app.get("/health", (c) => c.json({ ok: true }));
-
-  app.get("/api/projects", async (c) => c.json(await deps.desks.listProjects()));
-
-  app.post("/api/projects", async (c) => {
-    const input = await body(c.req.raw, z.object({ name: z.string().trim().min(1).max(200).optional() }));
-    return c.json(await deps.desks.createProject(input.name ?? "未命名项目"), 201);
+  app.get("/ready", async (c) => {
+    if (!deps.readiness) return c.json({ ok: true, checks: {} });
+    const result = await deps.readiness();
+    return c.json(result, result.ok ? 200 : 503);
   });
-
-  app.delete("/api/projects/:id", async (c) => {
-    const projectId = c.req.param("id");
-    await deps.sessions.forgetProject(projectId);
-    const result = await deps.desks.deleteProject(projectId);
-    await deps.files.removeProjectFiles(projectId, result.objectKeys);
-    return c.body(null, 204);
-  });
-
-  app.get("/api/projects/:id/desk", async (c) => c.json(await deps.desks.snapshot(c.req.param("id"))));
-
-  app.get("/api/projects/:id/chat/threads", async (c) => c.json(await deps.chats.listThreads(c.req.param("id"))));
-
-  app.post("/api/projects/:id/chat/threads", async (c) => c.json(await deps.chats.createThread(c.req.param("id")), 201));
-
-  app.delete("/api/projects/:id/chat/threads/:threadId", async (c) => {
-    const projectId = c.req.param("id");
-    const threadId = c.req.param("threadId");
-    await deps.sessions.forget(projectId, threadId);
-    await deps.chats.deleteThread(projectId, threadId);
-    return c.body(null, 204);
-  });
-
-  app.get("/api/projects/:id/chat/messages", async (c) => c.json(await deps.chats.history(
-    c.req.param("id"),
-    c.req.query("threadId") || undefined,
-  )));
-
-  app.patch("/api/projects/:id/desk", async (c) => {
-    const input = await body(c.req.raw, z.object({ viewport: z.object({ x: z.number().finite(), y: z.number().finite(), zoom: z.number().min(0.1).max(4) }) }));
-    return c.json({ viewport: await deps.desks.setViewport(c.req.param("id"), input.viewport) });
-  });
-
-  app.patch("/api/projects/:id/desk/objects/:artifactId", async (c) => {
-    const patch = await body(c.req.raw, z.object({ x: z.number().finite().optional(), y: z.number().finite().optional(), rot: z.number().finite().optional(), w: z.number().positive().optional() }).refine((value) => Object.keys(value).length > 0));
-    return c.json(await deps.desks.moveObject(c.req.param("id"), c.req.param("artifactId"), patch));
-  });
-
-  app.post("/api/projects/:id/artifacts", async (c) => {
-    const input = await body(c.req.raw, z.object({ artifactType: artifactTypeSchema, ...versionSchema.shape, layout: z.object({ kind: z.string(), x: z.number(), y: z.number(), rot: z.number().default(0), w: z.number().optional() }).optional() }));
-    const result = await deps.artifacts.create(c.req.param("id"), input.artifactType, input);
-    if (input.layout) await deps.desks.placeObject(c.req.param("id"), { artifact_id: result.artifact.id, ...input.layout });
-    return c.json(result, 201);
-  });
-
-  app.post("/api/artifacts/:id/versions", async (c) => {
-    const input = await body(c.req.raw, versionSchema);
-    return c.json(await deps.artifacts.append(c.req.param("id"), input), 201);
-  });
-
-  app.post("/api/artifacts/:id/confirm", async (c) => c.json(await deps.artifacts.confirm(c.req.param("id"), "designer")));
-
-  app.post("/api/artifacts/:id/rollback", async (c) => {
-    const input = await body(c.req.raw, z.object({ versionId: z.string().uuid().optional() }));
-    return c.json(await deps.artifacts.rollback(c.req.param("id"), input.versionId));
-  });
-
-  app.post("/api/projects/:id/files", async (c) => {
-    const contentLength = c.req.header("content-length");
-    if (!contentLength) throw new AppError(400, "BAD_REQUEST", "上传请求必须提供 Content-Length");
-    const declaredLength = Number(contentLength);
-    if (!Number.isFinite(declaredLength) || declaredLength <= 0) throw new AppError(400, "BAD_REQUEST", "Content-Length 无效");
-    if (declaredLength > 31 * 1024 * 1024) {
-      throw new AppError(413, "UPLOAD_TOO_LARGE", "单个文件不能超过 30MB");
+  if (deps.metrics) {
+    app.get("/metrics", async (c) => {
+      await deps.readiness?.().catch(() => undefined);
+      return c.body(
+        await deps.metrics!.text(),
+        200,
+        { "content-type": deps.metrics!.contentType },
+      );
+    });
+  }
+  app.post("/internal/monitoring/alerts", async (c) => {
+    const contentLength = Number(c.req.header("content-length") ?? "0");
+    if (Number.isFinite(contentLength) && contentLength > 1_000_000) {
+      return c.json({ ok: false, error: "payload_too_large" }, 413);
     }
-    const form = await c.req.formData();
-    const file = form.get("file");
-    if (!(file instanceof File)) throw new HttpError(422, "请在 file 字段上传文件");
-    const allowed = new Set(["application/pdf", "image/jpeg", "image/png"]);
-    if (!allowed.has(file.type)) throw new AppError(422, "UNSUPPORTED_FILE_TYPE", "仅支持 PDF、JPG 和 PNG");
-    if (file.size > 30 * 1024 * 1024) throw new AppError(413, "UPLOAD_TOO_LARGE", "单个文件不能超过 30MB");
-    return c.json(await deps.files.put(c.req.param("id"), basename(file.name), file.type, new Uint8Array(await file.arrayBuffer())), 201);
+    const payload = await c.req.json().catch(() => ({})) as { alerts?: unknown };
+    const alerts = Array.isArray(payload.alerts) ? payload.alerts.slice(0, 100) : [];
+    for (const raw of alerts) {
+      if (!raw || typeof raw !== "object") continue;
+      const alert = raw as { status?: unknown; labels?: unknown };
+      const labels = alert.labels && typeof alert.labels === "object"
+        ? alert.labels as Record<string, unknown>
+        : {};
+      const status = typeof alert.status === "string" ? alert.status.slice(0, 20) : "unknown";
+      const alertName = typeof labels.alertname === "string" ? labels.alertname.slice(0, 120) : "unknown";
+      const severity = typeof labels.severity === "string" ? labels.severity.slice(0, 20) : "ticket";
+      deps.metrics?.observeAlert(status);
+      const fields = { alert: alertName, severity, status };
+      if (severity === "page" && status === "firing") deps.logger?.error("monitoring_alert_received", fields);
+      else deps.logger?.warn("monitoring_alert_received", fields);
+    }
+    return c.json({ ok: true, received: alerts.length });
   });
 
-  app.delete("/api/projects/:id/files/:fileId", async (c) => {
-    await deps.files.deleteUnattached(c.req.param("id"), c.req.param("fileId"));
-    return c.body(null, 204);
+  // 前端公开配置（无密钥）：生图模型列表（含所属 provider 标签）
+  app.get("/api/public-config", (c) =>
+    c.json({
+      imageModel: deps.config.imageModel ?? null,
+      imageModels: deps.config.imageModelOptions,
+      imageModelChoices: deps.config.imageModelChoices,
+      imageSize: deps.config.imageSize ?? null,
+    }),
+  );
+
+  if (deps.bullBoard) {
+    const boardPath = deps.config.bullBoardPath;
+    const authenticate = (c: Context, next: Next) => protectBullBoard(
+      c,
+      next,
+      deps.config.bullBoardUsername,
+      deps.config.bullBoardPassword,
+    );
+    app.use(boardPath, authenticate);
+    app.use(`${boardPath}/*`, authenticate);
+    app.get(`${boardPath}/`, (c) => c.redirect(boardPath, 308));
+    app.route(boardPath, deps.bullBoard);
+  }
+
+  // 路由注册：每个文件管自己的资源
+  registerProjectRoutes(app, deps);
+  registerDeskRoutes(app, {
+    desks: deps.desks,
+    artifacts: deps.artifacts,
+    generate: deps.generate,
+    taskStore: deps.taskStore,
+    defaultImageModel: deps.config.imageModel,
+    batchSubmitter: deps.batchSubmitter,
+    memory: deps.memory,
   });
+  registerChatRoutes(app, deps);
+  registerSkillRoutes(app);
+  registerArtifactRoutes(app, deps);
+  registerFileRoutes(app, deps);
+  if (deps.memory) registerMemoryRoutes(app, deps.memory);
 
-  app.get("/api/files/:id", async (c) => {
-    const [stored] = await deps.db.select().from(storedFiles).where(eq(storedFiles.id, c.req.param("id")));
-    if (!stored) throw new HttpError(404, "文件不存在");
-    const bytes = await deps.files.read(stored.objectKey);
-    return new Response(bytes, { headers: { "content-type": stored.mediaType, "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(stored.originalFilename)}`, "cross-origin-resource-policy": "cross-origin" } });
-  });
-
-  app.post("/api/projects/:id/export", async (c) => c.json(await deps.exports.export(c.req.param("id")), 201));
-
+  // 404 / 500 都走 AppError 形态
   app.notFound((c) => c.json({ error: { code: "NOT_FOUND", message: "接口不存在", retryable: false } }, 404));
   app.onError((error, c) => {
     const status = error instanceof AppError ? error.status : 500;

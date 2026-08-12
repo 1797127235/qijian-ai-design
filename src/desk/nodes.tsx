@@ -1,101 +1,95 @@
-import { FloorPlanPreview } from "./FloorPlanPreview";
+import type { CSSProperties } from "react";
+import { ImagePlus } from "lucide-react";
 import type { DeskObject } from "./types";
+import { nodeSize } from "./connection-geometry";
 
-export interface Handlers {
-  onConfirm: (artifactId: string) => void;
-  onSelectDirection: (artifactId: string, directionId: string) => void;
-  onAdopt: (artifactId: string, adopted: boolean) => void;
-  onRedrawPlan: (artifactId: string) => void;
+const IMAGE_STYLE: CSSProperties = {
+  width: "100%",
+  height: "100%",
+  objectFit: "cover",
+  borderRadius: 2,
+  display: "block",
+  pointerEvents: "none",
+};
+
+function imageBox(obj: DeskObject): CSSProperties {
+  const size = nodeSize(obj);
+  return {
+    width: size.w,
+    height: size.h,
+    boxSizing: "border-box",
+    padding: 0,
+    overflow: "hidden",
+  };
 }
 
-export function DeskObjectView({ obj, handlers }: { obj: DeskObject; handlers: Handlers }) {
+/** 图片卡四态：生成中 / 失败 / 空占位 / 有图。canvas_image 与 effect_image 共用。 */
+function ImageCard({
+  obj,
+  label,
+  onRetryGenerate,
+}: {
+  obj: DeskObject & { kind: "canvas_image" | "effect_image" };
+  label: string;
+  onRetryGenerate?: (id: string) => void;
+}) {
+  const box = imageBox(obj);
+  if (obj.pending) {
+    return (
+      <div className="photo fx-single effect-pending" style={box}>
+        <div className="effect-spinner" />
+        <span>生成中</span>
+      </div>
+    );
+  }
+  if (obj.error || (obj.kind === "effect_image" && !obj.url)) {
+    return (
+      <div className="photo fx-single effect-error" style={box}>
+        <span>{obj.error ?? "生成失败"}</span>
+        {onRetryGenerate && (
+          <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={() => onRetryGenerate(obj.id)}>
+            重试
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (!obj.url) {
+    return (
+      <div className="image-card image-card-empty" style={box}>
+        <div className="image-card-placeholder">
+          <ImagePlus size={26} strokeWidth={1.2} />
+          <span>上传图片，或连接参考后生成</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="image-card" style={box} title={obj.label ? `${obj.label} · 双击查看大图` : "双击查看大图"}>
+      <img
+        src={obj.url}
+        alt={label}
+        draggable={false}
+        onDragStart={(e) => e.preventDefault()}
+        style={IMAGE_STYLE}
+      />
+    </div>
+  );
+}
+
+/** 展示层：只呈现物件。图片双击由 Desk 识别。 */
+export function DeskObjectView({
+  obj,
+  onRetryGenerate,
+}: {
+  obj: DeskObject;
+  onRetryGenerate?: (id: string) => void;
+}) {
   switch (obj.kind) {
-    case "plan":
-      return (
-        <div className="plan" style={{ width: obj.w }}>
-          <span className="plan-tag">空间地图 {obj.status === "confirmed" ? "· 已确认 ✓" : "· 草稿"}</span>
-          <div className="plan-media">
-            {obj.sourceFileId
-              ? <FloorPlanPreview fileId={obj.sourceFileId} alt="户型图" />
-              : <div className="plan-empty">无图纸</div>}
-            {obj.spaces.map((s) => (
-              <div
-                key={s.id}
-                className={`region ${s.key ? "key" : ""}`}
-                style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.w * 100}%`, height: `${s.h * 100}%` }}
-              >
-                {s.name}{s.key ? " ★" : ""}
-              </div>
-            ))}
-          </div>
-          {obj.status !== "confirmed" && (
-            <div className="plan-actions">
-              <button type="button" className="mini-btn" onClick={() => handlers.onRedrawPlan(obj.id)}>重新绘制</button>
-              <button type="button" className="mini-btn primary" onClick={() => handlers.onConfirm(obj.id)}>确认空间地图 →</button>
-            </div>
-          )}
-        </div>
-      );
-
-    case "note":
-      return (
-        <div className={`note-card ai-note ${obj.status === "confirmed" ? "confirmed" : ""}`}>
-          <span className="who">{obj.who}{obj.status === "confirmed" ? " · 已确认 ✓" : ""}</span>
-          <p>{obj.text}</p>
-          {obj.status !== "confirmed" && (
-            <button type="button" className="mini-btn" onClick={() => handlers.onConfirm(obj.id)}>确认</button>
-          )}
-        </div>
-      );
-
-    case "direction_set":
-      return (
-        <div className="dir-set">
-          {obj.directions.map((d, i) => {
-            const selected = obj.selectedId === d.id;
-            const confirmed = obj.status === "confirmed";
-            return (
-              <div className={`dir-card ${selected ? "selected" : ""}`} key={d.id}>
-                {selected && confirmed && <span className="pin" />}
-                <div className="dir-head">
-                  <span className="who">方向 {String.fromCharCode(65 + i)}</span>
-                  <span className={`tag ${selected ? "acc" : "tbc"}`}>{selected ? (confirmed ? "已选定" : "已选 · 待确认") : "待比较"}</span>
-                </div>
-                <div className={`ph ph-${d.tone ?? "wood"}`} style={{ height: 84 }} />
-                <h3>{d.title}</h3>
-                <p>{d.concept}</p>
-                {d.chips.length > 0 && <div className="chips">{d.chips.map((c) => <span className="chip" key={c}>{c}</span>)}</div>}
-                {selected && confirmed && <span className="stamp acc">✓ 方向已确认</span>}
-                {!confirmed && (
-                  <button
-                    type="button"
-                    className={`mini-btn ${selected ? "primary" : ""}`}
-                    onClick={() => (selected ? handlers.onConfirm(obj.id) : handlers.onSelectDirection(obj.id, d.id))}
-                  >
-                    {selected ? "确认此方向" : "选此方向"}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      );
+    case "canvas_image":
+      return <ImageCard obj={obj} label="图片" onRetryGenerate={onRetryGenerate} />;
 
     case "effect_image":
-      return (
-        <div className={`photo fx-single ${obj.adopted ? "adopted" : ""}`} style={{ width: 170 }}>
-          {obj.adopted && <span className="pin" />}
-          <img src={obj.url} alt="效果图变体" draggable={false} style={{ width: "100%", borderRadius: 2, display: "block" }} />
-          <span className="cap">效果图{obj.adopted ? " · 已采用 ✓" : ""}</span>
-          {!obj.adopted && (
-            <div className="fx-actions">
-              <button type="button" className="mini-btn" onClick={() => handlers.onAdopt(obj.id, true)}>采用</button>
-            </div>
-          )}
-        </div>
-      );
-
-    case "setup":
-      return null;
+      return <ImageCard obj={obj} label="效果图" onRetryGenerate={onRetryGenerate} />;
   }
 }

@@ -71,8 +71,8 @@
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-micro: 120ms;
-  --dur-short: 220ms;
-  --dur-long: 420ms;
+  --dur-short: 200ms;
+  --dur-long: 300ms;
 
   /* ── elevation (hairline-first; float only) ── */
   --shadow-float: 0 1px 2px rgba(28, 26, 22, 0.04), 0 8px 24px rgba(28, 26, 22, 0.06);
@@ -142,10 +142,10 @@ img { max-width: 100%; display: block; }
 /* numeric discipline for metadata */
 .mono, .badge, .seal, .hud-pill, .meta-row { font-variant-numeric: tabular-nums; }
 
-/* ── motion: one orchestrated entrance ── */
+/* ── motion: 签名动效「显影」(DESIGN.md) ── */
 .reveal {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateY(4px);
   animation: reveal var(--dur-long) var(--ease-out) forwards;
   animation-delay: calc(var(--i, 0) * 60ms);
 }
@@ -154,11 +154,6 @@ img { max-width: 100%; display: block; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 150ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 150ms !important;
-  }
-  .reveal { animation: reveal-reduced 150ms linear forwards; }
+  .reveal { animation: reveal-reduced var(--dur-micro) linear forwards; }
   @keyframes reveal-reduced { to { opacity: 1; transform: none; } }
 }

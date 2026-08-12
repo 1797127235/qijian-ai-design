@@ -1,0 +1,13 @@
+{
+  "id": "GT-12",
+  "title": "Focus 含 Intent 且不冒充画面",
+  "desk": "s1",
+  "fileNames": "s1",
+  "selection": ["art-fx1"],
+  "userText": "这张当时想生成什么",
+  "expect": {
+    "codes": ["F1", "H1"],
+    "hasBlocks": ["FOCUS"],
+    "textIncludes": ["换暖光", "intent 是生成意图"]
+  }
+}

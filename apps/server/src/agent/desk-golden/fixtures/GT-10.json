@@ -1,0 +1,15 @@
+{
+  "id": "GT-10",
+  "title": "指代：血缘源图（选中效果图问源）",
+  "desk": "s1",
+  "fileNames": "s1",
+  "selection": ["art-fx1"],
+  "userText": "源图是哪张",
+  "expect": {
+    "codes": ["H1"],
+    "hasBlocks": ["FOCUS"],
+    "textIncludes": ["art-fx1", "art-living"],
+    "focusMentions": ["art-fx1", "art-living"],
+    "note": "源图问句在选中效果图时靠 Focus 一跳边展示；完整自然语言消解到 living 为增强项"
+  }
+}

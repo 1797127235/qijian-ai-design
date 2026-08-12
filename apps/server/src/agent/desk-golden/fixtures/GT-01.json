@@ -1,0 +1,12 @@
+{
+  "id": "GT-01",
+  "title": "空桌 Survey",
+  "desk": "empty",
+  "selection": [],
+  "userText": "桌上有什么",
+  "expect": {
+    "codes": ["H1"],
+    "textIncludes": ["objects=0", "（空桌）", "选中：无"],
+    "noBlocks": ["FOCUS", "INSPECT", "RESOLUTION"]
+  }
+}

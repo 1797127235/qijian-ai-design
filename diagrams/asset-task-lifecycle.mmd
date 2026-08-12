@@ -1,0 +1,56 @@
+flowchart LR
+  subgraph Accept["1. 受理"]
+    direction TB
+    Start["面板、Agent 或批量请求"] --> Freeze["校验归属并冻结 payload"]
+    Freeze --> Tx["PG 事务写 task、pending artifact、Outbox"]
+    Tx -.-> Accepted["立即返回 accepted 与 task_id"]
+  end
+
+  subgraph Schedule["2. 调度"]
+    direction TB
+    Claim["Dispatcher claim Outbox"] --> Enqueue["按 task_id 幂等写入 BullMQ"]
+  end
+
+  subgraph Execute["3. Worker 执行"]
+    direction TB
+    Slot{"取得项目执行名额？"}
+    Delay["延迟 1 秒重新排队"]
+    Guard{"任务类型与持久状态"}
+    Replay["返回已保存终态"]
+    Generate["检查取消与 operation，调用图片 Provider"]
+    Name["文本 Provider 起名并按 token 写回"]
+    Outcome{"图片执行结果"}
+    Slot -->|"否"| Delay
+    Delay --> Slot
+    Slot -->|"是"| Guard
+    Guard -->|"已终态"| Replay
+    Guard -->|"image.generate"| Generate
+    Guard -->|"artifact.name"| Name
+    Generate --> Outcome
+  end
+
+  subgraph Finish["4. 收口与通知"]
+    direction TB
+    Success["目标版本 CAS，标 succeeded"]
+    Failed["标 failed"]
+    Review["标 needs_review，不自动重生"]
+    Cancelled["标 cancelled 或 cancelled_with_side_effect"]
+    Derive["受理 artifact.name 软任务"]
+    Events["写 task.terminal 持久事件"]
+    Notify["UI 查询更新；Agent JobWake 消费"]
+    Success --> Derive
+    Success --> Events
+    Failed --> Events
+    Review --> Events
+    Cancelled --> Events
+    Name --> Events
+    Events --> Notify
+  end
+
+  Tx --> Claim
+  Enqueue --> Slot
+  Outcome -->|"明确成功"| Success
+  Outcome -->|"明确失败"| Failed
+  Outcome -->|"结果不明确"| Review
+  Outcome -->|"取消竞态"| Cancelled
+  Derive -.-> Claim

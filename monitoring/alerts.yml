@@ -1,0 +1,94 @@
+groups:
+  - name: qijian-runtime
+    rules:
+      - alert: QijianApiDown
+        expr: up{job="qijian-api"} == 0
+        for: 1m
+        labels: { severity: page }
+        annotations:
+          summary: Qijian API cannot be scraped
+          runbook: docs/runbooks/observability.md#qijianapidown
+
+      - alert: QijianWorkerDown
+        expr: up{job="qijian-worker"} == 0 or qijian_queue_workers{service="qijian-api"} < 1
+        for: 1m
+        labels: { severity: page }
+        annotations:
+          summary: No healthy asset worker is available
+          runbook: docs/runbooks/observability.md#qijianworkerdown
+
+      - alert: QijianDependencyNotReady
+        expr: qijian_subsystem_ready == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: A required runtime dependency is unavailable
+          runbook: docs/runbooks/observability.md#qijiandependencynotready
+
+      - alert: QijianHttpErrorRateHigh
+        expr: |
+          sum(rate(qijian_http_requests_total{status_class="5xx"}[5m]))
+          / clamp_min(sum(rate(qijian_http_requests_total[5m])), 0.001) > 0.01
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: HTTP 5xx rate is above 1%
+          runbook: docs/runbooks/observability.md#qijianhttperrorratehigh
+
+      - alert: QijianAgentErrorRateHigh
+        expr: |
+          sum(rate(qijian_agent_runs_total{status=~"failed|interrupted"}[10m]))
+          / clamp_min(sum(rate(qijian_agent_runs_total[10m])), 0.001) > 0.05
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: Agent failed or interrupted run rate is above 5%
+          runbook: docs/runbooks/observability.md#qijianagenterrorratehigh
+
+      - alert: QijianQueueBacklog
+        expr: qijian_queue_oldest_waiting_seconds > 120
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: Oldest queued task has waited over two minutes
+          runbook: docs/runbooks/observability.md#qijianqueuebacklog
+
+      - alert: QijianMetricsCollectionDegraded
+        expr: qijian_queue_snapshot_available{service="qijian-api"} == 0
+        for: 1m
+        labels: { severity: page }
+        annotations:
+          summary: BullMQ queue metrics cannot be refreshed
+          runbook: docs/runbooks/observability.md#qijianmetricscollectiondegraded
+
+      - alert: QijianTaskNeedsReview
+        expr: increase(qijian_tasks_total{status="needs_review"}[5m]) > 0
+        labels: { severity: ticket }
+        annotations:
+          summary: A provider-ambiguous task requires human review
+          runbook: docs/runbooks/observability.md#qijiantaskneedsreview
+
+      - alert: QijianCacheReuseLow
+        expr: |
+          sum(rate(qijian_agent_model_tokens_total{kind="cache_read"}[30m]))
+          / clamp_min(sum(rate(qijian_agent_model_tokens_total{kind=~"input|cache_read"}[30m])), 1) < 0.90
+          and sum(increase(qijian_agent_model_tokens_total{kind=~"input|cache_read"}[30m])) > 1000
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: Prompt cache reuse is below the 90% runtime objective
+          runbook: docs/runbooks/observability.md#qijiancachereuselow
+
+      - alert: QijianTraceExportDegraded
+        expr: increase(qijian_trace_export_dropped_total[5m]) + increase(qijian_trace_export_errors_total[5m]) > 0
+        labels: { severity: ticket }
+        annotations:
+          summary: Agent trace export is dropping or failing operations
+          runbook: docs/runbooks/observability.md#qijiantraceexportdegraded
+
+      - alert: QijianStaleAgentRun
+        expr: increase(qijian_agent_stale_runs_interrupted_total[5m]) > 0
+        labels: { severity: ticket }
+        annotations:
+          summary: The watchdog interrupted a stale Agent run
+          runbook: docs/runbooks/observability.md#qijianstaleagentrun

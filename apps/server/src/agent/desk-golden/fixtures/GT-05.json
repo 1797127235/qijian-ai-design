@@ -1,0 +1,14 @@
+{
+  "id": "GT-05",
+  "title": "选中自动 Inspect 计划",
+  "desk": "s1",
+  "fileNames": "s1",
+  "selection": ["art-living", "art-mat"],
+  "userText": "这两张有什么区别",
+  "expect": {
+    "codes": ["H1", "I1", "I2"],
+    "inspectIncluded": ["art-living", "art-mat"],
+    "inspectExcluded": ["art-pending", "art-empty"],
+    "hasBlocks": ["FOCUS"]
+  }
+}

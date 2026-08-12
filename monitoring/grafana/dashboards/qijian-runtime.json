@@ -1,0 +1,90 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "stat", "title": "API / Worker Up", "id": 1,
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "min(up{job=~\"qijian-api|qijian-worker\"})", "legendFormat": "up" }]
+    },
+    {
+      "type": "stat", "title": "Ready Dependencies", "id": 2,
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "min(qijian_subsystem_ready)", "legendFormat": "ready" }]
+    },
+    {
+      "type": "stat", "title": "Queue Workers", "id": 3,
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "qijian_queue_workers{service=\"qijian-api\"}", "legendFormat": "workers" }]
+    },
+    {
+      "type": "stat", "title": "Oldest Queue Age", "id": 4,
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{ "expr": "qijian_queue_oldest_waiting_seconds", "legendFormat": "age" }]
+    },
+    {
+      "type": "timeseries", "title": "HTTP Rate and 5xx", "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        { "expr": "sum(rate(qijian_http_requests_total[5m]))", "legendFormat": "requests/s" },
+        { "expr": "sum(rate(qijian_http_requests_total{status_class=\"5xx\"}[5m]))", "legendFormat": "5xx/s" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Agent Outcomes", "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [{ "expr": "sum by (status, source) (rate(qijian_agent_runs_total[5m]))", "legendFormat": "{{source}} {{status}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Prompt Cache Reuse", "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [{ "expr": "sum(rate(qijian_agent_model_tokens_total{kind=\"cache_read\"}[5m])) / clamp_min(sum(rate(qijian_agent_model_tokens_total{kind=~\"input|cache_read\"}[5m])), 1)", "legendFormat": "reuse" }]
+    },
+    {
+      "type": "timeseries", "title": "Queue State", "id": 8,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "targets": [{ "expr": "qijian_queue_jobs", "legendFormat": "{{state}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Task Outcomes", "id": 9,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "targets": [{ "expr": "sum by (kind, status) (rate(qijian_tasks_total[5m]))", "legendFormat": "{{kind}} {{status}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Trace Export Health", "id": 10,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "targets": [
+        { "expr": "rate(qijian_trace_export_errors_total[5m])", "legendFormat": "errors/s" },
+        { "expr": "rate(qijian_trace_export_dropped_total[5m])", "legendFormat": "drops/s" }
+      ]
+    },
+    {
+      "type": "stat", "title": "Queue Metrics Fresh", "id": 11,
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 29 },
+      "targets": [{ "expr": "qijian_queue_snapshot_available{service=\"qijian-api\"}", "legendFormat": "fresh" }]
+    },
+    {
+      "type": "timeseries", "title": "Tool p95 Duration", "id": 12,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(qijian_agent_tool_duration_seconds_bucket[5m])))", "legendFormat": "{{tool}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Cache Read / Write Tokens", "id": 13,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "targets": [{ "expr": "sum by (kind) (rate(qijian_agent_model_tokens_total{kind=~\"cache_read|cache_write\"}[5m]))", "legendFormat": "{{kind}} tokens/s" }]
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["qijian", "agent", "runtime"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "Qijian Runtime",
+  "uid": "qijian-runtime",
+  "version": 1
+}

@@ -1,0 +1,16 @@
+{
+  "id": "GT-07",
+  "title": "指代：材质唯一",
+  "desk": "s1",
+  "fileNames": "s1",
+  "selection": [],
+  "userText": "材质那张是什么",
+  "expect": {
+    "codes": ["R1", "H1"],
+    "hasBlocks": ["RESOLUTION", "FOCUS"],
+    "resolution": {
+      "unique": true,
+      "resolvedIds": ["art-mat"]
+    }
+  }
+}

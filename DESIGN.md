@@ -253,7 +253,7 @@ components:
 ## Motion
 - **Approach:** minimal-functional
 - **Easing:** enter `ease-out` · exit `ease-in` · move `ease-in-out`
-- **Duration:** micro 80ms · short 200ms · medium 300ms
+- **Duration:** micro 120ms · short 200ms · medium 300ms（对应 tokens.css `--dur-micro/short/long`；退场快于进场，exit 用 micro + `ease-in`）
 - **签名动效：** AI 生成内容用「显影」渐入 — opacity 0→1 + translateY 4px→0，300ms ease-out。不用弹跳、不用骨架屏旋转
 
 ## 领域映射（组件用法）

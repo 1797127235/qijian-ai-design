@@ -141,12 +141,18 @@ export function useAttachmentDraft(projectId: string) {
   useEffect(() => {
     mountedRef.current = true;
     return () => {
-      mountedRef.current = false;
+      // projectId 变更或 unmount：中止上传、删已上传文件、清草稿，避免旧 file id 带入新项目
+      const ownershipProjectId = projectId;
       for (const controller of activeRef.current.values()) controller.abort();
-      for (const item of itemsRef.current) {
+      activeRef.current.clear();
+      queueRef.current = [];
+      const previous = itemsRef.current;
+      itemsRef.current = [];
+      for (const item of previous) {
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-        if (item.stored) void api.deleteFile(projectId, item.stored.id).catch(() => undefined);
+        if (item.stored) void api.deleteFile(ownershipProjectId, item.stored.id).catch(() => undefined);
       }
+      mountedRef.current = false;
     };
   }, [projectId]);
 

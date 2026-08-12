@@ -1,0 +1,55 @@
+{
+  "id": "GT-08",
+  "title": "指代：不唯一须候选",
+  "desk": {
+    "project": { "id": "p1", "name": "demo" },
+    "artifacts": [
+      {
+        "id": "m1",
+        "artifactType": "canvas_image",
+        "versionId": "v1",
+        "versionNo": 1,
+        "status": "draft",
+        "payload": { "file_id": "f1" },
+        "inputRefs": [],
+        "createdBy": "designer",
+        "createdAt": "2026-08-06T00:00:00.000Z"
+      },
+      {
+        "id": "m2",
+        "artifactType": "canvas_image",
+        "versionId": "v2",
+        "versionNo": 1,
+        "status": "draft",
+        "payload": { "file_id": "f2" },
+        "inputRefs": [],
+        "createdBy": "designer",
+        "createdAt": "2026-08-06T00:00:00.000Z"
+      }
+    ],
+    "deskState": {
+      "objects": [
+        { "artifact_id": "m1", "kind": "canvas_image", "x": 0, "y": 0, "rot": 0 },
+        { "artifact_id": "m2", "kind": "canvas_image", "x": 100, "y": 0, "rot": 0 }
+      ],
+      "connections": [],
+      "viewport": { "x": 0, "y": 0, "zoom": 1 },
+      "updatedAt": "2026-08-06T12:00:00.000Z"
+    }
+  },
+  "fileNames": {
+    "f1": "材质A.png",
+    "f2": "材质B.png"
+  },
+  "selection": [],
+  "userText": "材质那张",
+  "expect": {
+    "codes": ["R2"],
+    "hasBlocks": ["RESOLUTION"],
+    "resolution": {
+      "unique": false,
+      "candidateIds": ["m1", "m2"]
+    },
+    "textIncludes": ["无法唯一消解", "不得静默"]
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "project": { "id": "p1", "name": "静安两居" },
+  "artifacts": [
+    {
+      "id": "art-living",
+      "artifactType": "canvas_image",
+      "versionId": "v1",
+      "versionNo": 1,
+      "status": "draft",
+      "payload": { "file_id": "file-living" },
+      "inputRefs": [],
+      "createdBy": "designer",
+      "createdAt": "2026-08-06T00:00:00.000Z"
+    },
+    {
+      "id": "art-mat",
+      "artifactType": "canvas_image",
+      "versionId": "v2",
+      "versionNo": 1,
+      "status": "draft",
+      "payload": { "file_id": "file-mat" },
+      "inputRefs": [],
+      "createdBy": "designer",
+      "createdAt": "2026-08-06T00:00:00.000Z"
+    },
+    {
+      "id": "art-fx1",
+      "artifactType": "effect_image",
+      "versionId": "v3",
+      "versionNo": 1,
+      "status": "draft",
+      "payload": { "file_id": "file-fx1", "user_prompt": "换暖光", "pending": false },
+      "inputRefs": [],
+      "createdBy": "agent",
+      "createdAt": "2026-08-06T00:00:00.000Z"
+    },
+    {
+      "id": "art-pending",
+      "artifactType": "effect_image",
+      "versionId": "v4",
+      "versionNo": 1,
+      "status": "draft",
+      "payload": { "pending": true, "prompt": "现代客厅" },
+      "inputRefs": [],
+      "createdBy": "agent",
+      "createdAt": "2026-08-06T00:00:00.000Z"
+    },
+    {
+      "id": "art-empty",
+      "artifactType": "canvas_image",
+      "versionId": "v5",
+      "versionNo": 1,
+      "status": "draft",
+      "payload": {},
+      "inputRefs": [],
+      "createdBy": "designer",
+      "createdAt": "2026-08-06T00:00:00.000Z"
+    }
+  ],
+  "deskState": {
+    "objects": [
+      { "artifact_id": "art-living", "kind": "canvas_image", "x": 0, "y": 0, "rot": 0 },
+      { "artifact_id": "art-mat", "kind": "canvas_image", "x": 400, "y": 0, "rot": 0 },
+      { "artifact_id": "art-fx1", "kind": "effect_image", "x": 800, "y": 0, "rot": 0 },
+      { "artifact_id": "art-pending", "kind": "effect_image", "x": 800, "y": 200, "rot": 0 },
+      { "artifact_id": "art-empty", "kind": "canvas_image", "x": -400, "y": 0, "rot": 0 }
+    ],
+    "connections": [
+      { "id": "c1", "from": "art-living", "to": "art-fx1" },
+      { "id": "c2", "from": "art-living", "to": "art-pending" }
+    ],
+    "viewport": { "x": 0, "y": 0, "zoom": 1 },
+    "updatedAt": "2026-08-06T12:00:00.000Z"
+  }
+}

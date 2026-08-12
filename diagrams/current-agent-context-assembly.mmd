@@ -1,0 +1,37 @@
+graph TD
+  subgraph P["每轮开始：工具与 system"]
+    MODE["promptSource<br/>designer | system(wake)"] --> ACTIVE["applyActivationForPrompt<br/>切换 active tools"]
+    ACTIVE --> TOOLS["tools[]<br/>当前 active 工具 schemas"]
+    ID["deskIdentityPrompt<br/>身份 + 工作原则"] --> SYS["systemPrompt<br/>identity + 当前 active policy"]
+    ACTIVE --> SYS
+  end
+
+  subgraph U["本轮 user 消息组装"]
+    USER["用户原文 + 附件清单"] --> AP["agentPrompt(...)"]
+    DESK["desk snapshot + filenames + captions"] --> DC["[DESK_CONTEXT]<br/>Survey + 可选 Resolution/Focus"]
+    JOBS["recent jobs"] --> JB["[后台任务]"]
+    SELECT["选中/指代图像"] --> INS["[INSPECT]<br/>images[] 索引"]
+    MEM["project memory"] --> MB["[PROJECT_MEMORY]"]
+    AP --> MERGE["promptText 按顺序拼接"]
+    DC --> MERGE
+    JB --> MERGE
+    INS --> MERGE
+    MB --> MERGE
+  end
+
+  HIST["历史轨迹<br/>user / assistant / toolResult"] --> REQ["Provider 模型请求"]
+  SYS --> REQ
+  TOOLS --> REQ
+  MERGE --> REQ
+  SELECT -. "原图像二进制另挂 images[]" .-> REQ
+
+  SEARCH["任意工具 turn 结束<br/>search_tools 还会扩大 active"] -. "仅 search_tools：<br/>切换 tools 并再次写 system" .-> ACTIVE
+  SEARCH -. "SDK 下一 turn 刷新" .-> RESET["system 可变为<br/>identity + cwd"]
+  RESET -.-> REQ
+
+  classDef unstable fill:#fff0f0,stroke:#d9485f,color:#5a1520,stroke-width:2px;
+  classDef dynamic fill:#fff8db,stroke:#c58a00,color:#4f3900;
+  classDef stable fill:#eaf7ee,stroke:#2d8a4e,color:#163e25;
+  class SYS,TOOLS,ACTIVE,RESET,SEARCH unstable;
+  class USER,DESK,JOBS,SELECT,MEM,AP,DC,JB,INS,MB,MERGE dynamic;
+  class ID,HIST stable;

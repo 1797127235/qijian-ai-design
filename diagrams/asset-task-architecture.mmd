@@ -1,0 +1,47 @@
+flowchart LR
+  subgraph Entry["入口与运维"]
+    direction TB
+    UI["设计工作台"]
+    Agent["Agent 生图工具"]
+    Board["Bull Board 只读监控"]
+  end
+
+  subgraph Control["API 控制面"]
+    direction TB
+    HTTP["Hono 路由与提交服务"]
+    Coord["TaskStore、Dispatcher、Reconciler"]
+    Wake["Event Poller 与 JobWake"]
+  end
+
+  subgraph State["状态与调度"]
+    direction TB
+    PG[("PostgreSQL\n任务、批次、Outbox、事件、资产")]
+    Queue[("Redis / BullMQ\nasset-tasks")]
+    Files[("文件存储")]
+  end
+
+  subgraph Execution["独立 Worker 进程"]
+    direction TB
+    Worker["AssetTaskWorker"]
+    Image["image.generate 处理器"]
+    Naming["artifact.name 处理器"]
+  end
+
+  Provider["图片与文本 Provider"]
+
+  UI -->|"面板、批量提交与查询"| HTTP
+  Agent -->|"Agent 任务提交"| HTTP
+  HTTP --> Coord
+  Coord -->|"事务受理与任务事实"| PG
+  Coord -->|"Outbox 投递与对账"| Queue
+  Board -->|"只读队列视图"| Queue
+  Queue -->|"消费 Job"| Worker
+  Worker --> Image
+  Worker --> Naming
+  Image --> Provider
+  Naming --> Provider
+  Image --> Files
+  Image -->|"CAS 资产与终态事件"| PG
+  Naming -->|"token 条件写名与事件"| PG
+  PG -->|"持久任务事件"| Wake
+  Wake -->|"Agent 续跑与状态通知"| Agent
