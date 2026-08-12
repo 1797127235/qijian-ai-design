@@ -27,6 +27,8 @@ export function isToolBusinessFailure(result: unknown, isError?: boolean): boole
   const details = (result as { details?: unknown }).details;
   if (details && typeof details === "object") {
     const d = details as Record<string, unknown>;
+    // 能力门策略拒绝是预期内的正常返回：原因随 content 回给模型，由模型调整后续动作
+    if (d.error_code === "POLICY_DENIED") return false;
     if (d.ok === false || d.status === "failed") return true;
   }
   const text = contentText(result);

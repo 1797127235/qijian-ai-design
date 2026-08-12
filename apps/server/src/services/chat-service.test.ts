@@ -47,4 +47,19 @@ describe("runStatusMessage", () => {
       startedAt: "2026-08-05T08:00:00.000Z",
     })).toBeUndefined();
   });
+
+  it("surfaces the wake-guard reason verbatim on a failed run", () => {
+    expect(runStatusMessage({
+      id: "run-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      userMessageId: "message-1",
+      status: "failed",
+      error: "当前轮次用于读取并汇报后台任务结果；新的用户操作请求会开启可执行轮次。",
+      startedAt: "2026-08-05T08:00:00.000Z",
+      finishedAt: "2026-08-05T08:01:00.000Z",
+    })).toMatchObject({
+      text: expect.stringContaining("汇报后台任务结果"),
+    });
+  });
 });

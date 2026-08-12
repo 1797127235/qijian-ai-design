@@ -164,7 +164,7 @@ function clientSafeToolPayload(value: unknown): unknown {
 
 function clientSafeError(error?: string | null): string | undefined {
   if (!error) return undefined;
-  if (/取消|超时|中断|已停止|未找到|校验|无效|不能为空/.test(error)) return error.slice(0, 200);
+  if (/取消|超时|中断|已停止|未找到|校验|无效|不能为空|后台任务结果/.test(error)) return error.slice(0, 200);
   return "任务执行失败";
 }
 

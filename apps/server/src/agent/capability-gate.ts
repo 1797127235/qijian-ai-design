@@ -21,12 +21,18 @@ export type CapabilityDecision =
     policyRevision: string;
   }>;
 
-const WAKE_READ_TOOLS = new Set([
+/**
+ * wake 轮允许的工具：只读工具 + 项目记忆写入。
+ * 记忆是 Agent 自用的连续性沉淀，不触碰桌面与用户数据，汇报轮也需要它来闭环。
+ * 桌面变更类工具（generate/remove 等）仍仅限 designer 轮。
+ */
+const WAKE_ALLOWED_TOOLS = new Set([
   "look_at",
   "look_at_desk",
   "get_task",
   "inspect_project_memory",
   "search_project_memory",
+  "record_project_memory",
   "load_skill",
   "read_context_resource",
 ]);
@@ -51,7 +57,7 @@ export class TurnContextScope {
 
 export class CapabilityGate {
   decide(context: TurnContext, toolName: string): CapabilityDecision {
-    if (context.mode === "designer" || WAKE_READ_TOOLS.has(toolName)) {
+    if (context.mode === "designer" || WAKE_ALLOWED_TOOLS.has(toolName)) {
       return { allowed: true, policyRevision: context.policyRevision };
     }
     return {

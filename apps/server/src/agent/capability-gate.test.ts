@@ -33,6 +33,16 @@ describe("CapabilityGate", () => {
     expect(gate.decide(context("wake", "wake-1"), "search_tools").allowed).toBe(false);
   });
 
+  it("allows project memory writes during wake but still blocks desk mutations", () => {
+    const gate = new CapabilityGate();
+    // 汇报结论需要沉淀进项目记忆；写记忆不动桌面与用户数据
+    expect(gate.decide(context("wake", "wake-1"), "record_project_memory").allowed).toBe(true);
+    expect(gate.decide(context("wake", "wake-1"), "remove_from_desk")).toMatchObject({
+      allowed: false,
+      code: "WAKE_READ_ONLY",
+    });
+  });
+
   it("keeps concurrent run contexts isolated", async () => {
     const scope = new TurnContextScope();
     const seen = await Promise.all([
