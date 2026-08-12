@@ -91,6 +91,10 @@ describe("BullMqQueueAdapter (Redis integration)", () => {
     expect((await adapter.queue.getJobCounts("waiting")).waiting).toBe(1);
     expect(first.opts.removeOnComplete).toEqual({ age: TASK_JOB_RETENTION_SECONDS });
     expect(first.opts.removeOnFail).toEqual({ age: TASK_JOB_RETENTION_SECONDS });
+    const snapshot = await adapter.snapshot();
+    expect(snapshot.waiting).toBe(1);
+    expect(snapshot.workers).toBe(0);
+    expect(snapshot.oldestWaitingSeconds).toBeGreaterThanOrEqual(0);
   });
 
   itRedis("assigns stable task ids to every node in a flow", async () => {

@@ -359,10 +359,79 @@
 .composer-toolbar { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); padding: var(--space-2xs) var(--space-xs) var(--space-xs); }
 .composer-tools, .composer-actions { display: flex; align-items: center; gap: var(--space-2xs); }
 .composer-tool {
-  width: 40px; height: 40px; display: grid; place-items: center;
-  border: 0; border-radius: 6px; background: transparent; color: var(--color-mute); cursor: pointer;
+  width: 34px; height: 34px; display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: transparent; color: var(--color-mute); cursor: pointer;
+  transition: color var(--dur-micro) var(--ease-out), background var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out);
 }
 .composer-tool:active { transform: translateY(1px); }
+.composer-tool.is-open {
+  color: var(--color-accent); background: var(--color-accent-soft);
+}
+.composer-tool:disabled { opacity: .36; cursor: not-allowed; }
+/* Seko 式：技能列表嵌在输入壳顶部，无分类 Tab */
+.composer-skills-panel {
+  border-bottom: 1px solid var(--color-hairline);
+  padding: 10px 6px 8px;
+  animation: composer-skills-in var(--dur-short) var(--ease-out);
+}
+.composer-skills-head {
+  display: flex; align-items: baseline; gap: 6px; padding: 2px 10px 8px;
+}
+.composer-skills-title {
+  font-family: var(--font-outlier); font-size: 10px; font-weight: 500;
+  letter-spacing: .12em; color: var(--color-mute-soft);
+}
+.composer-skills-count {
+  font-family: var(--font-outlier); font-size: 10px; color: var(--color-mute-soft);
+  font-variant-numeric: tabular-nums;
+}
+.composer-skills-count::before { content: "· "; }
+.composer-skills-status {
+  margin: 0; padding: var(--space-md) var(--space-xs);
+  text-align: center; font-size: 12px; color: var(--color-mute);
+}
+.composer-skills-status.is-error { color: var(--color-error); }
+.composer-skills-list {
+  list-style: none; margin: 0; padding: 0; max-height: min(280px, 38vh); overflow-y: auto;
+  display: grid; gap: 2px;
+  scrollbar-width: thin; scrollbar-color: var(--color-hairline-strong) transparent;
+}
+.composer-skills-list::-webkit-scrollbar { width: 5px; }
+.composer-skills-list::-webkit-scrollbar-track { background: transparent; }
+.composer-skills-list::-webkit-scrollbar-thumb { background: var(--color-hairline-strong); border-radius: 3px; }
+.composer-skills-item {
+  width: 100%; display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start;
+  text-align: left; padding: 8px 10px; border: 1px solid transparent; border-radius: var(--radius-md);
+  background: transparent; color: inherit; cursor: pointer;
+  transition: background var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+}
+.composer-skills-item:disabled { opacity: .48; cursor: not-allowed; }
+.composer-skills-item:focus-visible {
+  outline: 2px solid var(--color-accent); outline-offset: 1px;
+}
+/* 技能图标：陶土底圆角小方块，hover 时整行提亮 */
+.composer-skills-item-icon {
+  width: 26px; height: 26px; margin-top: 1px;
+  display: grid; place-items: center;
+  border-radius: 7px;
+  background: var(--color-accent-soft); color: var(--color-accent);
+  transition: background var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+}
+.composer-skills-item-copy { min-width: 0; display: grid; gap: 2px; }
+.composer-skills-item-title {
+  font-size: 13px; font-weight: 500; color: var(--color-ink); line-height: 1.4;
+}
+.composer-skills-item-desc {
+  font-size: 12px; line-height: 1.5; color: var(--color-mute);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+@keyframes composer-skills-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-skills-panel { animation: none; }
+}
 .chat-input .send {
   position: relative; width: 38px; height: 38px; display: grid; place-items: center; padding: 0;
   border: 0; border-radius: 50%; background: var(--color-accent); color: var(--color-accent-ink); cursor: pointer;
@@ -372,8 +441,15 @@
 .chat-input .send:disabled { opacity: .38; cursor: not-allowed; }
 .is-spinning { animation: spin .8s linear infinite; }
 @media (hover: hover) and (pointer: fine) {
-  .chat-collapsed-toggle:hover, .chat-icon-button:hover:not(:disabled), .composer-tool:hover {
+  .chat-collapsed-toggle:hover, .chat-icon-button:hover:not(:disabled), .composer-tool:hover:not(:disabled) {
     color: var(--color-accent); background: var(--color-accent-soft);
+  }
+  .composer-skills-item:hover:not(:disabled) {
+    background: var(--color-surface);
+    border-color: var(--color-hairline);
+  }
+  .composer-skills-item:hover:not(:disabled) .composer-skills-item-icon {
+    background: var(--color-accent); color: var(--color-accent-ink);
   }
   .chat-suggestions button:hover:not(:disabled) { border-color: var(--color-hairline-strong); background: var(--color-card); }
   .chat-input:hover:not(:focus-within) { background: var(--color-surface); }

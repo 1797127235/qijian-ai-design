@@ -6,11 +6,14 @@ export {
   DESK_GRID_CELL,
   MAX_INSPECT_IMAGES,
   buildDeskStatusBlock,
+  buildDeskStateBlock,
+  deskManifestOf,
   deskFileIds,
   selectedVisualFileIds,
   planInspectSelection,
   formatInspectBlock,
   formatFocusBlock,
+  formatSelectionBlock,
   resolveDeskReferences,
   assembleDeskContext,
   buildAssemblyReport,
@@ -29,5 +32,5 @@ export {
   type AssemblyReport,
   type AssemblyMode,
   type DeskObjectView,
+  type DeskManifestEntry,
 } from "./desk-context.js";
-

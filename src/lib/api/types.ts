@@ -1,6 +1,16 @@
 // API 层 DTO 类型定义：与后端返回结构一一对应
 // 字段命名注意：DeskLayoutObject 沿用后端 snake_case（artifact_id），其余 camel_case
 
+/** 内置 skill 列表项（composer 菜单） */
+export interface SkillSummary {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  /** 列表一行副文案 */
+  summary: string;
+}
+
 // 项目列表卡片：首页/侧边栏展示用
 export interface ProjectSummary {
   id: string;
@@ -144,7 +154,32 @@ export interface StoredToolCall {
   args: unknown;
   result?: unknown;
   error?: string;
-  cost?: unknown; // 调用开销（token/费用等）
+  turnIndex?: number;
+  argumentCharacters?: number;
+  argumentBytes?: number;
+  resultCharacters?: number;
+  resultBytes?: number;
+  promptTokensBefore?: number;
+  promptTokensAfter?: number;
+  promptTokenDelta?: number;
+  /** 并行工具共享同一次 provider prompt token 变化。 */
+  sharedBatchSize?: number;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export interface StoredModelTurn {
+  id: string;
+  runId: string;
+  turnIndex: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  promptTokens: number;
+  totalTokens: number;
+  cacheHitRate?: number;
   startedAt: string;
   finishedAt?: string;
 }

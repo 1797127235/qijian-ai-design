@@ -4,7 +4,8 @@
  */
 import type { ServerConfig } from "../config.js";
 
-const NAMING_TIMEOUT_MS = 12_000;
+/** grok 等推理模型常 8～20s 才吐短名；12s 会整批 abort（见 agent_jobs 37s 三次失败）。 */
+const NAMING_TIMEOUT_MS = 30_000;
 /** 喂给模型的意图正文上限，避免超长 prompt 费 token / 超时。 */
 const PROMPT_TEXT_CAP = 400;
 /** 入库前再截断的展示名长度（中文约 4～12 字产品目标）。 */
@@ -48,11 +49,16 @@ export async function suggestArtifactDisplayName(
       }),
       signal: controller.signal,
     });
-    if (!response.ok) return undefined;
+    if (!response.ok) {
+      console.warn(`[artifact-display-namer] http ${response.status} model=${config.textModel}`);
+      return undefined;
+    }
     const body = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
     const content = body.choices?.[0]?.message?.content;
     return typeof content === "string" ? sanitizeDisplayName(content) : undefined;
-  } catch {
+  } catch (error) {
+    const reason = error instanceof Error ? error.name : "error";
+    console.warn(`[artifact-display-namer] ${reason} model=${config.textModel}`);
     return undefined;
   } finally {
     clearTimeout(timer);
@@ -76,4 +82,67 @@ export function sanitizeDisplayName(raw: string): string | undefined {
   if (/从.+生成/.test(text)) return undefined;
   if (text.length > 80) return undefined;
   return text.slice(0, NAME_MAX_CHARS) || undefined;
+}
+
+/** 从 naming_input 去掉「参考话题/意图」包装，只留意图正文。 */
+function intentBody(namingInput: string): string {
+  const text = namingInput.trim();
+  const intent = text.match(/(?:^|\n)意图：([\s\S]+)$/);
+  if (intent?.[1]?.trim()) return intent[1].trim();
+  return text;
+}
+
+const ROOM_LABELS = [
+  "主卧", "次卧", "客卧", "儿童房", "书房", "客厅", "餐厅", "厨房", "卫生间",
+  "浴室", "阳台", "玄关", "门厅", "储藏室", "储藏间", "衣帽间", "工作间",
+] as const;
+
+const STYLE_LABELS = [
+  "粗野触感", "极简", "工业风", "原木", "暖木", "侘寂", "法式", "中古", "现代",
+] as const;
+
+/**
+ * LLM 不可用时的确定性短名：从生图意图里抽空间/图种/风格。
+ * 输出再走 sanitize；失败返回 undefined（仍可回落 UI「效果图-N」）。
+ */
+export function heuristicDisplayNameFromPrompt(namingInput: string): string | undefined {
+  const body = intentBody(namingInput);
+  if (!body) return undefined;
+
+  const room = ROOM_LABELS.find((label) => body.includes(label));
+  const style = STYLE_LABELS.find((label) => body.includes(label));
+
+  let kind: string | undefined;
+  // 目标图种：转彩平优先于「源是线稿」；显式否定彩平才走线稿
+  const wantsColorPlan = /彩平|彩色平面/.test(body) && !/非彩平|不是彩平|勿彩平/.test(body);
+  if (wantsColorPlan) kind = "彩平";
+  else if (/线稿|户型|平面图|floor\s*plan/i.test(body)) kind = "线稿户型";
+  else if (/效果图|透视/.test(body)) kind = "效果图";
+
+  // 户型整体（三室一厅等）优先于单房间标签
+  const plan = body.match(/([一二三四五六七八九十\d]+室[一二三四五六七八九十\d]*厅)/)?.[1];
+
+  let candidate: string | undefined;
+  if (plan && kind) candidate = `${plan}${kind}`;
+  else if (plan) candidate = plan;
+  else if (room && style) candidate = `${room} · ${style}`;
+  else if (room && kind === "效果图") candidate = `${room}效果图`;
+  else if (room) candidate = room;
+  else if (kind && style) candidate = `${kind} · ${style}`;
+  else if (kind) candidate = kind;
+  else if (style) candidate = style;
+
+  if (candidate) return sanitizeDisplayName(candidate);
+
+  // 最后：截取首句里偏中文的短片段（至少含中文，避免英文碎词）
+  const first = body.split(/[。！？\n；;]/)[0]?.trim() ?? "";
+  const compact = first
+    .replace(/[（(][^）)]*[）)]/g, "")
+    .replace(/["'「」《》*_`#]/g, "")
+    .replace(/^(根据|将这张|用|请|帮我|生成|绘制|重新绘制)+/u, "")
+    .trim();
+  if (!/[\u4e00-\u9fff]/.test(compact)) return undefined;
+  if (compact.length >= 2 && compact.length <= 24) return sanitizeDisplayName(compact);
+  if (compact.length > 24) return sanitizeDisplayName(compact.slice(0, NAME_MAX_CHARS));
+  return undefined;
 }

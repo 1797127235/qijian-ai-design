@@ -1,5 +1,6 @@
 /** H7 Agent 观测：错误码与 Tracer 契约。 */
 import type { TokenUsageAggregate } from "../usage-metrics.js";
+import type { CacheFingerprint } from "../cache-contract.js";
 
 export type ErrorCode =
   | "VALIDATION"
@@ -10,6 +11,7 @@ export type ErrorCode =
   | "PROVIDER_TIMEOUT"
   | "USER_ABORT"
   | "JOB_CANCELLED"
+  | "POLICY_DENIED"
   | "INTERNAL"
   | "SERIALIZE";
 
@@ -50,6 +52,8 @@ export interface AgentTracer {
   startRoot(attrs: RootAttrs): TraceHandle;
   startSpan(parent: TraceHandle, attrs: SpanAttrs): TraceHandle;
   end(handle: TraceHandle, out?: EndOptions): void;
+  /** Patch outputs after a span ended while preserving its execution duration. */
+  annotate(handle: TraceHandle, outputs: Record<string, unknown>): void;
   recordError(handle: TraceHandle, err: MappedError): void;
   flush(): Promise<void>;
 }
@@ -68,6 +72,8 @@ export interface TraceContext {
   modelSpan?: TraceHandle;
   /** assistant message_end 累加的 usage */
   usageTotals?: TraceUsageTotals;
+  /** 最近一次 provider 请求对应的上下文指纹。 */
+  cacheFingerprint?: CacheFingerprint;
   productFinished: boolean;
   closed: boolean;
 }

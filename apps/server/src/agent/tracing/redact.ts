@@ -6,6 +6,11 @@ const META_ALLOW = new Set([
   "project_id", "thread_id", "run_id", "tool_call_id", "tool_name", "job_id", "kind",
   "artifact_id", "source_artifact_id", "file_id", "status", "error_code", "mime",
   "bytes", "hash", "model", "provider", "truncated", "client_message_id", "connection_id",
+  "system_sha256", "tools_sha256", "history_prefix_sha256", "active_tool_count", "history_message_count",
+  "tool_epoch", "working_set_sha256", "working_set_size",
+  "frame_sha256",
+  "trajectory_epoch",
+  "turn_index",
 ]);
 
 const SENSITIVE_KEY = /pass(word)?|secret|token|api[_-]?key|authorization|cookie|credential|private[_-]?key/i;

@@ -15,17 +15,28 @@ interface LiveHandle extends TraceHandle {
   chain: Promise<void>;
 }
 
+export type TraceExportTelemetry = Readonly<{
+  onDrop?: (droppedTotal: number) => void;
+  onError?: (error: unknown) => void;
+}>;
+
 export class LangSmithTracer implements AgentTracer {
   readonly enabled = true;
   private readonly client: Client;
   private readonly project: string;
   private readonly debugSync: boolean;
-  private readonly queue = new BoundedAsyncQueue(200, 2);
+  private readonly queue: BoundedAsyncQueue;
   private readonly handles = new Map<string, LiveHandle>();
+  private readonly endedHandles = new Map<string, LiveHandle>();
+  private readonly endedHandleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(config: Pick<ServerConfig, "langsmithApiKey" | "langsmithProject" | "langsmithEndpoint" | "langsmithDebugSync">) {
+  constructor(
+    config: Pick<ServerConfig, "langsmithApiKey" | "langsmithProject" | "langsmithEndpoint" | "langsmithDebugSync">,
+    private readonly telemetry: TraceExportTelemetry = {},
+  ) {
     this.project = config.langsmithProject || "default";
     this.debugSync = Boolean(config.langsmithDebugSync);
+    this.queue = new BoundedAsyncQueue(200, 2, (droppedTotal) => this.telemetry.onDrop?.(droppedTotal));
     this.client = new Client({
       apiKey: config.langsmithApiKey,
       apiUrl: config.langsmithEndpoint || undefined,
@@ -96,7 +107,7 @@ export class LangSmithTracer implements AgentTracer {
           await parentHandle.tree.postRun();
           parentHandle.posted = true;
         } catch (error) {
-          console.warn("[langsmith] parent postRun failed:", error instanceof Error ? error.message : error);
+          this.telemetry.onError?.(error);
         }
       }
       await child.postRun();
@@ -122,6 +133,17 @@ export class LangSmithTracer implements AgentTracer {
       await live.tree.end(outputs, error);
       await live.tree.patchRun();
       this.handles.delete(handle.id);
+      this.retainEnded(live);
+    });
+  }
+
+  annotate(handle: TraceHandle, outputs: Record<string, unknown>) {
+    const live = this.handles.get(handle.id) ?? this.endedHandles.get(handle.id);
+    if (!live) return;
+    const patch = capJson(outputs) as Record<string, unknown>;
+    this.enqueue(live, async () => {
+      live.tree.outputs = { ...(live.tree.outputs ?? {}), ...patch };
+      await live.tree.patchRun({ excludeInputs: true });
     });
   }
 
@@ -131,7 +153,8 @@ export class LangSmithTracer implements AgentTracer {
 
   async flush() {
     // 等所有 handle 链 + 队列
-    const chains = [...this.handles.values()].map((h) => h.chain.catch(() => undefined));
+    const chains = [...this.handles.values(), ...this.endedHandles.values()]
+      .map((h) => h.chain.catch(() => undefined));
     await Promise.all(chains);
     await this.queue.drain(5_000);
   }
@@ -169,7 +192,7 @@ export class LangSmithTracer implements AgentTracer {
       try {
         await task();
       } catch (error) {
-        console.warn("[langsmith] export failed:", error instanceof Error ? error.message : error);
+        this.telemetry.onError?.(error);
       }
     };
     if (this.debugSync) {
@@ -191,5 +214,17 @@ export class LangSmithTracer implements AgentTracer {
         release();
       }
     });
+  }
+
+  private retainEnded(handle: LiveHandle) {
+    this.endedHandles.set(handle.id, handle);
+    const existing = this.endedHandleTimers.get(handle.id);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.endedHandles.delete(handle.id);
+      this.endedHandleTimers.delete(handle.id);
+    }, 15 * 60 * 1_000);
+    timer.unref();
+    this.endedHandleTimers.set(handle.id, timer);
   }
 }

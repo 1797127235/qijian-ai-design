@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addUsageSample,
   emptyUsageAggregate,
+  effectiveReuseRate,
   hitRate,
   sampleFromMessageEndEvent,
   sampleFromUsage,
@@ -14,6 +15,11 @@ describe("usage-metrics", () => {
     expect(hitRate(50, 0)).toBe(0);
   });
 
+  it("computes effective reuse including cache writes", () => {
+    expect(effectiveReuseRate(100, 400, 50)).toBeCloseTo(400 / 550);
+    expect(effectiveReuseRate(0, 0, 0)).toBeNull();
+  });
+
   it("parses pi usage object", () => {
     const s = sampleFromUsage({
       input: 100,
@@ -23,6 +29,7 @@ describe("usage-metrics", () => {
       totalTokens: 520,
     });
     expect(s?.hitRate).toBeCloseTo(0.8);
+    expect(s?.effectiveReuseRate).toBeCloseTo(400 / 510);
     expect(s?.cacheRead).toBe(400);
   });
 
@@ -59,6 +66,7 @@ describe("usage-metrics", () => {
     expect(agg.input).toBe(150);
     expect(agg.cacheRead).toBe(400);
     expect(agg.hitRate).toBeCloseTo(400 / 550);
+    expect(agg.effectiveReuseRate).toBeCloseTo(400 / 600);
     expect(agg.cacheSignal).toBe(true);
   });
 });

@@ -45,6 +45,7 @@ describe("process-summary", () => {
     expect(toolLabel("generate_from_desk")).toBe("桌面生图");
     expect(toolLabel("look_at")).toBe("细看物件");
     expect(toolLabel("look_at_desk")).toBe("桌面总览");
+    expect(toolLabel("load_skill")).toBe("加载技能");
   });
 
   it("detects business failure without isError", () => {

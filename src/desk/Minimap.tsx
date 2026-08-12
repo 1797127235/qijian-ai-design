@@ -5,7 +5,7 @@
  *  - 只做平移：不缩放、不做对象交互；空桌不渲染
  */
 import { useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { nodeSize } from "./connection-geometry";
+import { bezierPath, nodeSize, routeAnchors } from "./connection-geometry";
 import type { Viewport } from "./geometry";
 import {
   centerOnMapPoint,
@@ -91,16 +91,25 @@ export function Minimap({
       onPointerCancel={endDrag}
     >
       <svg className="desk-minimap-edges" width={MAP_SIZE.w} height={MAP_SIZE.h} aria-hidden="true">
-        {connections.map((c) => {
-          const a = byId.get(c.from);
-          const b = byId.get(c.to);
-          if (!a || !b) return null;
-          const sa = nodeSize(a);
-          const sb = nodeSize(b);
-          const p1 = toMap(t, a.x + sa.w / 2, a.y + sa.h / 2);
-          const p2 = toMap(t, b.x + sb.w / 2, b.y + sb.h / 2);
-          return <line key={c.id} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} />;
-        })}
+        {/* 世界坐标系内布线：bezierPath 的 50px 最小控制长是世界单位，
+            经 scale 微缩后比例正确；直接拿地图坐标算路径会被最小控制长拧成乱线。
+            vector-effect 保持线宽不随缩放变细。 */}
+        <g transform={`translate(${t.offsetX} ${t.offsetY}) scale(${t.scale})`}>
+          {connections.map((c) => {
+            const a = byId.get(c.from);
+            const b = byId.get(c.to);
+            if (!a || !b) return null;
+            const { fromSide, toSide, start, end } = routeAnchors(a, b);
+            return (
+              <path
+                key={c.id}
+                d={bezierPath(start.x, start.y, end.x, end.y, fromSide, toSide)}
+                fill="none"
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          })}
+        </g>
       </svg>
       {objects.map((o) => {
         const size = nodeSize(o);

@@ -3,8 +3,10 @@
  * 数据源：pi assistant message.usage（message_end）。
  * hit_rate 公式版本固定，便于对照网关语义差异。
  */
+import type { CacheFingerprint } from "./cache-contract.js";
 
 export const CACHE_HIT_FORMULA = "cacheRead/(input+cacheRead)" as const;
+export const EFFECTIVE_REUSE_FORMULA = "cacheRead/(input+cacheRead+cacheWrite)" as const;
 
 export type TokenUsageSample = {
   input: number;
@@ -14,7 +16,9 @@ export type TokenUsageSample = {
   totalTokens: number;
   /** 衍生；分母为 0 时为 null */
   hitRate: number | null;
+  effectiveReuseRate: number | null;
   formula: typeof CACHE_HIT_FORMULA;
+  effectiveReuseFormula: typeof EFFECTIVE_REUSE_FORMULA;
 };
 
 export type TokenUsageAggregate = {
@@ -25,7 +29,9 @@ export type TokenUsageAggregate = {
   cacheWrite: number;
   totalTokens: number;
   hitRate: number | null;
+  effectiveReuseRate: number | null;
   formula: typeof CACHE_HIT_FORMULA;
+  effectiveReuseFormula: typeof EFFECTIVE_REUSE_FORMULA;
   /** 任一轮 cacheRead 或 cacheWrite > 0 */
   cacheSignal: boolean;
 };
@@ -36,6 +42,12 @@ function num(value: unknown): number {
 
 export function hitRate(input: number, cacheRead: number): number | null {
   const denom = input + cacheRead;
+  if (denom <= 0) return null;
+  return cacheRead / denom;
+}
+
+export function effectiveReuseRate(input: number, cacheRead: number, cacheWrite: number): number | null {
+  const denom = input + cacheRead + cacheWrite;
   if (denom <= 0) return null;
   return cacheRead / denom;
 }
@@ -59,7 +71,9 @@ export function sampleFromUsage(usage: unknown): TokenUsageSample | null {
     cacheWrite,
     totalTokens,
     hitRate: hitRate(input, cacheRead),
+    effectiveReuseRate: effectiveReuseRate(input, cacheRead, cacheWrite),
     formula: CACHE_HIT_FORMULA,
+    effectiveReuseFormula: EFFECTIVE_REUSE_FORMULA,
   };
 }
 
@@ -82,7 +96,9 @@ export function emptyUsageAggregate(): TokenUsageAggregate {
     cacheWrite: 0,
     totalTokens: 0,
     hitRate: null,
+    effectiveReuseRate: null,
     formula: CACHE_HIT_FORMULA,
+    effectiveReuseFormula: EFFECTIVE_REUSE_FORMULA,
     cacheSignal: false,
   };
 }
@@ -104,7 +120,9 @@ export function addUsageSample(
     cacheWrite,
     totalTokens,
     hitRate: hitRate(input, cacheRead),
+    effectiveReuseRate: effectiveReuseRate(input, cacheRead, cacheWrite),
     formula: CACHE_HIT_FORMULA,
+    effectiveReuseFormula: EFFECTIVE_REUSE_FORMULA,
     cacheSignal: agg.cacheSignal || sample.cacheRead > 0 || sample.cacheWrite > 0,
   };
 }
@@ -122,6 +140,7 @@ export function formatUsageLogLine(fields: {
   model?: string;
   sample: TokenUsageSample;
   aggregate?: TokenUsageAggregate;
+  cacheContext?: CacheFingerprint;
 }): string {
   return JSON.stringify({
     type: "model_usage",
@@ -131,5 +150,6 @@ export function formatUsageLogLine(fields: {
     model: fields.model,
     turn: fields.sample,
     run_agg: fields.aggregate,
+    cache_context: fields.cacheContext,
   });
 }

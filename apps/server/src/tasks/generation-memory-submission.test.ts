@@ -50,7 +50,11 @@ function prepared(taskId: string) {
 describe("generation submission freezes project memory", () => {
   it("freezes Agent image memory before durable acceptance", async () => {
     const snapshot = desk();
-    let accepted: { payload: Record<string, unknown> } | undefined;
+    let accepted: {
+      payload: Record<string, unknown>;
+      traceRootId?: string;
+      traceParentId?: string;
+    } | undefined;
     const store = {
       accept: async (input: { payload: Record<string, unknown>; prepare: (tx: never) => Promise<unknown> }) => {
         accepted = input;
@@ -59,17 +63,28 @@ describe("generation submission freezes project memory", () => {
     };
     const generate = { prepare: async () => prepared(crypto.randomUUID()) };
     const memory = { freezeForGeneration: vi.fn(async () => frozen(3, "卧室木色更暖")) };
+    const trackJob = vi.fn();
+    const runId = crypto.randomUUID();
+    const traces = {
+      get: vi.fn(() => ({
+        root: { id: "trace-root-1", runId },
+        toolSpans: new Map([["call-1", { id: "trace-tool-1", runId }]]),
+      })),
+      trackJob,
+    };
     const service = new AssetTaskSubmissionService(
       store as never,
       generate as never,
       { snapshot: async () => snapshot, notifyDeskChanged: vi.fn() } as never,
       { imageModel: "image-model" },
       memory as never,
+      traces as never,
     );
 
     await service.submitAgentImage({
       projectId: snapshot.project.id,
       threadId: crypto.randomUUID(),
+      runId,
       prompt: "继续修改卧室",
       toolName: "generate_from_desk",
       toolCallId: "call-1",
@@ -81,6 +96,11 @@ describe("generation submission freezes project memory", () => {
       generation_memory: { checkpoint_revision: 3 },
     });
     expect(String(accepted?.payload.prompt)).toMatch(/PROJECT_MEMORY[\s\S]*CURRENT_GENERATION_REQUEST/);
+    expect(accepted).toMatchObject({
+      traceRootId: "trace-root-1",
+      traceParentId: "trace-tool-1",
+    });
+    expect(trackJob).toHaveBeenCalledWith(runId, expect.any(String));
   });
 
   it("retrieves local memory independently for every batch item", async () => {

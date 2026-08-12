@@ -1,6 +1,7 @@
 import type React from "react";
 import { FileText, Paperclip } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import remarkGfm from "remark-gfm";
 import { api, isInternalSystemChatMessage, type ChatAttachment } from "../../lib/api";
 import { safeMarkdownUrl } from "../markdown";
@@ -18,7 +19,7 @@ export function MarkdownMessage({ text }: { text: string }) {
   return (
     <div className="markdown-content">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkCjkFriendly]}
         skipHtml
         urlTransform={safeMarkdownUrl}
         components={{

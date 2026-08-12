@@ -1,4 +1,7 @@
-# Agent 工具发现式加载（窄 base + 搜索 + wake 硬名单）
+# Agent 工具发现式加载（历史方案）
+
+> **状态：已归档。** 当前实现以
+> [agent-context-kv-cache-architecture.md](../agent-context-kv-cache-architecture.md) 为准：全量注册、Kernel、`search_tools` additive activation、Stable System 和 CapabilityGate。以下内容保留为历史决策记录。
 
 ## 问题陈述
 

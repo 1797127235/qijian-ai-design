@@ -8,6 +8,7 @@ import {
   type ProjectSummary,
   type StoredChatMessage,
   type StoredFile,
+  type StoredModelTurn,
   type StoredToolCall,
 } from "./types";
 
@@ -46,7 +47,7 @@ export const api = {
   deleteChatThread: (projectId: string, threadId: string) =>
     request<void>(`/api/projects/${projectId}/chat/threads/${threadId}`, { method: "DELETE" }),
   chatHistory: (projectId: string, threadId: string) =>
-    request<{ threadId: string; messages: StoredChatMessage[]; toolCalls: StoredToolCall[] }>(
+    request<{ threadId: string; messages: StoredChatMessage[]; toolCalls: StoredToolCall[]; modelTurns: StoredModelTurn[] }>(
       `/api/projects/${projectId}/chat/messages?threadId=${encodeURIComponent(threadId)}`,
     ),
   moveObject: (projectId: string, artifactId: string, patch: { x?: number; y?: number; rot?: number; w?: number }) =>
@@ -111,4 +112,5 @@ export const api = {
       imageModelChoices?: Array<{ id: string; providerId: string; providerLabel: string }>;
       imageSize: string | null;
     }>("/api/public-config"),
+  listSkills: () => request<{ skills: import("./types").SkillSummary[] }>("/api/skills"),
 };

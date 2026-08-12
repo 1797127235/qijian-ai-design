@@ -51,9 +51,14 @@ import { AssetBatchSubmissionService } from "./tasks/asset-batch-submission.js";
 import { TaskCancellationService } from "./tasks/cancellation.js";
 import { ImageTaskExecutor } from "./tasks/image-task-executor.js";
 import { ProjectMemoryService } from "./agent/memory/service.js";
+import { RuntimeMetrics } from "./observability/metrics.js";
+import { StructuredLogger } from "./observability/logger.js";
+import { RuntimeReadiness } from "./observability/readiness.js";
 
 // —— 基础设施 ——
 const config = loadConfig();
+const metrics = new RuntimeMetrics("qijian-api");
+const logger = new StructuredLogger("qijian-api");
 // 多网关 model id 冲突：先注册者生效（见 image-providers 约定）
 warnDuplicateImageModels(config.imageProviders);
 const { db, pool } = createDatabase(config);
@@ -123,12 +128,25 @@ artifacts.setObjectDeletedListener((projectId) => {
 });
 
 // —— Agent 异步任务（job）——
-const traces = createTraceRegistry(config);
+const traces = createTraceRegistry(config, {
+  onDrop: (droppedTotal) => {
+    metrics.observeTraceDrop();
+    if (droppedTotal === 1 || droppedTotal % 20 === 0) {
+      logger.warn("trace_export_queue_dropped", { dropped_total: droppedTotal });
+    }
+  },
+  onError: (error) => {
+    metrics.observeTraceError();
+    logger.warn("trace_export_failed", { error: error instanceof Error ? error.message : String(error) });
+  },
+});
 const jobStore = new AgentJobStore(db);
 const taskStore = new TaskStore(db);
 const bullmq = new BullMqQueueAdapter(config);
+metrics.bindQueueCollector(() => bullmq.snapshot());
+const readiness = new RuntimeReadiness(pool, bullmq, metrics);
 const taskCancellation = new TaskCancellationService(taskStore, bullmq);
-const assetTaskSubmitter = new AssetTaskSubmissionService(taskStore, generate, desks, config, memory);
+const assetTaskSubmitter = new AssetTaskSubmissionService(taskStore, generate, desks, config, memory, traces);
 const batchSubmitter = new AssetBatchSubmissionService(taskStore, generate, desks, config, memory);
 const captions = captionStore;
 // Agent 写桌：generate_from_desk → BullMQ 持久任务 → Worker
@@ -144,6 +162,7 @@ const sessions = new AgentSessionRegistry({
   taskCancellation,
   captions,
   traces,
+  metrics,
   assetTaskSubmitter,
   memory,
   emit: (event) => publish(event),
@@ -151,17 +170,26 @@ const sessions = new AgentSessionRegistry({
 // 方案 3 / 书中异步事件：job 终态 → 结构化 [JOB_EVENT] 回注轨迹并续跑
 const jobWake = new JobWakeService(
   chats,
-  async ({ projectId, threadId, text, taskId, runId, message }) => {
+  async ({ projectId, threadId, text, taskId, runId, message, sourceTraceRootId, sourceTraceParentId }) => {
     // appendPrompt 已在 JobWakeService 完成（写轨迹喂模型）。
     // 不向客户端广播 chat_message：job-wake 是系统事件，不是用户气泡。
     void message;
     if (traces?.enabled) {
-      traces.startRoot({
-        project_id: projectId,
-        thread_id: threadId,
-        run_id: runId,
-        inputs: { wake: true, task_id: taskId },
-      });
+      const trace = sourceTraceRootId
+        ? traces.startLinkedRoot({
+          project_id: projectId,
+          thread_id: threadId,
+          run_id: runId,
+          inputs: { wake: true, task_id: taskId },
+          metadata: { source_trace_parent_id: sourceTraceParentId },
+        }, sourceTraceRootId)
+        : traces.startRoot({
+          project_id: projectId,
+          thread_id: threadId,
+          run_id: runId,
+          inputs: { wake: true, task_id: taskId },
+        });
+      await chats.setSmithRunId(runId, trace.smithRunId);
     }
     await sessions.runJobWake({ projectId, threadId, runId, text });
   },
@@ -169,8 +197,13 @@ const jobWake = new JobWakeService(
 );
 sessions.setJobWake(jobWake);
 const taskEventStore = new TaskEventStore(db);
-const wakePoller = new TaskJobWakePoller(taskEventStore, jobStore, jobWake);
-const chat = new ChatGateway(sessions, chats, traces);
+const wakePoller = new TaskJobWakePoller(
+  taskEventStore,
+  jobStore,
+  jobWake,
+  (job) => traces.completeJob(job.runId, job.id),
+);
+const chat = new ChatGateway(sessions, chats, traces, metrics);
 // publish 回填：从此刻起，Agent/Job 抛出的事件统一进 ChatGateway，由它按连接 fan-out
 publish = chat.emit;
 // Worker 终态 → object_changed（跨进程补推，前端 refreshDesk）
@@ -192,24 +225,32 @@ const dispatcher = new TaskOutboxDispatcher(taskStore, bullmq, {
   },
 });
 const reconciler = new TaskQueueReconciler(taskStore, bullmq);
-bullmq.queue.on("error", (error) => console.warn("[bullmq] queue error:", error.message));
-bullmq.flowProducer.on("error", (error) => console.warn("[bullmq] flow error:", error.message));
+bullmq.queue.on("error", (error) => logger.warn("bullmq_queue_error", { error: error.message }));
+bullmq.flowProducer.on("error", (error) => logger.warn("bullmq_flow_error", { error: error.message }));
 let dispatching = false;
 let reconciling = false;
 let wakePolling = false;
 let deskRefreshPolling = false;
+let watchdogRunning = false;
 const dispatchTimer = setInterval(() => {
   if (dispatching) return;
   dispatching = true;
   void dispatcher.dispatchOnce()
-    .catch((error) => console.warn("[bullmq] dispatcher failed:", error instanceof Error ? error.message : error))
+    .then((summary) => metrics.observeDispatcher(summary))
+    .catch((error) => logger.error("dispatcher_failed", { error: error instanceof Error ? error.message : String(error) }))
     .finally(() => { dispatching = false; });
 }, 250);
 const reconcileTimer = setInterval(() => {
   if (reconciling) return;
   reconciling = true;
   void reconciler.reconcileOnce()
-    .catch((error) => console.warn("[bullmq] reconciler failed:", error instanceof Error ? error.message : error))
+    .then((summary) => {
+      metrics.observeReconciler(summary);
+      if (summary.needsReview > 0 || summary.redisErrors > 0) {
+        logger.warn("reconciler_degraded", summary);
+      }
+    })
+    .catch((error) => logger.error("reconciler_failed", { error: error instanceof Error ? error.message : String(error) }))
     .finally(() => { reconciling = false; });
 }, 30_000);
 const wakeTimer = setInterval(() => {
@@ -226,6 +267,19 @@ const deskRefreshTimer = setInterval(() => {
     .catch((error) => console.warn("[desk-refresh] event poll failed:", error instanceof Error ? error.message : error))
     .finally(() => { deskRefreshPolling = false; });
 }, 500);
+const watchdogTimer = setInterval(() => {
+  if (watchdogRunning) return;
+  watchdogRunning = true;
+  void chats.interruptStaleRunsGlobal(15 * 60 * 1_000)
+    .then((count) => {
+      metrics.observeStaleRuns(count);
+      if (count > 0) logger.warn("agent_stale_runs_interrupted", { count });
+    })
+    .catch((error) => logger.error("agent_watchdog_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    }))
+    .finally(() => { watchdogRunning = false; });
+}, 60_000);
 
 // Bull Board is an operational read-only view over the same BullMQ queue.
 const bullBoardServer = new HonoAdapter(serveStatic)
@@ -264,19 +318,25 @@ const app = createHttpApp({
   batchSubmitter,
   memory,
   bullBoard,
+  metrics,
+  logger,
+  readiness: () => readiness.check(),
 });
 const sockets = new WebSocketServer({ noServer: true });
 
 async function start() {
   await bullmq.waitUntilReady();
   await reconciler.reconcileOnce();
+  const staleRuns = await chats.interruptStaleRunsGlobal(15 * 60 * 1_000);
+  metrics.observeStaleRuns(staleRuns);
+  if (staleRuns > 0) logger.warn("agent_stale_runs_interrupted", { count: staleRuns, phase: "startup" });
   // 避免重启后回放历史 terminal（会刷屏 object_changed / 误触发 job-wake）
   const eventCursor = await taskEventStore.latestId();
   wakePoller.restoreCursor([{ id: eventCursor } as never]);
   deskRefreshPoller.restoreCursor([{ id: eventCursor } as never]);
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    console.log(`Qijian agent server listening on http://localhost:${info.port}`);
+    logger.info("server_started", { port: info.port });
   });
 
   // HTTP upgrade 拦截：校验项目存在后再放行 chat 通道
@@ -309,6 +369,7 @@ async function start() {
     clearInterval(reconcileTimer);
     clearInterval(wakeTimer);
     clearInterval(deskRefreshTimer);
+    clearInterval(watchdogTimer);
     for (const client of sockets.clients) client.close(1001, "server shutdown");
     await new Promise<void>((resolve) => sockets.close(() => resolve()));
     await new Promise<void>((resolve) => {
@@ -325,6 +386,6 @@ async function start() {
 }
 
 void start().catch((error) => {
-  console.error("Failed to start server:", error);
+  logger.error("server_start_failed", { error: error instanceof Error ? error.message : String(error) });
   process.exit(1);
 });

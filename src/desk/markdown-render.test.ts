@@ -33,4 +33,11 @@ describe("MarkdownMessage", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("javascript:");
   });
+
+  it("bolds CJK emphasis closed before more CJK text (CommonMark flanking gap)", () => {
+    const text = "**三室一厅彩平图（A07）**已生成并落桌，由线稿 A06 转出。";
+    const html = renderToStaticMarkup(createElement(MarkdownMessage, { text }));
+    expect(html).toContain("<strong>三室一厅彩平图（A07）</strong>已生成并落桌");
+    expect(html).not.toContain("**三室一厅");
+  });
 });

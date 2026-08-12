@@ -6,6 +6,7 @@ import type { DatabaseTransaction } from "../services/artifact-service.js";
 import { composeCanvasPrompt, stripInpaintPrefix } from "../services/canvas-generate-service.js";
 import type { DeskStateService } from "../services/desk-state-service.js";
 import type { ProjectMemoryService } from "../agent/memory/service.js";
+import type { TraceRegistry } from "../agent/tracing/registry.js";
 import type { ImageGenerateTaskV1 } from "./types.js";
 import { TaskStore } from "./task-store.js";
 import { composePromptWithProjectMemory } from "./panel-image-task.js";
@@ -22,6 +23,7 @@ export class AssetTaskSubmissionService {
     private readonly desks: DeskStateService,
     private readonly config: Pick<ServerConfig, "imageModel">,
     private readonly memory?: ProjectMemoryService,
+    private readonly traces?: TraceRegistry,
   ) {}
 
   async submitAgentImage(input: {
@@ -84,11 +86,15 @@ export class AssetTaskSubmissionService {
     };
 
     let prepared: PreparedGenerate | undefined;
+    const trace = this.traces?.get(input.runId);
+    const traceParent = trace?.toolSpans.get(input.toolCallId) ?? trace?.root;
     await this.store.accept({
       payload,
       taskKind: "generate_from_desk",
       threadId: input.threadId,
       runId: input.runId,
+      traceRootId: trace?.root.id,
+      traceParentId: traceParent?.id,
       prepare: async (tx: DatabaseTransaction) => {
         const clientOpId = `agent:${input.toolCallId || taskId}`;
         prepared = await this.generate.prepare({
@@ -110,6 +116,7 @@ export class AssetTaskSubmissionService {
         return { artifactId: prepared.pending.artifact.id };
       },
     });
+    this.traces?.trackJob(input.runId, taskId);
     // prepare 在 accept 事务内，*InTransaction 不 emit；通知前端出现 pending 卡
     this.desks.notifyDeskChanged(input.projectId);
     return { taskId, payload, pending: prepared!.pending };

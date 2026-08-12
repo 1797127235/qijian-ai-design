@@ -1,6 +1,17 @@
-import { ArrowUp, ChevronUp, FileText, Image as ImageIcon, LoaderCircle, Plus, RotateCcw, Square, X } from "lucide-react";
-import { useState } from "react";
-import type { ChatConnectionStatus } from "../../lib/api";
+import {
+  ArrowUp,
+  ChevronUp,
+  FileText,
+  Image as ImageIcon,
+  LoaderCircle,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  Square,
+  X,
+} from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { api, type ChatConnectionStatus, type SkillSummary } from "../../lib/api";
 import { ATTACHMENT_ACCEPT } from "../attachments";
 import type { DeskObject } from "../types";
 import type { AttachmentDraftItem } from "../useAttachmentDraft";
@@ -82,15 +93,72 @@ export function ChatComposer({
   onRemove: (id: string) => void;
 }) {
   const [selectionExpanded, setSelectionExpanded] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const [skills, setSkills] = useState<SkillSummary[] | null>(null);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const skillsMenuId = useId();
+
+  useEffect(() => {
+    if (!skillsOpen) return;
+    let cancelled = false;
+    if (skills === null) {
+      setSkillsLoading(true);
+      setSkillsError(null);
+      void api.listSkills()
+        .then((res) => {
+          if (cancelled) return;
+          setSkills(res.skills);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setSkillsError(err instanceof Error ? err.message : "加载失败");
+          setSkills([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSkillsLoading(false);
+        });
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      const root = composerRef.current;
+      if (!root) return;
+      if (event.target instanceof Node && !root.contains(event.target)) {
+        setSkillsOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSkillsOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [skillsOpen, skills]);
+
   const placeholder = connection !== "connected"
     ? `${connectionLabels[connection]}，可先输入消息`
     : selectedObjects.length > 0
       ? "基于选中物件继续…"
-      : "描述你想推进的设计工作…";
+      : skillsOpen
+        ? "描述你的想法，或点选上方技能"
+        : "描述你想推进的设计工作…";
+
+  const pickSkill = (skill: SkillSummary) => {
+    const hint = `请按领域技能「${skill.title}」推进（skill:${skill.id}）。`;
+    const next = input.trim() ? `${input.trim()}\n${hint}` : hint;
+    setInput(next);
+    setSkillsOpen(false);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
 
   return (
     <div
-      className="chat-input"
+      ref={composerRef}
+      className={`chat-input${skillsOpen ? " skills-open" : ""}`}
       onDragOver={(event) => {
         if (event.dataTransfer.types.includes("Files")) event.preventDefault();
       }}
@@ -101,6 +169,53 @@ export function ChatComposer({
         onAddFiles(Array.from(event.dataTransfer.files));
       }}
     >
+      {skillsOpen && (
+        <div
+          id={skillsMenuId}
+          className="composer-skills-panel"
+          role="menu"
+          aria-label="技能列表"
+        >
+          <div className="composer-skills-head">
+            <span className="composer-skills-title">技能</span>
+            {skills && skills.length > 0 && (
+              <span className="composer-skills-count">{skills.length}</span>
+            )}
+          </div>
+          {skillsLoading && (
+            <p className="composer-skills-status" role="status">加载中…</p>
+          )}
+          {!skillsLoading && skillsError && (
+            <p className="composer-skills-status is-error" role="alert">{skillsError}</p>
+          )}
+          {!skillsLoading && !skillsError && skills?.length === 0 && (
+            <p className="composer-skills-status" role="status">暂无可用技能</p>
+          )}
+          {!skillsLoading && !skillsError && skills && skills.length > 0 && (
+            <ul className="composer-skills-list" role="none">
+              {skills.map((skill) => (
+                <li key={skill.id} role="none">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="composer-skills-item"
+                    disabled={draftLocked}
+                    onClick={() => pickSkill(skill)}
+                  >
+                    <span className="composer-skills-item-icon" aria-hidden="true">
+                      <Sparkles size={13} strokeWidth={1.8} />
+                    </span>
+                    <span className="composer-skills-item-copy">
+                      <span className="composer-skills-item-title">{skill.title}</span>
+                      <span className="composer-skills-item-desc">{skill.summary || skill.description}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {/* 画布选中即时 chip：一点选就显示，发送时才经 selectedArtifactIds 给 Agent */}
       {selectedObjects.length > 0 && (
         <div
@@ -275,6 +390,19 @@ export function ChatComposer({
               event.target.value = "";
             }}
           />
+          <button
+            type="button"
+            className={`composer-tool${skillsOpen ? " is-open" : ""}`}
+            aria-label="技能"
+            title="技能"
+            aria-haspopup="menu"
+            aria-expanded={skillsOpen}
+            aria-controls={skillsMenuId}
+            disabled={draftLocked}
+            onClick={() => setSkillsOpen((open) => !open)}
+          >
+            <Sparkles size={16} strokeWidth={1.7} />
+          </button>
         </div>
         <div className="composer-actions">
           <button

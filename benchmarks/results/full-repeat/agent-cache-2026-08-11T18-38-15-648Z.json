@@ -1,0 +1,1672 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-11T18:38:15.648Z",
+  "finishedAt": "2026-08-11T18:45:11.463Z",
+  "baseUrl": "http://127.0.0.1:8787",
+  "model": "codex2api/grok-4.5-latest",
+  "imageModel": "grok-imagine-image-quality",
+  "verdict": "fail",
+  "functionalPassed": true,
+  "cache": {
+    "schemaVersion": 1,
+    "verdict": "fail",
+    "cacheSignal": true,
+    "thresholds": {
+      "eligibleReadHitRate": 0.92,
+      "eligibleTurnHitRate": 0.9,
+      "eligibleTurnPassRate": 0.9,
+      "allTrafficEffectiveReuseRate": 0.9,
+      "minimumEligibleTurns": 5
+    },
+    "allTraffic": {
+      "turns": 98,
+      "input": 112312,
+      "output": 4254,
+      "cacheRead": 474368,
+      "cacheWrite": 0,
+      "totalTokens": 590934,
+      "readHitRate": 0.8085634417399604,
+      "effectiveReuseRate": 0.8085634417399604,
+      "turnPassRate": 0.6632653061224489
+    },
+    "eligible": {
+      "turns": 55,
+      "input": 41131,
+      "output": 403,
+      "cacheRead": 356608,
+      "cacheWrite": 0,
+      "totalTokens": 398142,
+      "readHitRate": 0.8965879634634774,
+      "effectiveReuseRate": 0.8965879634634774,
+      "turnPassRate": 0.9090909090909091
+    },
+    "byScenario": {
+      "desk_delta": {
+        "allTraffic": {
+          "turns": 14,
+          "input": 17965,
+          "output": 132,
+          "cacheRead": 64384,
+          "cacheWrite": 0,
+          "totalTokens": 82481,
+          "readHitRate": 0.7818431310641295,
+          "effectiveReuseRate": 0.7818431310641295,
+          "turnPassRate": 0.7142857142857143
+        },
+        "eligible": {
+          "turns": 10,
+          "input": 11419,
+          "output": 70,
+          "cacheRead": 53248,
+          "cacheWrite": 0,
+          "totalTokens": 64737,
+          "readHitRate": 0.8234184359874434,
+          "effectiveReuseRate": 0.8234184359874434,
+          "turnPassRate": 0.8
+        }
+      },
+      "image_generation_and_wake": {
+        "allTraffic": {
+          "turns": 17,
+          "input": 21568,
+          "output": 454,
+          "cacheRead": 94720,
+          "cacheWrite": 0,
+          "totalTokens": 116742,
+          "readHitRate": 0.8145294441386901,
+          "effectiveReuseRate": 0.8145294441386901,
+          "turnPassRate": 0.6470588235294118
+        },
+        "eligible": {
+          "turns": 9,
+          "input": 3454,
+          "output": 63,
+          "cacheRead": 73856,
+          "cacheWrite": 0,
+          "totalTokens": 77373,
+          "readHitRate": 0.9553227266847756,
+          "effectiveReuseRate": 0.9553227266847756,
+          "turnPassRate": 1
+        }
+      },
+      "large_desk_resync": {
+        "allTraffic": {
+          "turns": 15,
+          "input": 21690,
+          "output": 584,
+          "cacheRead": 118784,
+          "cacheWrite": 0,
+          "totalTokens": 141058,
+          "readHitRate": 0.8455942024858693,
+          "effectiveReuseRate": 0.8455942024858693,
+          "turnPassRate": 0.8
+        },
+        "eligible": {
+          "turns": 9,
+          "input": 3448,
+          "output": 72,
+          "cacheRead": 89216,
+          "cacheWrite": 0,
+          "totalTokens": 92736,
+          "readHitRate": 0.9627902961236294,
+          "effectiveReuseRate": 0.9627902961236294,
+          "turnPassRate": 1
+        }
+      },
+      "skill_emit_once": {
+        "allTraffic": {
+          "turns": 20,
+          "input": 21285,
+          "output": 2350,
+          "cacheRead": 78848,
+          "cacheWrite": 0,
+          "totalTokens": 102483,
+          "readHitRate": 0.7874327144897286,
+          "effectiveReuseRate": 0.7874327144897286,
+          "turnPassRate": 0.6
+        },
+        "eligible": {
+          "turns": 9,
+          "input": 11884,
+          "output": 72,
+          "cacheRead": 48128,
+          "cacheWrite": 0,
+          "totalTokens": 60084,
+          "readHitRate": 0.8019729387455842,
+          "effectiveReuseRate": 0.8019729387455842,
+          "turnPassRate": 0.7777777777777778
+        }
+      },
+      "steady_dialogue": {
+        "allTraffic": {
+          "turns": 15,
+          "input": 16255,
+          "output": 421,
+          "cacheRead": 55808,
+          "cacheWrite": 0,
+          "totalTokens": 72484,
+          "readHitRate": 0.7744334818145234,
+          "effectiveReuseRate": 0.7744334818145234,
+          "turnPassRate": 0.6
+        },
+        "eligible": {
+          "turns": 9,
+          "input": 7412,
+          "output": 63,
+          "cacheRead": 45184,
+          "cacheWrite": 0,
+          "totalTokens": 52659,
+          "readHitRate": 0.8590767358734505,
+          "effectiveReuseRate": 0.8590767358734505,
+          "turnPassRate": 0.8888888888888888
+        }
+      },
+      "tool_working_set": {
+        "allTraffic": {
+          "turns": 17,
+          "input": 13549,
+          "output": 313,
+          "cacheRead": 61824,
+          "cacheWrite": 0,
+          "totalTokens": 75686,
+          "readHitRate": 0.8202406697358471,
+          "effectiveReuseRate": 0.8202406697358471,
+          "turnPassRate": 0.6470588235294118
+        },
+        "eligible": {
+          "turns": 9,
+          "input": 3514,
+          "output": 63,
+          "cacheRead": 46976,
+          "cacheWrite": 0,
+          "totalTokens": 50553,
+          "readHitRate": 0.9304020598138245,
+          "effectiveReuseRate": 0.9304020598138245,
+          "turnPassRate": 1
+        }
+      }
+    },
+    "checks": [
+      {
+        "id": "provider_cache_signal",
+        "required": true,
+        "passed": true,
+        "actual": true,
+        "target": true
+      },
+      {
+        "id": "minimum_eligible_turns",
+        "required": true,
+        "passed": true,
+        "actual": 55,
+        "target": 5
+      },
+      {
+        "id": "eligible_read_hit_rate",
+        "required": true,
+        "passed": false,
+        "actual": 0.8965879634634774,
+        "target": 0.92
+      },
+      {
+        "id": "eligible_turn_pass_rate",
+        "required": true,
+        "passed": true,
+        "actual": 0.9090909090909091,
+        "target": 0.9
+      },
+      {
+        "id": "all_traffic_effective_reuse_rate",
+        "required": false,
+        "passed": false,
+        "actual": 0.8085634417399604,
+        "target": 0.9
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "steady_dialogue",
+      "description": "空桌连续纯文本对话，验证 system/tools/history 稳定前缀。",
+      "status": "passed",
+      "durationMs": 49655,
+      "modelTurns": 15,
+      "tools": [
+        "search_tools"
+      ],
+      "failures": []
+    },
+    {
+      "id": "skill_emit_once",
+      "description": "显式 Skill 首次注入后继续对话，验证正文 emit-once 与后续前缀复用。",
+      "status": "passed",
+      "durationMs": 95139,
+      "modelTurns": 20,
+      "tools": [
+        "load_skill",
+        "search_skills",
+        "search_tools"
+      ],
+      "failures": []
+    },
+    {
+      "id": "tool_working_set",
+      "description": "真实 search_tools → memory 工具链，并验证新增 schema 稳定后的会话工作集。",
+      "status": "passed",
+      "durationMs": 44637,
+      "modelTurns": 17,
+      "tools": [
+        "inspect_project_memory",
+        "record_project_memory",
+        "search_tools"
+      ],
+      "failures": []
+    },
+    {
+      "id": "large_desk_resync",
+      "description": "140 个对象触发 Desk full 硬预算，随后验证 unchanged 稳定态缓存。",
+      "status": "passed",
+      "durationMs": 47868,
+      "modelTurns": 15,
+      "tools": [
+        "search_tools"
+      ],
+      "failures": []
+    },
+    {
+      "id": "desk_delta",
+      "description": "桌面稳定后移动一个对象，验证小 delta 不破坏历史前缀。",
+      "status": "passed",
+      "durationMs": 36870,
+      "modelTurns": 14,
+      "tools": [],
+      "failures": []
+    },
+    {
+      "id": "image_generation_and_wake",
+      "description": "真实文生图、工具跟进和异步 JOB wake，再验证后续稳定轮。",
+      "status": "passed",
+      "durationMs": 141644,
+      "modelTurns": 17,
+      "tools": [
+        "search_tools",
+        "text_to_image_on_desk"
+      ],
+      "failures": []
+    }
+  ],
+  "modelTurns": [
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 1,
+      "modelTurnIndex": 1,
+      "cohort": "cold",
+      "turnKind": "thread_first",
+      "usage": {
+        "input": 2133,
+        "output": 62,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 2323
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 2,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 389,
+        "output": 7,
+        "cacheRead": 2176,
+        "cacheWrite": 0,
+        "totalTokens": 2572
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 3,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 309,
+        "output": 34,
+        "cacheRead": 2560,
+        "cacheWrite": 0,
+        "totalTokens": 2903
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 3,
+      "modelTurnIndex": 2,
+      "cohort": "warmup",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 3476,
+        "output": 164,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 3768
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 4,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 2132,
+        "output": 48,
+        "cacheRead": 1792,
+        "cacheWrite": 0,
+        "totalTokens": 3972
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 5,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 404,
+        "output": 43,
+        "cacheRead": 3840,
+        "cacheWrite": 0,
+        "totalTokens": 4287
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 6,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 4436,
+        "output": 7,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 4571
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 7,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 404,
+        "output": 7,
+        "cacheRead": 4480,
+        "cacheWrite": 0,
+        "totalTokens": 4891
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 8,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 340,
+        "output": 7,
+        "cacheRead": 4864,
+        "cacheWrite": 0,
+        "totalTokens": 5211
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 9,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 404,
+        "output": 7,
+        "cacheRead": 5120,
+        "cacheWrite": 0,
+        "totalTokens": 5531
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 10,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 340,
+        "output": 7,
+        "cacheRead": 5504,
+        "cacheWrite": 0,
+        "totalTokens": 5851
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 11,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 404,
+        "output": 7,
+        "cacheRead": 5760,
+        "cacheWrite": 0,
+        "totalTokens": 6171
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 12,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 340,
+        "output": 7,
+        "cacheRead": 6144,
+        "cacheWrite": 0,
+        "totalTokens": 6491
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 13,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 404,
+        "output": 7,
+        "cacheRead": 6400,
+        "cacheWrite": 0,
+        "totalTokens": 6811
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 14,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 340,
+        "output": 7,
+        "cacheRead": 6784,
+        "cacheWrite": 0,
+        "totalTokens": 7131
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 1,
+      "modelTurnIndex": 1,
+      "cohort": "cold",
+      "turnKind": "thread_first",
+      "usage": {
+        "input": 912,
+        "output": 505,
+        "cacheRead": 1792,
+        "cacheWrite": 0,
+        "totalTokens": 3209
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 1,
+      "modelTurnIndex": 2,
+      "cohort": "cold",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 947,
+        "output": 228,
+        "cacheRead": 1920,
+        "cacheWrite": 0,
+        "totalTokens": 3095
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 1,
+      "modelTurnIndex": 3,
+      "cohort": "cold",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 934,
+        "output": 271,
+        "cacheRead": 2048,
+        "cacheWrite": 0,
+        "totalTokens": 3253
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 1,
+      "modelTurnIndex": 4,
+      "cohort": "cold",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 227,
+        "output": 220,
+        "cacheRead": 2944,
+        "cacheWrite": 0,
+        "totalTokens": 3391
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 1,
+      "modelTurnIndex": 5,
+      "cohort": "cold",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 3217,
+        "output": 16,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 3361
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 1,
+      "modelTurnIndex": 6,
+      "cohort": "cold",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 1234,
+        "output": 274,
+        "cacheRead": 2176,
+        "cacheWrite": 0,
+        "totalTokens": 3684
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 1,
+      "modelTurnIndex": 7,
+      "cohort": "cold",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 300,
+        "output": 687,
+        "cacheRead": 3328,
+        "cacheWrite": 0,
+        "totalTokens": 4315
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 2,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 420,
+        "output": 53,
+        "cacheRead": 3584,
+        "cacheWrite": 0,
+        "totalTokens": 4057
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 3,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 369,
+        "output": 8,
+        "cacheRead": 3968,
+        "cacheWrite": 0,
+        "totalTokens": 4345
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 4,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 446,
+        "output": 8,
+        "cacheRead": 4224,
+        "cacheWrite": 0,
+        "totalTokens": 4678
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 5,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 395,
+        "output": 8,
+        "cacheRead": 4608,
+        "cacheWrite": 0,
+        "totalTokens": 5011
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 6,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 5208,
+        "output": 8,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 5344
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 7,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 3877,
+        "output": 8,
+        "cacheRead": 1792,
+        "cacheWrite": 0,
+        "totalTokens": 5677
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 8,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 370,
+        "output": 8,
+        "cacheRead": 5632,
+        "cacheWrite": 0,
+        "totalTokens": 6010
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 9,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 447,
+        "output": 8,
+        "cacheRead": 5888,
+        "cacheWrite": 0,
+        "totalTokens": 6343
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 10,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 396,
+        "output": 8,
+        "cacheRead": 6272,
+        "cacheWrite": 0,
+        "totalTokens": 6676
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 11,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 345,
+        "output": 8,
+        "cacheRead": 6656,
+        "cacheWrite": 0,
+        "totalTokens": 7009
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 12,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 422,
+        "output": 8,
+        "cacheRead": 6912,
+        "cacheWrite": 0,
+        "totalTokens": 7342
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 13,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 371,
+        "output": 8,
+        "cacheRead": 7296,
+        "cacheWrite": 0,
+        "totalTokens": 7675
+      }
+    },
+    {
+      "scenarioId": "skill_emit_once",
+      "runIndex": 14,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 448,
+        "output": 8,
+        "cacheRead": 7552,
+        "cacheWrite": 0,
+        "totalTokens": 8008
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 1,
+      "modelTurnIndex": 1,
+      "cohort": "cold",
+      "turnKind": "thread_first",
+      "usage": {
+        "input": 2174,
+        "output": 86,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 2388
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 1,
+      "modelTurnIndex": 2,
+      "cohort": "epoch_boundary",
+      "turnKind": "tool_epoch_changed",
+      "usage": {
+        "input": 2509,
+        "output": 112,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 2749
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 1,
+      "modelTurnIndex": 3,
+      "cohort": "epoch_boundary",
+      "turnKind": "tool_epoch_changed",
+      "usage": {
+        "input": 894,
+        "output": 10,
+        "cacheRead": 1792,
+        "cacheWrite": 0,
+        "totalTokens": 2696
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 2,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 480,
+        "output": 8,
+        "cacheRead": 2560,
+        "cacheWrite": 0,
+        "totalTokens": 3048
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 2,
+      "modelTurnIndex": 2,
+      "cohort": "warmup",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 2948,
+        "output": 13,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 3089
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 3,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 326,
+        "output": 7,
+        "cacheRead": 3072,
+        "cacheWrite": 0,
+        "totalTokens": 3405
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 4,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 386,
+        "output": 7,
+        "cacheRead": 3328,
+        "cacheWrite": 0,
+        "totalTokens": 3721
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 5,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 318,
+        "output": 7,
+        "cacheRead": 3712,
+        "cacheWrite": 0,
+        "totalTokens": 4037
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 6,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 378,
+        "output": 7,
+        "cacheRead": 3968,
+        "cacheWrite": 0,
+        "totalTokens": 4353
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 7,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 438,
+        "output": 7,
+        "cacheRead": 4224,
+        "cacheWrite": 0,
+        "totalTokens": 4669
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 8,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 370,
+        "output": 7,
+        "cacheRead": 4608,
+        "cacheWrite": 0,
+        "totalTokens": 4985
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 9,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 430,
+        "output": 7,
+        "cacheRead": 4864,
+        "cacheWrite": 0,
+        "totalTokens": 5301
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 10,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 362,
+        "output": 7,
+        "cacheRead": 5248,
+        "cacheWrite": 0,
+        "totalTokens": 5617
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 11,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 422,
+        "output": 7,
+        "cacheRead": 5504,
+        "cacheWrite": 0,
+        "totalTokens": 5933
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 12,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 354,
+        "output": 7,
+        "cacheRead": 5888,
+        "cacheWrite": 0,
+        "totalTokens": 6249
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 13,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 414,
+        "output": 7,
+        "cacheRead": 6144,
+        "cacheWrite": 0,
+        "totalTokens": 6565
+      }
+    },
+    {
+      "scenarioId": "tool_working_set",
+      "runIndex": 14,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 346,
+        "output": 7,
+        "cacheRead": 6528,
+        "cacheWrite": 0,
+        "totalTokens": 6881
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 1,
+      "modelTurnIndex": 1,
+      "cohort": "cold",
+      "turnKind": "thread_first",
+      "usage": {
+        "input": 5462,
+        "output": 368,
+        "cacheRead": 1792,
+        "cacheWrite": 0,
+        "totalTokens": 7622
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 2,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 5668,
+        "output": 34,
+        "cacheRead": 1920,
+        "cacheWrite": 0,
+        "totalTokens": 7622
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 2,
+      "modelTurnIndex": 2,
+      "cohort": "warmup",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 5976,
+        "output": 58,
+        "cacheRead": 1792,
+        "cacheWrite": 0,
+        "totalTokens": 7826
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 3,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 404,
+        "output": 36,
+        "cacheRead": 7680,
+        "cacheWrite": 0,
+        "totalTokens": 8120
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 4,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 336,
+        "output": 8,
+        "cacheRead": 8064,
+        "cacheWrite": 0,
+        "totalTokens": 8408
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 5,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 396,
+        "output": 8,
+        "cacheRead": 8320,
+        "cacheWrite": 0,
+        "totalTokens": 8724
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 6,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 328,
+        "output": 8,
+        "cacheRead": 8704,
+        "cacheWrite": 0,
+        "totalTokens": 9040
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 7,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 388,
+        "output": 8,
+        "cacheRead": 8960,
+        "cacheWrite": 0,
+        "totalTokens": 9356
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 8,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 320,
+        "output": 8,
+        "cacheRead": 9344,
+        "cacheWrite": 0,
+        "totalTokens": 9672
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 9,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 380,
+        "output": 8,
+        "cacheRead": 9600,
+        "cacheWrite": 0,
+        "totalTokens": 9988
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 10,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 440,
+        "output": 8,
+        "cacheRead": 9856,
+        "cacheWrite": 0,
+        "totalTokens": 10304
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 11,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 372,
+        "output": 8,
+        "cacheRead": 10240,
+        "cacheWrite": 0,
+        "totalTokens": 10620
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 12,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 432,
+        "output": 8,
+        "cacheRead": 10496,
+        "cacheWrite": 0,
+        "totalTokens": 10936
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 13,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 364,
+        "output": 8,
+        "cacheRead": 10880,
+        "cacheWrite": 0,
+        "totalTokens": 11252
+      }
+    },
+    {
+      "scenarioId": "large_desk_resync",
+      "runIndex": 14,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 424,
+        "output": 8,
+        "cacheRead": 11136,
+        "cacheWrite": 0,
+        "totalTokens": 11568
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 1,
+      "modelTurnIndex": 1,
+      "cohort": "cold",
+      "turnKind": "thread_first",
+      "usage": {
+        "input": 3577,
+        "output": 41,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 3746
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 2,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 2218,
+        "output": 7,
+        "cacheRead": 1792,
+        "cacheWrite": 0,
+        "totalTokens": 4017
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 3,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 2600,
+        "output": 7,
+        "cacheRead": 1920,
+        "cacheWrite": 0,
+        "totalTokens": 4527
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 4,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 349,
+        "output": 7,
+        "cacheRead": 4480,
+        "cacheWrite": 0,
+        "totalTokens": 4836
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 5,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 402,
+        "output": 7,
+        "cacheRead": 4736,
+        "cacheWrite": 0,
+        "totalTokens": 5145
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 6,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 327,
+        "output": 7,
+        "cacheRead": 5120,
+        "cacheWrite": 0,
+        "totalTokens": 5454
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 7,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 380,
+        "output": 7,
+        "cacheRead": 5376,
+        "cacheWrite": 0,
+        "totalTokens": 5763
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 8,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 5937,
+        "output": 7,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 6072
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 9,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 358,
+        "output": 7,
+        "cacheRead": 6016,
+        "cacheWrite": 0,
+        "totalTokens": 6381
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 10,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 411,
+        "output": 7,
+        "cacheRead": 6272,
+        "cacheWrite": 0,
+        "totalTokens": 6690
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 11,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 336,
+        "output": 7,
+        "cacheRead": 6656,
+        "cacheWrite": 0,
+        "totalTokens": 6999
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 12,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 389,
+        "output": 7,
+        "cacheRead": 6912,
+        "cacheWrite": 0,
+        "totalTokens": 7308
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 13,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 314,
+        "output": 7,
+        "cacheRead": 7296,
+        "cacheWrite": 0,
+        "totalTokens": 7617
+      }
+    },
+    {
+      "scenarioId": "desk_delta",
+      "runIndex": 14,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 367,
+        "output": 7,
+        "cacheRead": 7552,
+        "cacheWrite": 0,
+        "totalTokens": 7926
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 1,
+      "modelTurnIndex": 1,
+      "cohort": "cold",
+      "turnKind": "thread_first",
+      "usage": {
+        "input": 2184,
+        "output": 109,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 2421
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 1,
+      "modelTurnIndex": 2,
+      "cohort": "visual",
+      "turnKind": "visual_payload",
+      "usage": {
+        "input": 2598,
+        "output": 119,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 2845
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 1,
+      "modelTurnIndex": 3,
+      "cohort": "visual",
+      "turnKind": "visual_payload",
+      "usage": {
+        "input": 2727,
+        "output": 56,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 2911
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 1,
+      "modelTurnIndex": 1,
+      "cohort": "visual",
+      "turnKind": "wake",
+      "usage": {
+        "input": 2359,
+        "output": 79,
+        "cacheRead": 2816,
+        "cacheWrite": 0,
+        "totalTokens": 5254
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 2,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 870,
+        "output": 7,
+        "cacheRead": 5120,
+        "cacheWrite": 0,
+        "totalTokens": 5997
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 3,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 427,
+        "output": 7,
+        "cacheRead": 5888,
+        "cacheWrite": 0,
+        "totalTokens": 6322
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 4,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 6512,
+        "output": 7,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 6647
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 5,
+      "modelTurnIndex": 1,
+      "cohort": "warmup",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 437,
+        "output": 7,
+        "cacheRead": 6528,
+        "cacheWrite": 0,
+        "totalTokens": 6972
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 6,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 378,
+        "output": 7,
+        "cacheRead": 6912,
+        "cacheWrite": 0,
+        "totalTokens": 7297
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 7,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 447,
+        "output": 7,
+        "cacheRead": 7168,
+        "cacheWrite": 0,
+        "totalTokens": 7622
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 8,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 388,
+        "output": 7,
+        "cacheRead": 7552,
+        "cacheWrite": 0,
+        "totalTokens": 7947
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 9,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 329,
+        "output": 7,
+        "cacheRead": 7936,
+        "cacheWrite": 0,
+        "totalTokens": 8272
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 10,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 398,
+        "output": 7,
+        "cacheRead": 8192,
+        "cacheWrite": 0,
+        "totalTokens": 8597
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 11,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 339,
+        "output": 7,
+        "cacheRead": 8576,
+        "cacheWrite": 0,
+        "totalTokens": 8922
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 12,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 408,
+        "output": 7,
+        "cacheRead": 8832,
+        "cacheWrite": 0,
+        "totalTokens": 9247
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 13,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 349,
+        "output": 7,
+        "cacheRead": 9216,
+        "cacheWrite": 0,
+        "totalTokens": 9572
+      }
+    },
+    {
+      "scenarioId": "image_generation_and_wake",
+      "runIndex": 14,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 418,
+        "output": 7,
+        "cacheRead": 9472,
+        "cacheWrite": 0,
+        "totalTokens": 9897
+      }
+    }
+  ]
+}

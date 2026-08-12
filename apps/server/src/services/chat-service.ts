@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, lt, ne } from "drizzle-orm";
 import type { Database } from "../db/client.js";
-import { chatMessageAttachments, chatMessages, chatRuns, chatThreads, chatToolCalls, storedFiles } from "../db/schema.js";
+import { chatMessageAttachments, chatMessages, chatModelTurns, chatRuns, chatThreads, chatToolCalls, storedFiles } from "../db/schema.js";
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_TOTAL_ATTACHMENT_BYTES,
@@ -13,10 +13,12 @@ import {
   runStatusMessage,
   isInternalSystemChatMessage,
   toMessageDto,
+  toModelTurnDto,
   toRunDto,
   toThreadDto,
   toToolCallDto,
   type ChatMessageDto,
+  type ChatModelTurnDto,
   type ChatRole,
   type ChatRunDto,
   type ChatRunStatus,
@@ -28,6 +30,7 @@ import {
 export type {
   ChatAttachmentDto,
   ChatMessageDto,
+  ChatModelTurnDto,
   ChatRole,
   ChatRunDto,
   ChatRunStatus,
@@ -304,17 +307,28 @@ export class ChatService {
   }
 
   /** 工具开始：插入 chat_tool_calls 行（onConflictDoNothing 用于重放）。 */
-  async startToolCall(runId: string, toolCallId: string, toolName: string, args: unknown) {
+  async startToolCall(
+    runId: string,
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    observation: {
+      turnIndex?: number;
+      argumentCharacters?: number;
+      argumentBytes?: number;
+      promptTokensBefore?: number;
+    } = {},
+  ) {
     const [created] = await this.db
       .insert(chatToolCalls)
-      .values({ runId, toolCallId, toolName, args })
+      .values({ runId, toolCallId, toolName, args, ...observation })
       .onConflictDoNothing({ target: [chatToolCalls.runId, chatToolCalls.toolCallId] })
       .returning();
     return created ? toToolCallDto(created) : undefined;
   }
 
   /**
-   * 工具结束：upsert 同一 (runId, toolCallId) 行，标 succeeded/failed 写 result/error/cost。
+   * 工具结束：upsert 同一 (runId, toolCallId) 行，标 succeeded/failed 写 result/error/观测尺寸。
    * error 截断 2000 字符防爆库。
    */
   async finishToolCall(
@@ -324,7 +338,12 @@ export class ChatService {
     result: unknown,
     isError: boolean,
     error?: string,
-    cost?: unknown,
+    observation: {
+      turnIndex?: number;
+      resultCharacters?: number;
+      resultBytes?: number;
+      promptTokensBefore?: number;
+    } = {},
   ) {
     const finishedAt = new Date();
     const [row] = await this.db
@@ -337,7 +356,7 @@ export class ChatService {
         args: {},
         result,
         error: error?.slice(0, 2_000),
-        cost,
+        ...observation,
         finishedAt,
       })
       .onConflictDoUpdate({
@@ -347,12 +366,66 @@ export class ChatService {
           status: isError ? "failed" : "succeeded",
           result,
           error: error?.slice(0, 2_000),
-          cost,
+          ...observation,
           finishedAt,
         },
       })
       .returning();
     return toToolCallDto(row);
+  }
+
+  async completeToolTokenContext(
+    runId: string,
+    toolCallId: string,
+    input: {
+      promptTokensAfter: number;
+      promptTokenDelta?: number;
+      sharedBatchSize: number;
+    },
+  ): Promise<void> {
+    await this.db
+      .update(chatToolCalls)
+      .set(input)
+      .where(and(eq(chatToolCalls.runId, runId), eq(chatToolCalls.toolCallId, toolCallId)));
+  }
+
+  async startModelTurn(runId: string, turnIndex: number, model: string): Promise<void> {
+    await this.db
+      .insert(chatModelTurns)
+      .values({ runId, turnIndex, model })
+      .onConflictDoNothing({ target: [chatModelTurns.runId, chatModelTurns.turnIndex] });
+  }
+
+  async finishModelTurn(
+    runId: string,
+    turnIndex: number,
+    model: string,
+    usage: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      totalTokens: number;
+    },
+  ): Promise<void> {
+    const finishedAt = new Date();
+    const values = {
+      model,
+      inputTokens: usage.input,
+      outputTokens: usage.output,
+      cacheReadTokens: usage.cacheRead,
+      cacheWriteTokens: usage.cacheWrite,
+      promptTokens: usage.input + usage.cacheRead + usage.cacheWrite,
+      totalTokens: usage.totalTokens,
+      finishedAt,
+    };
+    await this.db
+      .insert(chatModelTurns)
+      .values({ runId, turnIndex, ...values })
+      .onConflictDoUpdate({
+        target: [chatModelTurns.runId, chatModelTurns.turnIndex],
+        set: values,
+      });
   }
 
   /** prompt 正常返回后扫一遍：run 是否有 failed 工具 → run 标 failed，否则 completed。 */
@@ -433,6 +506,31 @@ export class ChatService {
     });
   }
 
+  /** Periodic watchdog: close stale runs across every project, independent of UI traffic. */
+  async interruptStaleRunsGlobal(
+    staleMs = 10 * 60 * 1_000,
+    now = new Date(),
+  ): Promise<number> {
+    const staleBefore = new Date(now.getTime() - Math.max(1, staleMs));
+    return this.db.transaction(async (tx) => {
+      const interrupted = await tx
+        .update(chatRuns)
+        .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: now })
+        .where(and(eq(chatRuns.status, "running"), lt(chatRuns.startedAt, staleBefore)))
+        .returning({ id: chatRuns.id });
+      if (interrupted.length > 0) {
+        await tx
+          .update(chatToolCalls)
+          .set({ status: "interrupted", error: "任务超时自动清理", finishedAt: now })
+          .where(and(
+            inArray(chatToolCalls.runId, interrupted.map((run) => run.id)),
+            eq(chatToolCalls.status, "running"),
+          ));
+      }
+      return interrupted.length;
+    });
+  }
+
   /**
    * 私有：仅清理超时 running run（按 startedAt，不按 ownerId）。
    * 多实例部署下 owner 不等不等于已死；误 interrupt 会杀活任务。
@@ -464,10 +562,15 @@ export class ChatService {
    * （status 文案由 runStatusMessage 生成，前端不用单独处理 run 状态）。
    * 一次往返：消息 + 未完结的 run + 100 条最近 tool calls。
    */
-  async history(projectId: string, threadId?: string): Promise<{ threadId: string; messages: ChatMessageDto[]; toolCalls: ChatToolCallDto[] }> {
+  async history(projectId: string, threadId?: string): Promise<{
+    threadId: string;
+    messages: ChatMessageDto[];
+    toolCalls: ChatToolCallDto[];
+    modelTurns: ChatModelTurnDto[];
+  }> {
     const thread = await this.resolveThread(projectId, threadId);
     await this.interruptStaleRuns(projectId, thread.id);
-    const [rows, runs, toolCalls] = await Promise.all([
+    const [rows, runs, toolCalls, modelTurns] = await Promise.all([
       this.db
         .select()
         .from(chatMessages)
@@ -484,6 +587,13 @@ export class ChatService {
         .where(and(eq(chatRuns.projectId, projectId), eq(chatRuns.threadId, thread.id)))
         .orderBy(desc(chatToolCalls.startedAt))
         .limit(100),
+      this.db
+        .select({ modelTurn: chatModelTurns })
+        .from(chatModelTurns)
+        .innerJoin(chatRuns, eq(chatModelTurns.runId, chatRuns.id))
+        .where(and(eq(chatRuns.projectId, projectId), eq(chatRuns.threadId, thread.id)))
+        .orderBy(desc(chatModelTurns.startedAt))
+        .limit(200),
     ]);
     const attachmentByMessage = await loadAttachmentMap(this.db, rows.map((row) => row.id));
     const statusByMessage = new Map(runs.map((run) => [run.userMessageId, runStatusMessage(toRunDto(run))]));
@@ -496,6 +606,7 @@ export class ChatService {
       threadId: thread.id,
       messages,
       toolCalls: toolCalls.reverse().map(({ toolCall }) => toToolCallDto(toolCall)),
+      modelTurns: modelTurns.reverse().map(({ modelTurn }) => toModelTurnDto(modelTurn)),
     };
   }
 

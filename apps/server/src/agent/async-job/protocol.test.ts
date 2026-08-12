@@ -3,6 +3,7 @@ import {
   acceptedDetails,
   acceptedToolText,
   formatJobsStatusBlock,
+  jobFrameEntries,
   publicJobErrorForAgent,
 } from "./protocol.js";
 import type { AgentJobDto } from "./types.js";
@@ -54,6 +55,25 @@ describe("async job protocol", () => {
 
   it("returns empty string when no jobs", () => {
     expect(formatJobsStatusBlock([])).toBe("");
+  });
+
+  it("builds canonical job entries for context-frame deltas", () => {
+    expect(jobFrameEntries([
+      baseJob({ id: "job-2", status: "failed", error: "HTTP 500" }),
+      baseJob({ id: "job-1", status: "running", artifactId: "fx-1" }),
+      baseJob({ id: "caption-1", kind: "caption_file" }),
+    ])).toEqual({
+      "job-1": expect.objectContaining({ id: "job-1", status: "running", artifactId: "fx-1" }),
+      "job-2": expect.objectContaining({ id: "job-2", status: "failed", error: "HTTP 500" }),
+    });
+  });
+
+  it("orders job entries by id so list order does not change the frame revision source", () => {
+    const jobs = [
+      baseJob({ id: "job-b", status: "succeeded" }),
+      baseJob({ id: "job-a", status: "running", artifactId: "fx-1" }),
+    ];
+    expect(jobFrameEntries(jobs)).toEqual(jobFrameEntries([...jobs].reverse()));
   });
 
   it("publicJobErrorForAgent keeps actionable detail", () => {

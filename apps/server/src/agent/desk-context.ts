@@ -13,6 +13,7 @@ export type Lifecycle = "empty" | "pending" | "failed" | "ready";
 
 export type DeskContextOptions = {
   fileNames?: Record<string, string>;
+  aliases?: Record<string, string>;
   maxInspect?: number;
   /** 用户原文，用于指代消解 */
   userText?: string;
@@ -38,6 +39,20 @@ export type DeskObjectView = {
   edgesIn: string[];
   edgesOut: string[];
 };
+
+export type DeskManifestEntry = Readonly<{
+  id: string;
+  alias: string;
+  type: string;
+  label: string;
+  lifecycle: string;
+  grid: string;
+  x: number;
+  y: number;
+  fileId?: string;
+  edgesIn: readonly string[];
+  edgesOut: readonly string[];
+}>;
 
 export type InspectIncluded = { artifactId: string; fileId: string };
 export type InspectSkipped = {
@@ -73,6 +88,9 @@ export type AssemblyReport = {
 
 export type AssembledDeskContext = {
   text: string;
+  stateText: string;
+  requestText: string;
+  manifest: Record<string, DeskManifestEntry>;
   inspectPlan: InspectPlan;
   resolution: ReferenceResolution | null;
   objects: DeskObjectView[];
@@ -179,6 +197,7 @@ function buildLabels(
 export function compileDeskObjects(
   snapshot: DeskSnapshot,
   fileNames: Record<string, string> = {},
+  aliases: Record<string, string> = {},
 ): DeskObjectView[] {
   const byId = new Map(snapshot.artifacts.map((a) => [a.id, a]));
   const connections = snapshot.deskState.connections ?? [];
@@ -207,7 +226,7 @@ export function compileDeskObjects(
     const composed = typeof art.payload.prompt === "string" ? art.payload.prompt.trim() : "";
     return {
       id: art.id,
-      alias: `A${String(index + 1).padStart(2, "0")}`,
+      alias: aliases[art.id] ?? `A${String(index + 1).padStart(2, "0")}`,
       type: art.artifactType,
       label: labels.get(art.id) ?? art.id,
       lifecycle: lifecycleOf(art),
@@ -232,10 +251,11 @@ export function deskFileIds(snapshot: DeskSnapshot | null | undefined): string[]
 
 // —— Survey ——
 
-export function buildDeskStatusBlock(
+function buildDeskStatusBlockValue(
   snapshot: DeskSnapshot | null | undefined,
   selectedArtifactIds: string[] = [],
   options: DeskContextOptions = {},
+  includeSelection = true,
 ): string {
   if (!snapshot) {
     return [
@@ -244,7 +264,7 @@ export function buildDeskStatusBlock(
     ].join("\n");
   }
 
-  const objects = compileDeskObjects(snapshot, options.fileNames ?? {});
+  const objects = compileDeskObjects(snapshot, options.fileNames ?? {}, options.aliases ?? {});
   const byId = new Map(objects.map((o) => [o.id, o]));
   const connections = snapshot.deskState.connections ?? [];
   const rev = revisionOf(snapshot);
@@ -259,24 +279,19 @@ export function buildDeskStatusBlock(
     `connections=${connections.length}`,
   ].join(" ") + "]";
 
-  const selectedLines: string[] = [];
-  if (selectedArtifactIds.length === 0) {
-    selectedLines.push("选中：无");
-  } else {
-    selectedLines.push(`选中（${selectedArtifactIds.length}）：`);
-    for (const id of selectedArtifactIds) {
-      const obj = byId.get(id);
-      if (!obj) selectedLines.push(`- 无效（${id}）`);
-      else selectedLines.push(`- ${obj.alias} ${obj.type} ${obj.id}「${obj.label}」 ${obj.lifecycle}`);
-    }
-  }
+  const selectedLines = selectionLines(objects, selectedArtifactIds);
 
   // Survey 列全桌：无硬编码件数上限；大桌靠 look_at / 工具按需升采样，不在此截断目录。
   const objectLines = objects.length === 0
     ? ["（空桌）"]
     : objects.map((o) => `- ${o.alias} ${o.type} ${o.id}「${o.label}」 ${o.lifecycle} ${o.grid}`);
 
-  const lines = [header, ...selectedLines, "桌上物件：", ...objectLines];
+  const lines = [
+    header,
+    ...(includeSelection ? selectedLines : []),
+    "桌上物件：",
+    ...objectLines,
+  ];
 
   if (connections.length > 0) {
     lines.push("连线：");
@@ -295,6 +310,59 @@ export function buildDeskStatusBlock(
   }
 
   return lines.join("\n");
+}
+
+export function buildDeskStatusBlock(
+  snapshot: DeskSnapshot | null | undefined,
+  selectedArtifactIds: string[] = [],
+  options: DeskContextOptions = {},
+): string {
+  return buildDeskStatusBlockValue(snapshot, selectedArtifactIds, options, true);
+}
+
+function selectionLines(objects: DeskObjectView[], selectedArtifactIds: string[]): string[] {
+  if (selectedArtifactIds.length === 0) return ["选中：无"];
+  const byId = new Map(objects.map((object) => [object.id, object]));
+  const lines = [`选中（${selectedArtifactIds.length}）：`];
+  for (const id of selectedArtifactIds) {
+    const object = byId.get(id);
+    if (!object) lines.push(`- 无效（${id}）`);
+    else lines.push(`- ${object.alias} ${object.type} ${object.id}「${object.label}」 ${object.lifecycle}`);
+  }
+  return lines;
+}
+
+export function formatSelectionBlock(
+  objects: DeskObjectView[],
+  selectedArtifactIds: string[],
+): string {
+  return ["[选中]", ...selectionLines(objects, selectedArtifactIds)].join("\n");
+}
+
+export function buildDeskStateBlock(
+  snapshot: DeskSnapshot | null | undefined,
+  options: DeskContextOptions = {},
+): string {
+  return buildDeskStatusBlockValue(snapshot, [], options, false);
+}
+
+export function deskManifestOf(objects: DeskObjectView[]): Record<string, DeskManifestEntry> {
+  const entries = [...objects]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((object) => [object.id, {
+      id: object.id,
+      alias: object.alias,
+      type: object.type,
+      label: object.label,
+      lifecycle: object.lifecycle,
+      grid: object.grid,
+      x: object.x,
+      y: object.y,
+      ...(object.fileId ? { fileId: object.fileId } : {}),
+      edgesIn: [...object.edgesIn].sort(),
+      edgesOut: [...object.edgesOut].sort(),
+    }] as const);
+  return Object.fromEntries(entries);
 }
 
 // —— Inspect ——
@@ -671,6 +739,12 @@ export function assembleDeskContext(
         "[DESK_CONTEXT current=true revision=unknown objects=0 connections=0]",
         "桌面状态暂不可用",
       ].join("\n"),
+      stateText: [
+        "[DESK_CONTEXT current=true revision=unknown objects=0 connections=0]",
+        "桌面状态暂不可用",
+      ].join("\n"),
+      requestText: formatSelectionBlock([], selectedArtifactIds),
+      manifest: {},
       inspectPlan,
       resolution: null,
       objects: [],
@@ -686,7 +760,7 @@ export function assembleDeskContext(
     };
   }
 
-  const objects = compileDeskObjects(snapshot, options.fileNames ?? {});
+  const objects = compileDeskObjects(snapshot, options.fileNames ?? {}, options.aliases ?? {});
   const survey = buildDeskStatusBlock(snapshot, selectedArtifactIds, options);
   const resolution = options.userText
     ? resolveDeskReferences(options.userText, objects)
@@ -694,6 +768,11 @@ export function assembleDeskContext(
   const coreIds = focusIdSet(selectedArtifactIds, resolution, objects);
   const hop = expandHop1(coreIds, objects);
   const focus = formatFocusBlock(objects, coreIds, options.captions ?? {}, hop.hop1);
+  const requestText = [
+    formatSelectionBlock(objects, selectedArtifactIds),
+    resolution ? formatResolutionBlock(resolution, objects) : "",
+    focus,
+  ].filter(Boolean).join("\n\n");
   // Inspect 计划：选中 + 唯一消解结果
   const inspectCandidateIds = [
     ...selectedArtifactIds,
@@ -710,6 +789,9 @@ export function assembleDeskContext(
 
   return {
     text: parts.filter(Boolean).join("\n\n"),
+    stateText: buildDeskStateBlock(snapshot, options),
+    requestText,
+    manifest: deskManifestOf(objects),
     inspectPlan,
     resolution,
     objects,

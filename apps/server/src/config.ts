@@ -65,6 +65,8 @@ export interface ServerConfig {
   taskOutboxMaxAttempts: number;
   /** outbox 入队失败退避基数 ms（指数，封顶 60s） */
   taskOutboxBackoffMs: number;
+  /** 独立 Worker 的 health/readiness/Prometheus 监听端口。 */
+  workerMetricsPort: number;
   /** Bull Board 管理页路径（默认仅本机开发使用） */
   bullBoardPath: string;
   /** 两者都配置后启用浏览器原生 HTTP Basic Auth */
@@ -159,6 +161,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       1_000,
       60_000,
     ),
+    workerMetricsPort: boundedInteger(env.WORKER_METRICS_PORT, 9_465, 65_535),
     bullBoardPath: normalizeBullBoardPath(env.BULL_BOARD_PATH),
     bullBoardUsername: env.BULL_BOARD_USERNAME?.trim() || undefined,
     bullBoardPassword: env.BULL_BOARD_PASSWORD?.trim() || undefined,

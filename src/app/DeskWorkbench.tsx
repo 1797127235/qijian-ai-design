@@ -447,23 +447,35 @@ export function DeskWorkbench({
           }}
           onRename={desk.onRename}
           overlay={
-            <DeskToolbar
-              canUndo={history.canUndo}
-              canRedo={history.canRedo}
-              onHand={() => {
-                setSelectedIds([]);
-                setSelectedConnectionId(undefined);
-                gen.closePanel();
-              }}
-              onUndo={history.undo}
-              onRedo={history.redo}
-              onImage={placement.addImagePlaceholder}
-              memoryCount={memoryDesk.memory ? Object.keys(memoryDesk.memory.entries).length : 0}
-              memoryVisible={!memoryDesk.layout.hidden}
-              onToggleMemory={() =>
-                memoryDesk.updateLayout({ ...memoryDesk.layout, hidden: !memoryDesk.layout.hidden })
-              }
-            />
+            <>
+              <DeskToolbar
+                canUndo={history.canUndo}
+                canRedo={history.canRedo}
+                onHand={() => {
+                  setSelectedIds([]);
+                  setSelectedConnectionId(undefined);
+                  gen.closePanel();
+                }}
+                onUndo={history.undo}
+                onRedo={history.redo}
+                onImage={placement.addImagePlaceholder}
+                memoryCount={memoryDesk.memory ? Object.keys(memoryDesk.memory.entries).length : 0}
+                memoryVisible={!memoryDesk.layout.hidden}
+                onToggleMemory={() =>
+                  memoryDesk.updateLayout({ ...memoryDesk.layout, hidden: !memoryDesk.layout.hidden })
+                }
+              />
+              {!memoryDesk.layout.hidden && (
+                <MemoryCard
+                  memory={memoryDesk.memory}
+                  loadFailed={memoryDesk.loadFailed}
+                  collapsed={memoryDesk.layout.collapsed}
+                  onExpand={() => memoryDesk.updateLayout({ ...memoryDesk.layout, collapsed: false })}
+                  onCollapse={() => memoryDesk.updateLayout({ ...memoryDesk.layout, collapsed: true })}
+                  onRefresh={memoryDesk.refresh}
+                />
+              )}
+            </>
           }
           renderNodeToolbar={(obj) => (
             <>
@@ -515,17 +527,6 @@ export function DeskWorkbench({
             />
           )}
         >
-          {!memoryDesk.layout.hidden && (
-            <MemoryCard
-              memory={memoryDesk.memory}
-              loadFailed={memoryDesk.loadFailed}
-              layout={memoryDesk.layout}
-              viewportRef={viewportRef}
-              onLayoutChange={memoryDesk.updateLayout}
-              onHide={() => memoryDesk.updateLayout({ ...memoryDesk.layout, hidden: true })}
-              onRefresh={memoryDesk.refresh}
-            />
-          )}
           {panelSource && (
             <PromptPanel
               source={panelSource}

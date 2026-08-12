@@ -29,6 +29,7 @@ export function mapError(input: {
   if (input.code && [
     "VALIDATION", "SOURCE_NOT_FOUND", "PROJECT_MISMATCH", "PROVIDER_4XX", "PROVIDER_5XX",
     "PROVIDER_TIMEOUT", "USER_ABORT", "JOB_CANCELLED", "INTERNAL", "SERIALIZE",
+    "POLICY_DENIED",
   ].includes(input.code)) {
     return { error_code: input.code as ErrorCode, message: raw };
   }
@@ -91,5 +92,6 @@ export function isErrorCode(value: unknown): value is ErrorCode {
   return typeof value === "string" && [
     "VALIDATION", "SOURCE_NOT_FOUND", "PROJECT_MISMATCH", "PROVIDER_4XX", "PROVIDER_5XX",
     "PROVIDER_TIMEOUT", "USER_ABORT", "JOB_CANCELLED", "INTERNAL", "SERIALIZE",
+    "POLICY_DENIED",
   ].includes(value);
 }

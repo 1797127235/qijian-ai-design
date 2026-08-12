@@ -1,134 +1,141 @@
-import { EyeOff, RefreshCw } from "lucide-react";
-import { useRef, useState, type CSSProperties, type MutableRefObject } from "react";
-import type { ProjectMemoryState } from "../lib/api";
-import type { Viewport } from "./geometry";
-import { groupMemoryEntries, type MemoryCardLayout } from "./memory";
+import { PanelLeftClose, RefreshCw } from "lucide-react";
+import { useState, type CSSProperties } from "react";
+import type { ProjectMemoryEntry, ProjectMemoryState } from "../lib/api";
+import {
+  formatMemoryRelativeTime,
+  groupMemoryEntries,
+  latestMemoryUpdatedAt,
+} from "./memory";
 
 /**
- * 画布上的项目记忆汇总卡：只读、可拖（拖 header）、可隐藏。
- * 渲染在 .desk-stage 内（世界坐标），不是 DeskObject —— 不参与连线/框选/Minimap。
+ * 画布左缘停靠的「设计笔记」卡：屏幕坐标 HUD（与 Minimap 同层），不随画布缩放。
+ * collapsed 时收成一条书脊，悬浮/聚焦书脊临时展开，点头部的收起钮钉回收起态；
+ * 工具栏 Brain 开关负责整体显隐（hidden）。不参与连线/框选/Minimap。
  */
 export function MemoryCard({
   memory,
   loadFailed,
-  layout,
-  viewportRef,
-  onLayoutChange,
-  onHide,
+  collapsed,
+  onExpand,
+  onCollapse,
   onRefresh,
 }: {
   memory: ProjectMemoryState | undefined;
   /** 上次请求失败：正文显示失败态 + 重试入口（区别于「载入中」） */
   loadFailed: boolean;
-  layout: MemoryCardLayout;
-  /** 拖动换算：屏幕位移 ÷ 当前 zoom = 世界位移 */
-  viewportRef: MutableRefObject<Viewport>;
-  onLayoutChange: (layout: MemoryCardLayout) => void;
-  onHide: () => void;
+  collapsed: boolean;
+  onExpand: () => void;
+  onCollapse: () => void;
   onRefresh: () => void;
 }) {
-  /** 拖动中的临时位置；松手才 commit 到 onLayoutChange（避免拖动期间狂写 localStorage） */
-  const [dragPos, setDragPos] = useState<{ x: number; y: number }>();
-  const drag = useRef<{ sx: number; sy: number; ox: number; oy: number }>();
-
-  const startDrag = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("button")) return;
-    e.stopPropagation();
-    e.preventDefault();
-    drag.current = { sx: e.clientX, sy: e.clientY, ox: layout.x, oy: layout.y };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  };
-
-  const moveDrag = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (!d) return;
-    e.stopPropagation();
-    const zoom = viewportRef.current.zoom || 1;
-    setDragPos({ x: d.ox + (e.clientX - d.sx) / zoom, y: d.oy + (e.clientY - d.sy) / zoom });
-  };
-
-  const endDrag = (e: React.PointerEvent) => {
-    if (!drag.current) return;
-    e.stopPropagation();
-    drag.current = undefined;
-    if (dragPos) onLayoutChange({ ...layout, x: dragPos.x, y: dragPos.y });
-    setDragPos(undefined);
-  };
-
   const sections = memory ? groupMemoryEntries(memory) : [];
   const count = memory ? Object.keys(memory.entries).length : 0;
-  const pos = dragPos ?? layout;
+  /** 点「收起」后指针往往还压在卡片上：抑制悬浮预览，直到指针离开或主动碰书脊 */
+  const [peekSuppressed, setPeekSuppressed] = useState(false);
+  const updatedAt = memory ? latestMemoryUpdatedAt(memory) : undefined;
+  const meta = [
+    count > 0 ? `${count} 条` : "",
+    updatedAt ? formatMemoryRelativeTime(updatedAt) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div
-      className="desk-memory-card"
-      style={{ left: pos.x, top: pos.y }}
-      onPointerDown={(e) => e.stopPropagation()}
+      className="desk-memory-dock"
+      data-collapsed={collapsed}
+      data-peek={peekSuppressed ? "off" : "on"}
+      onPointerLeave={() => setPeekSuppressed(false)}
     >
-      <header
-        className="desk-memory-head"
-        onPointerDown={startDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+      <button
+        type="button"
+        className="desk-memory-spine"
+        aria-expanded={!collapsed}
+        title="展开设计笔记"
+        onClick={onExpand}
+        onPointerEnter={() => setPeekSuppressed(false)}
+        onFocus={() => setPeekSuppressed(false)}
+        tabIndex={collapsed ? 0 : -1}
       >
-        <span className="desk-memory-title">设计笔记</span>
-        {memory && (
-          <span className="desk-memory-rev">
-            r{memory.revision} · {count} 条
-          </span>
-        )}
-        <button
-          type="button"
-          title="刷新"
-          aria-label="刷新设计笔记"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={onRefresh}
-        >
-          <RefreshCw size={13} />
-        </button>
-        <button
-          type="button"
-          title="隐藏设计笔记"
-          aria-label="隐藏设计笔记"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={onHide}
-        >
-          <EyeOff size={14} />
-        </button>
-      </header>
-      <div className="desk-memory-body">
-        {!memory && loadFailed && (
-          <p className="desk-memory-empty">
-            笔记加载失败。
-            <button type="button" className="desk-memory-retry" onClick={onRefresh}>
-              重试
-            </button>
-          </p>
-        )}
-        {!memory && !loadFailed && <p className="desk-memory-empty">载入中…</p>}
-        {memory && sections.length === 0 && (
-          <p className="desk-memory-empty">助手还没有为这个项目留下笔记。</p>
-        )}
-        {sections.map((section, i) => (
-          <section
-            key={section.family}
-            className="desk-memory-section reveal"
-            style={{ "--i": i } as CSSProperties}
+        <span className="desk-memory-spine-label">设计笔记</span>
+        {count > 0 && <span className="desk-memory-spine-count">{count}</span>}
+      </button>
+      <article
+        className="desk-memory-card"
+        aria-hidden={collapsed}
+        aria-label="设计笔记"
+        onWheel={(e) => e.stopPropagation()}
+        onPointerDown={(e) => {
+          // 只拦左键：中键平移画布照常穿过卡片区域
+          if (e.button === 0) e.stopPropagation();
+        }}
+      >
+        <header className="desk-memory-head">
+          <span className="desk-memory-title">设计笔记</span>
+          {meta && <span className="desk-memory-meta">{meta}</span>}
+          <button
+            type="button"
+            title="刷新"
+            aria-label="刷新设计笔记"
+            onClick={onRefresh}
           >
-            <h3>{section.label}</h3>
-            {section.entries.map((en) => (
-              <div key={en.stableKey} className="desk-memory-entry">
-                <p className="desk-memory-summary">{en.summary}</p>
-                {en.body.trim() && en.body.trim() !== en.summary.trim() && (
-                  <p className="desk-memory-detail">{en.body}</p>
-                )}
-              </div>
-            ))}
-          </section>
-        ))}
-      </div>
+            <RefreshCw size={13} />
+          </button>
+          <button
+            type="button"
+            title="收起设计笔记"
+            aria-label="收起设计笔记"
+            onClick={(e) => {
+              setPeekSuppressed(true);
+              // 收起后按钮仍持焦会让 :focus-within 把卡片顶开，主动失焦
+              e.currentTarget.blur();
+              onCollapse();
+            }}
+          >
+            <PanelLeftClose size={14} />
+          </button>
+        </header>
+        <div className="desk-memory-body" tabIndex={0} aria-label="设计笔记内容">
+          {!memory && loadFailed && (
+            <p className="desk-memory-empty">
+              笔记加载失败。
+              <button type="button" className="desk-memory-retry" onClick={onRefresh}>
+                重试
+              </button>
+            </p>
+          )}
+          {!memory && !loadFailed && <p className="desk-memory-empty">载入中…</p>}
+          {memory && sections.length === 0 && (
+            <p className="desk-memory-empty">
+              还没有笔记。和助手聊过几轮后，这里会记下项目要点。
+            </p>
+          )}
+          {sections.map((section, i) => (
+            <section
+              key={section.family}
+              className="desk-memory-section reveal"
+              style={{ "--i": i } as CSSProperties}
+            >
+              <h3>{section.label}</h3>
+              {section.entries.map((en) => (
+                <MemoryEntryView key={en.stableKey} entry={en} />
+              ))}
+            </section>
+          ))}
+        </div>
+      </article>
+    </div>
+  );
+}
+
+/**
+ * 单条笔记：只展示 summary（面向设计师的散文）；
+ * body 是助手自用的结构化细节，不进卡片。
+ */
+function MemoryEntryView({ entry }: { entry: ProjectMemoryEntry }) {
+  return (
+    <div className="desk-memory-entry">
+      <p className="desk-memory-summary">{entry.summary}</p>
     </div>
   );
 }

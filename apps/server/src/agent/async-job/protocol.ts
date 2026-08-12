@@ -49,6 +49,25 @@ export function publicJobErrorForAgent(error: string | undefined | null, maxLen 
 /** caption 类 job 不进 Survey 状态栏（保持 cheap）。 */
 const HIDDEN_JOB_KINDS = new Set(["caption_file"]);
 
+export function jobFrameEntries(jobs: AgentJobDto[]) {
+  const entries = jobs
+    .filter((job) => !HIDDEN_JOB_KINDS.has(job.kind))
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((job) => {
+      const error = publicJobErrorForAgent(job.error, 120);
+      const label = jobPromptLabel(job);
+      return [job.id, {
+        id: job.id,
+        kind: job.kind,
+        status: job.status,
+        ...(job.artifactId ? { artifactId: job.artifactId } : {}),
+        ...(error ? { error } : {}),
+        ...(label ? { label } : {}),
+      }] as const;
+    });
+  return Object.fromEntries(entries);
+}
+
 /** 当轮 prompt 的 [后台任务] 块：进行中优先 + 最近 1h 终态。 */
 export function formatJobsStatusBlock(jobs: AgentJobDto[]): string {
   const visible = jobs.filter((job) => !HIDDEN_JOB_KINDS.has(job.kind));
@@ -65,11 +84,15 @@ export function formatJobsStatusBlock(jobs: AgentJobDto[]): string {
 
 /** 取 input.prompt 的短标签（用于状态栏里「生图 - 改成日式暖色…」这样的可读行）。 */
 function jobLabel(job: AgentJobDto): string {
+  const label = jobPromptLabel(job);
+  return label ? ` 「${label}」` : "";
+}
+
+function jobPromptLabel(job: AgentJobDto): string {
   const input = job.input;
   if (!input || typeof input !== "object") return "";
   const prompt = (input as { prompt?: unknown }).prompt;
   if (typeof prompt !== "string" || !prompt.trim()) return "";
   const t = prompt.trim().replace(/\s+/g, " ");
-  const short = t.length > 14 ? `${t.slice(0, 14)}…` : t;
-  return ` 「${short}」`;
+  return t.length > 14 ? `${t.slice(0, 14)}…` : t;
 }

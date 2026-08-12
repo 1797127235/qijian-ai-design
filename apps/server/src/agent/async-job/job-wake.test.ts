@@ -44,6 +44,25 @@ describe("JobWakeService", () => {
       projectId: "p1",
       threadId: "t1",
       taskId: "job-1",
+      sourceTraceRootId: undefined,
+    }));
+  });
+
+  it("carries the originating trace root into the wake delivery", async () => {
+    const appendPrompt = vi.fn().mockResolvedValue({
+      created: true,
+      run: { id: "run-wake" },
+      message: { text: "wake" },
+    });
+    const deliver = vi.fn().mockResolvedValue(undefined);
+    const svc = new JobWakeService({ appendPrompt } as never, deliver, () => false, 0);
+
+    svc.onJobTerminal(job({ traceRootId: "root-original", traceParentId: "tool-original" }));
+
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalled());
+    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({
+      sourceTraceRootId: "root-original",
+      sourceTraceParentId: "tool-original",
     }));
   });
 

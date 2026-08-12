@@ -23,6 +23,8 @@ export class TaskStore {
     batchId?: string;
     threadId?: string;
     runId?: string;
+    traceRootId?: string;
+    traceParentId?: string;
     /** 项目未完成任务上限（含本任务）；默认 100，与 acceptBatch 一致 */
     maxUnfinished?: number;
     prepare?: (
@@ -50,6 +52,8 @@ export class TaskStore {
         batchId: input.batchId,
         threadId: input.threadId,
         runId: input.runId,
+        traceRootId: input.traceRootId,
+        traceParentId: input.traceParentId,
         kind: input.taskKind,
         status: "enqueue_pending",
         taskRole: payload.kind === "artifact.name" ? "name" : "image",

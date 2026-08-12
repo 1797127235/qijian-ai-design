@@ -2,7 +2,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { DeskSnapshot } from "../domain/types.js";
 import type { ChatAttachmentDto } from "../services/chat-service.js";
 import type { AgentImageContent } from "../services/file-storage.js";
-import { formatJobsStatusBlock } from "./async-job/protocol.js";
+import { formatJobsStatusBlock, jobFrameEntries } from "./async-job/protocol.js";
 import { agentPrompt } from "./agent-prompt.js";
 import { EventWriteTracker, jsonSnapshot, persistToolEvent } from "./agent-event-persister.js";
 import {
@@ -23,8 +23,11 @@ import {
 import type { ImageCaptionStore } from "../services/image-caption-store.js";
 import type { JobWakeService } from "./async-job/job-wake.js";
 import type { ProjectMemoryService } from "./memory/service.js";
-import { deskIdentityPrompt } from "./system-prompt.js";
-import { applyToolActivation, narrowBaseTools, wakeTools } from "./tools/index.js";
+import { TurnContextScope, type TurnContext } from "./capability-gate.js";
+import { CacheContract, sha256 } from "./cache-contract.js";
+import { compileContext, type MemoryEntry } from "./memory/domain.js";
+import type { TraceRegistry } from "./tracing/registry.js";
+import type { RuntimeMetrics } from "../observability/metrics.js";
 
 export type { SessionFactoryDependencies as RegistryDependencies } from "./session-factory.js";
 export { agentPrompt } from "./agent-prompt.js";
@@ -36,8 +39,7 @@ export { agentSessionDir } from "./session-paths.js";
  *
  *  - sessions: key = "projectId:threadId" → Promise<AgentSession>（用 promise 让并发 get 去重）
  *  - idleTimers: N 分钟无活动则 dispose，腾出 pi 内部 LLM 上下文内存
- *  - activeRunIds: 同一 thread 可能有多个并发 run 排队（理论），按顺序
- *  - selectionBySession: 本轮 prompt 携带的画布选中，仅 prompt 期间有效
+ *  - activeRunIds: 记录 thread 忙碌状态；工具上下文由 AsyncLocalStorage 隔离
  */
 const DEFAULT_SESSION_IDLE_MS = 30 * 60 * 1000;
 
@@ -45,6 +47,8 @@ export class AgentSessionRegistry {
   private readonly sessions = new Map<string, Promise<AgentSession>>();
   private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly activeRunIds = new Map<string, string[]>();
+  /** 同一 thread 的 prompt 串行，避免 context ledger prepare/commit 撞车 */
+  private readonly promptChains = new Map<string, Promise<void>>();
   private readonly writes: EventWriteTracker;
   private readonly factory: SessionFactory;
   private readonly desks: SessionFactoryDependencies["desks"];
@@ -54,12 +58,11 @@ export class AgentSessionRegistry {
   private readonly captions?: ImageCaptionStore;
   private readonly chats: SessionFactoryDependencies["chats"];
   private readonly emit: SessionFactoryDependencies["emit"];
-  private readonly traces?: SessionFactoryDependencies["traces"];
+  private readonly traces?: TraceRegistry;
   private readonly memory?: ProjectMemoryService;
-  private readonly agentProvider?: string;
-  private readonly agentModel?: string;
-  /** 本轮 prompt 的画布选中，供 generate_from_desk 默认源。 */
-  private readonly selectionBySession = new Map<string, string[]>();
+  private readonly metrics?: RuntimeMetrics;
+  private readonly turnContext = new TurnContextScope();
+  private readonly cacheContract = new CacheContract();
   private shuttingDown = false;
   private jobWake?: JobWakeService;
 
@@ -68,7 +71,7 @@ export class AgentSessionRegistry {
     private readonly idleTimeoutMs = DEFAULT_SESSION_IDLE_MS,
   ) {
     this.writes = new EventWriteTracker(deps.emit);
-    this.factory = new SessionFactory(deps, this.writes, this.activeRunIds, this.selectionBySession);
+    this.factory = new SessionFactory(deps, this.writes, this.turnContext);
     this.desks = deps.desks;
     this.taskCancellation = deps.taskCancellation;
     this.jobStore = deps.jobStore;
@@ -78,8 +81,7 @@ export class AgentSessionRegistry {
     this.emit = deps.emit;
     this.traces = deps.traces;
     this.memory = deps.memory;
-    this.agentProvider = deps.config.agentProvider;
-    this.agentModel = deps.config.agentModel;
+    this.metrics = deps.metrics;
   }
 
   setJobWake(jobWake: JobWakeService) {
@@ -103,6 +105,7 @@ export class AgentSessionRegistry {
     text: string;
   }): Promise<void> {
     const { projectId, threadId, runId, text } = args;
+    const startedAt = performance.now();
     try {
       await this.prompt(projectId, threadId, text, [], runId, [], "system");
       const outcome = await this.chats.summarizeRunTools(runId);
@@ -112,6 +115,11 @@ export class AgentSessionRegistry {
         status: outcome.status === "failed" ? "error" : "ok",
         outputs: { run_status: outcome.status, wake: true },
       });
+      this.metrics?.observeAgentRun({
+        status: outcome.status,
+        source: "job_wake",
+        durationSeconds: Math.max(0, performance.now() - startedAt) / 1_000,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "job wake 失败";
       const statusMessage = await this.chats.finishRun(runId, "failed", message);
@@ -120,18 +128,13 @@ export class AgentSessionRegistry {
         status: "error",
         outputs: { run_status: "failed", wake: true },
       });
+      this.metrics?.observeAgentRun({
+        status: "failed",
+        source: "job_wake",
+        durationSeconds: Math.max(0, performance.now() - startedAt) / 1_000,
+      });
       throw error;
     }
-  }
-
-  /** 用户 turn：窄 base；wake：硬名单（禁生图 / 禁 search）。须在 prompt 前调用。 */
-  private applyActivationForPrompt(session: Awaited<ReturnType<SessionFactory["create"]>>, promptSource: "designer" | "system") {
-    const identity = deskIdentityPrompt({
-      agentProvider: this.agentProvider,
-      agentModel: this.agentModel,
-    });
-    const tools = promptSource === "system" ? wakeTools() : narrowBaseTools();
-    applyToolActivation(session, tools, identity);
   }
 
   /**
@@ -150,80 +153,182 @@ export class AgentSessionRegistry {
     selectedArtifactIds: string[] = [],
     promptSource: "designer" | "system" = "designer",
   ) {
+    return this.enqueueThreadPrompt(`${projectId}:${threadId}`, () =>
+      this.runPrompt(projectId, threadId, text, attachments, runId, selectedArtifactIds, promptSource));
+  }
+
+  /** 同一 thread 串行执行 prompt；前序失败不阻断后续排队任务。 */
+  private enqueueThreadPrompt(key: string, task: () => Promise<void>): Promise<void> {
+    const previous = this.promptChains.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(task);
+    const settled = next.then(() => undefined, () => undefined);
+    this.promptChains.set(key, settled);
+    void settled.then(() => {
+      if (this.promptChains.get(key) === settled) this.promptChains.delete(key);
+    });
+    return next;
+  }
+
+  private async runPrompt(
+    projectId: string,
+    threadId: string,
+    text: string,
+    attachments: ChatAttachmentDto[],
+    runId: string,
+    selectedArtifactIds: string[],
+    promptSource: "designer" | "system",
+  ) {
     const key = `${projectId}:${threadId}`;
     const pending = this.get(projectId, threadId);
     const session = await pending;
     const activeRuns = this.activeRunIds.get(key) ?? [];
     activeRuns.push(runId);
     this.activeRunIds.set(key, activeRuns);
-    // 工具闭包读此 map；仅本轮有效
-    this.selectionBySession.set(key, selectedArtifactIds);
+    const context: TurnContext = Object.freeze({
+      projectId,
+      threadId,
+      runId,
+      source: promptSource === "system" ? "job_event" : "interactive",
+      mode: promptSource === "system" ? "wake" : "designer",
+      authority: promptSource === "system" ? "system_event" : "user_explicit",
+      policyRevision: "capability-gate-v1",
+      selectedArtifactIds: Object.freeze([...selectedArtifactIds]),
+    });
     try {
-      // 发现式加载：用户 turn 重置窄 base；JOB wake 用硬名单（禁生图）
-      this.applyActivationForPrompt(session, promptSource);
-      // snapshot 失败不阻断对话，状态栏降级为「暂不可用」
-      const snapshot = await this.desks.snapshot(projectId).catch(() => null);
-      const recentJobs = await this.jobStore?.listRecentForStatus(projectId).catch(() => []) ?? [];
-      const jobsBlock = formatJobsStatusBlock(recentJobs);
-      let memoryUnavailable = false;
-      const recalled = await this.memory?.forPrompt(projectId).catch(() => {
-        memoryUnavailable = true;
-        return undefined;
-      });
-      const memoryBlock = recalled
-        ? recalled.compiledContext
-        : (this.memory && memoryUnavailable ? "[PROJECT_MEMORY unavailable]" : "");
-      const fileNames = snapshot
-        ? await this.files.originalFilenames(projectId, deskFileIds(snapshot)).catch(() => ({}))
-        : {};
-      // 先无 caption 装配一次，拿到 core focus file_ids，再批量 preload（超时则跳过）
-      const draft = assembleDeskContext(snapshot, selectedArtifactIds, {
-        fileNames,
-        userText: text,
-      });
-      const captions = await this.preloadCaptions(projectId, draft.objects, selectedArtifactIds, draft.resolution);
-      const assembled = captions && Object.keys(captions).length > 0
-        ? assembleDeskContext(snapshot, selectedArtifactIds, {
+      const toolState = this.factory.prepareToolBoundary(session);
+      this.cacheContract.observe(session, toolState);
+      await this.turnContext.run(context, async () => {
+        // snapshot 失败不阻断对话，状态栏降级为「暂不可用」
+        const snapshot = await this.desks.snapshot(projectId).catch(() => null);
+        const recentJobs = await this.jobStore?.listRecentForStatus(projectId).catch(() => []) ?? [];
+        const jobsBlock = formatJobsStatusBlock(recentJobs);
+        const jobEntries = jobFrameEntries(recentJobs);
+        let memoryRevision: number | string = "disabled";
+        let memoryBlock = "";
+        let memoryEntries: Record<string, MemoryEntry> = {};
+        if (this.memory) {
+          const recalled = await this.memory.get(projectId).catch(() => null);
+          if (recalled) {
+            memoryRevision = recalled.revision;
+            memoryEntries = recalled.entries;
+            memoryBlock = recalled.compiledContext
+              || compileContext(recalled.entries, recalled.revision);
+          } else {
+            memoryRevision = "unavailable";
+            memoryBlock = "[PROJECT_MEMORY unavailable]";
+          }
+        }
+        const fileNames = snapshot
+          ? await this.files.originalFilenames(projectId, deskFileIds(snapshot)).catch(() => ({}))
+          : {};
+        const aliases = snapshot
+          ? await this.factory.deskAliases(
+              projectId,
+              snapshot.deskState.objects.map((object) => object.artifact_id),
+            )
+          : {};
+        // 先无 caption 装配一次，拿到 core focus file_ids，再批量 preload（超时则跳过）
+        const draft = assembleDeskContext(snapshot, selectedArtifactIds, {
           fileNames,
+          aliases,
           userText: text,
-          captions,
-        })
-        : draft;
-      const aliasById = new Map(assembled.objects.map((o) => [o.id, o.alias]));
-      const attachmentImages = await this.factory.loadAgentImages(projectId, attachments);
-      // Inspect：选中 ∪ 唯一指代结果（assemble 已合并进 inspectPlan）
-      const inspectIds = [
-        ...selectedArtifactIds,
-        ...(assembled.resolution?.unique ? assembled.resolution.resolvedIds : []),
-      ];
-      const { selectedImages, inspectPlan, imageRefs } = await this.loadInspectVisuals(
-        projectId,
-        snapshot,
-        inspectIds,
-        attachments,
-        attachmentImages.length,
-      );
-      const inspectBlock = formatInspectBlock(
-        inspectPlan,
-        attachmentImages.length + 1,
-        imageRefs,
-        aliasById,
-      );
-      const deskBlocks = [
-        assembled.text,
-        jobsBlock,
-        inspectBlock,
-        memoryBlock,
-      ].filter(Boolean).join("\n\n");
-      const promptText = `${agentPrompt(text, attachments)}\n\n${deskBlocks}`;
-      await session.prompt(promptText, {
-        images: [...attachmentImages, ...selectedImages],
-        source: "interactive",
-        streamingBehavior: session.isStreaming ? "followUp" : undefined,
+        });
+        const captions = await this.preloadCaptions(projectId, draft.objects, selectedArtifactIds, draft.resolution);
+        const assembled = captions && Object.keys(captions).length > 0
+          ? assembleDeskContext(snapshot, selectedArtifactIds, {
+            fileNames,
+            aliases,
+            userText: text,
+            captions,
+          })
+          : draft;
+        const aliasById = new Map(assembled.objects.map((o) => [o.id, o.alias]));
+        const attachmentImages = await this.factory.loadAgentImages(projectId, attachments);
+        // Inspect：选中 ∪ 唯一指代结果（assemble 已合并进 inspectPlan）
+        const inspectIds = [
+          ...selectedArtifactIds,
+          ...(assembled.resolution?.unique ? assembled.resolution.resolvedIds : []),
+        ];
+        const { selectedImages, inspectPlan, imageRefs } = await this.loadInspectVisuals(
+          projectId,
+          snapshot,
+          inspectIds,
+          attachments,
+          attachmentImages.length,
+        );
+        const inspectBlock = formatInspectBlock(
+          inspectPlan,
+          attachmentImages.length + 1,
+          imageRefs,
+          aliasById,
+        );
+        const explicitSkills = this.factory.resolveExplicitSkills(session, text);
+        const skillState = this.factory.skillStateSnapshot(session);
+        const preparedFrame = await this.factory.prepareContextFrame(session, runId, {
+          source: context.source,
+          mode: context.mode,
+          authority: context.authority,
+          policyRevision: context.policyRevision,
+          desk: {
+            revision: assembled.revision,
+            fullText: assembled.stateText,
+            requestText: assembled.requestText,
+            manifest: assembled.manifest,
+            priorityArtifactIds: [...new Set([
+              ...assembled.report.focusIds,
+              ...assembled.report.hop1Ids,
+              ...inspectPlan.included.map((entry) => entry.artifactId),
+            ])],
+          },
+          jobs: {
+            revision: sha256(jobEntries),
+            fullText: jobsBlock,
+            entries: jobEntries,
+          },
+          memory: {
+            revision: memoryRevision,
+            fullText: memoryBlock,
+            entries: Object.fromEntries(Object.entries(memoryEntries).map(([key, entry]) => [key, {
+              stableKey: entry.stableKey,
+              family: entry.family,
+              summary: entry.summary,
+              body: entry.body,
+            }])),
+          },
+          inspectText: inspectBlock,
+          toolEpoch: toolState?.toolEpoch ?? 1,
+          activeTools: session.getActiveToolNames(),
+          loadedSkillRevisions: skillState?.loadedRevisions ?? {},
+          emittedSkillRevisions: skillState?.emittedRevisions ?? {},
+          injectedSkills: explicitSkills.injected,
+          userRequest: agentPrompt(text, attachments),
+        });
+        try {
+          await session.prompt(preparedFrame.promptText, {
+            images: [...attachmentImages, ...selectedImages],
+            source: "interactive",
+            streamingBehavior: session.isStreaming ? "followUp" : undefined,
+          });
+        } catch (error) {
+          if (explicitSkills.injected.length > 0) this.factory.forceSkillResync(session);
+          this.factory.markContextCompacted(session);
+          throw error;
+        }
+        try {
+          this.factory.commitContextFrame(session, preparedFrame);
+        } catch (error) {
+          this.factory.markContextCompacted(session);
+          throw error;
+        }
+        await this.writes.awaitRun(runId);
       });
-      await this.writes.awaitRun(runId);
+      this.cacheContract.observe(session, this.factory.toolStateSnapshot(session), { onViolation: "accept" });
     } finally {
-      this.selectionBySession.delete(key);
+      await this.factory.flushToolState(session);
+      await this.factory.flushSkillState(session);
+      await this.factory.flushContextFrame(session);
+      await this.factory.flushDeskAliases(projectId);
+      this.factory.releaseRunContext(runId);
       const index = activeRuns.indexOf(runId);
       if (index >= 0) activeRuns.splice(index, 1);
       if (activeRuns.length === 0) this.activeRunIds.delete(key);

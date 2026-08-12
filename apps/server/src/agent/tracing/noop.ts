@@ -18,6 +18,7 @@ export class NoopTracer implements AgentTracer {
   }
 
   end(_handle: TraceHandle, _out?: EndOptions) {}
+  annotate(_handle: TraceHandle, _outputs: Record<string, unknown>) {}
   recordError(_handle: TraceHandle, _err: MappedError) {}
   async flush() {}
 }

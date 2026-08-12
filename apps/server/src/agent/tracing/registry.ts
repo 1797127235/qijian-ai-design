@@ -24,6 +24,31 @@ export class TraceRegistry {
     const existing = this.byRun.get(attrs.run_id);
     if (existing && !existing.closed) return existing;
     const root = this.tracer.startRoot(attrs);
+    return this.register(attrs, root);
+  }
+
+  /** Register a new product run under a trace root persisted by an earlier process. */
+  startLinkedRoot(attrs: RootAttrs, sourceTraceRootId: string): TraceContext {
+    const existing = this.byRun.get(attrs.run_id);
+    if (existing && !existing.closed) return existing;
+    const root = this.tracer.startSpan(
+      { id: sourceTraceRootId, runId: attrs.run_id },
+      {
+        name: "agent.job_wake",
+        run_type: "chain",
+        inputs: attrs.inputs,
+        metadata: {
+          project_id: attrs.project_id,
+          thread_id: attrs.thread_id,
+          run_id: attrs.run_id,
+          ...attrs.metadata,
+        },
+      },
+    );
+    return this.register(attrs, root);
+  }
+
+  private register(attrs: RootAttrs, root: TraceHandle): TraceContext {
     const ctx: TraceContext = {
       runId: attrs.run_id,
       projectId: attrs.project_id,
@@ -63,6 +88,11 @@ export class TraceRegistry {
   end(handle: TraceHandle | undefined, out?: EndOptions) {
     if (!handle) return;
     this.tracer.end(handle, out);
+  }
+
+  annotate(handle: TraceHandle | undefined, outputs: Record<string, unknown>) {
+    if (!handle) return;
+    this.tracer.annotate(handle, outputs);
   }
 
   recordError(handle: TraceHandle | undefined, err: MappedError) {
@@ -123,6 +153,7 @@ export class TraceRegistry {
     const outputs = {
       ...(base.outputs ?? {}),
       ...(ctx.usageTotals ? { model_usage: ctx.usageTotals } : {}),
+      ...(ctx.cacheFingerprint ? { cache_context: ctx.cacheFingerprint } : {}),
     };
     this.tracer.end(ctx.root, {
       ...base,

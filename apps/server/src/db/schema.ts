@@ -93,7 +93,7 @@ export const chatRuns = pgTable(
 /**
  * Agent 工具调用记录：每次 LLM 触发一个工具就记一行。
  *  - tool_call_id 来自 LLM 输出（用于把工具 result 回填到 LLM 对话）
- *  - cost 是 provider 报告的 token/费用信息，可选
+ *  - turn/token 字段用于把工具结果关联到前后 provider 轮次
  */
 export const chatToolCalls = pgTable(
   "chat_tool_calls",
@@ -106,13 +106,44 @@ export const chatToolCalls = pgTable(
     args: jsonb("args").$type<unknown>().notNull().default(sql`'{}'::jsonb`),
     result: jsonb("result").$type<unknown>(),
     error: text("error"),
-    cost: jsonb("cost").$type<unknown>(),
+    turnIndex: integer("turn_index"),
+    argumentCharacters: integer("argument_characters"),
+    argumentBytes: integer("argument_bytes"),
+    resultCharacters: integer("result_characters"),
+    resultBytes: integer("result_bytes"),
+    promptTokensBefore: integer("prompt_tokens_before"),
+    promptTokensAfter: integer("prompt_tokens_after"),
+    promptTokenDelta: integer("prompt_token_delta"),
+    sharedBatchSize: integer("shared_batch_size"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
   (table) => [
     unique("chat_tool_calls_run_call_unique").on(table.runId, table.toolCallId),
     index("chat_tool_calls_run_status_idx").on(table.runId, table.status),
+  ],
+);
+
+/** 每次 provider 模型请求的精确 token/cache 计量。 */
+export const chatModelTurns = pgTable(
+  "chat_model_turns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id").notNull().references(() => chatRuns.id, { onDelete: "cascade" }),
+    turnIndex: integer("turn_index").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+    promptTokens: integer("prompt_tokens").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    unique("chat_model_turns_run_turn_unique").on(table.runId, table.turnIndex),
+    index("chat_model_turns_run_idx").on(table.runId, table.turnIndex),
   ],
 );
 

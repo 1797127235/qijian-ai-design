@@ -24,7 +24,7 @@
 
 ```bash
 npm install
-docker compose up -d postgres
+docker compose up -d postgres redis
 npm run db:migrate
 npm run dev:server
 ```
@@ -112,6 +112,7 @@ npm run dev:server
 | `REDIS_URL` | `redis://localhost:6379` | BullMQ 调度（业务态在 PG） |
 | `TASK_QUEUE_PREFIX` | `qijian` | BullMQ key 前缀 |
 | `TASK_WORKER_CONCURRENCY` | `4` | Worker 全局并发（含生图与命名） |
+| `WORKER_METRICS_PORT` | `9465` | Worker readiness / Prometheus 端口 |
 | `TASK_PROJECT_IMAGE_CONCURRENCY` | `4` | 同项目图像任务 active 上限（排队而非直接失败） |
 | `TASK_IMAGE_MAX_ATTEMPTS` | `3` | 生图自动重试含首次上限（明确白跑才重试） |
 | `TASK_IMAGE_BACKOFF_MS` | `2000` | 生图重试退避基数 ms（×2，封顶 60s） |
@@ -132,6 +133,16 @@ npm test               # 测试
 npm run db:generate    # 生成迁移
 npm run db:migrate     # 执行迁移
 ```
+
+## 运行监测
+
+API 在 `/health`、`/ready`、`/metrics` 分别提供存活、依赖就绪和 Prometheus 指标；Worker 在 9465 端口提供同类接口。启动本地监测后台：
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+Grafana 运行看板位于 `http://localhost:3001/d/qijian-runtime`，Prometheus 和 Alertmanager 分别位于 9090、9093。指标口径、告警阈值、关联追踪和故障演练见 [Agent 运行监测手册](docs/runbooks/observability.md)。
 
 ## 接口概览
 
@@ -160,8 +171,10 @@ npm run db:migrate     # 执行迁移
 - [设计系统](DESIGN.md)
 - [待办](TODOS.md)
 - [资产任务队列运维](docs/runbooks/asset-task-queue.md)
+- [Agent 运行监测与告警](docs/runbooks/observability.md)
 - [ADR 0014 BullMQ](docs/adr/0014-bullmq-task-queue-for-asset-batches.md)
 - [画布连线 + 面板生图](docs/canvas-connections-generate-design.md)
 - [局部重绘](docs/canvas-inpainting-design.md)
+- [Agent 上下文管理当前实现](docs/agent-context-management.md)
 - [Agent 桌面上下文装配](docs/agent-desk-context-assembly.md)
 - [架构决策记录](docs/adr/)（含历史流水线决策，以画布现状为准）

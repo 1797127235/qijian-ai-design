@@ -448,22 +448,32 @@ export class ArtifactService {
     name: string;
     nameVersion: number;
     generationToken: string;
+    /**
+     * prepare 快照（task.display_name_source）：匹配「入队时」列上 source。
+     * system ≈ 列 null；model ≈ 列 model。与 writeSource 分离。
+     */
     displayNameSource: "system" | "model";
+    /** 实际写入列：model=LLM，system=启发式兜底。默认 model（兼容旧调用）。 */
+    writeSource?: "system" | "model";
     force?: boolean;
   }): Promise<boolean> {
-    // prepare 时若尚无 model 名，快照为 system（列上 source 多为 null）
-    const expectedSource = input.displayNameSource === "model"
-      ? eq(artifacts.displayNameSource, "model")
-      : sql`${artifacts.displayNameSource} IS NULL`;
+    const writeSource = input.writeSource ?? "model";
+    // force：覆盖 null/model/system，永不碰 user；非 force：按 prepare 快照匹配
+    const expectedSource = input.force
+      ? sql`(${artifacts.displayNameSource} IS NULL OR ${artifacts.displayNameSource} IN ('model', 'system'))`
+      : input.displayNameSource === "model"
+        ? eq(artifacts.displayNameSource, "model")
+        : sql`${artifacts.displayNameSource} IS NULL`;
     const writableName = input.force ? sql`true` : sql`${artifacts.displayName} IS NULL`;
     const [row] = await this.db.update(artifacts).set({
       displayName: input.name.trim().slice(0, 32),
-      displayNameSource: "model",
+      displayNameSource: writeSource,
       displayNameUpdatedAt: new Date(),
     }).where(and(
       eq(artifacts.id, input.artifactId),
       eq(artifacts.displayNameVersion, input.nameVersion),
       eq(artifacts.displayNameGenerationToken, input.generationToken),
+      sql`${artifacts.displayNameSource} IS DISTINCT FROM 'user'`,
       expectedSource,
       writableName,
     )).returning({ projectId: artifacts.projectId });

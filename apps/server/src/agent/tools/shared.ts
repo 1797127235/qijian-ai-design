@@ -3,7 +3,7 @@
  *  - 工具的 ok / fail 协议：{content: [{type:"text", text}], details}
  *  - place/ownedCurrent 工具内复用的高层动作
  *  - 工具不直接 import service，都走 ToolDependencies
- *  - agentSession / identityPrompt 供 search_tools 动态激活
+ *  - agentSession 供 search_tools additive activation
  */
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ArtifactService } from "../../services/artifact-service.js";
@@ -17,6 +17,10 @@ import type { TaskCancellationService } from "../../tasks/cancellation.js";
 import type { ProjectMemoryService } from "../memory/service.js";
 import type { EventSink } from "../events.js";
 import { mapError, type ErrorCode } from "../tracing/index.js";
+import type { TurnContextScope } from "../capability-gate.js";
+import type { SessionToolState } from "./session-tool-state.js";
+import type { SessionSkillState } from "../skills/session-skill-state.js";
+import type { ContextResourceStore } from "../context/resource-store.js";
 
 export interface ToolDependencies {
   artifacts: ArtifactService;
@@ -37,8 +41,16 @@ export interface ToolDependencies {
 
 export interface ToolSessionRef {
   threadId: string;
-  /** 当前 run（每轮 prompt 变化，用 getter） */
   runId: () => string | undefined;
+}
+
+export interface ToolRuntime {
+  threadId: string;
+  turnContext: TurnContextScope;
+  agentSession: () => AgentSession | undefined;
+  toolState: () => SessionToolState | undefined;
+  skillState: () => SessionSkillState | undefined;
+  resourceStore: ContextResourceStore;
 }
 
 export interface ToolContext {
@@ -50,8 +62,9 @@ export interface ToolContext {
   session?: ToolSessionRef;
   /** pi session（create 后注入；search_tools 激活工具用） */
   agentSession?: () => AgentSession | undefined;
-  /** 稳定身份 system 前缀 */
-  identityPrompt?: () => string;
+  toolState?: () => SessionToolState | undefined;
+  skillState?: () => SessionSkillState | undefined;
+  resourceStore: ContextResourceStore;
   changed: (artifactId?: string, undoable?: boolean) => void;
   ownedCurrent: (artifactId: string) => ReturnType<ArtifactService["currentArtifact"]>;
   place: (artifactId: string, kind: string, x: number, y: number, rot?: number, width?: number) => Promise<void>;
@@ -95,12 +108,7 @@ export function storedFileInputRefs(fileIds: string[] | undefined) {
 export function createToolContext(
   projectId: string,
   deps: ToolDependencies,
-  selectedArtifactIds: () => string[] = () => [],
-  session?: ToolSessionRef,
-  activation?: {
-    agentSession: () => AgentSession | undefined;
-    identityPrompt: () => string;
-  },
+  runtime: ToolRuntime,
 ): ToolContext {
   const changed = (artifactId?: string, undoable = false) => {
     deps.emit({ type: "object_changed", projectId, artifactId, undoable });
@@ -124,10 +132,15 @@ export function createToolContext(
   return {
     projectId,
     deps,
-    selectedArtifactIds,
-    session,
-    agentSession: activation?.agentSession,
-    identityPrompt: activation?.identityPrompt,
+    selectedArtifactIds: () => [...runtime.turnContext.current().selectedArtifactIds],
+    session: {
+      threadId: runtime.threadId,
+      runId: () => runtime.turnContext.maybeCurrent()?.runId,
+    },
+    agentSession: runtime.agentSession,
+    toolState: runtime.toolState,
+    skillState: runtime.skillState,
+    resourceStore: runtime.resourceStore,
     changed,
     ownedCurrent,
     place,

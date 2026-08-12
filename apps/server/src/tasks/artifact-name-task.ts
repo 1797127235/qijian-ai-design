@@ -9,7 +9,10 @@
 import { randomUUID } from "node:crypto";
 import type { ServerConfig } from "../config.js";
 import type { ArtifactService } from "../services/artifact-service.js";
-import { suggestArtifactDisplayName } from "../services/artifact-display-namer.js";
+import {
+  heuristicDisplayNameFromPrompt,
+  suggestArtifactDisplayName,
+} from "../services/artifact-display-namer.js";
 import type { ArtifactNameTaskV1 } from "./types.js";
 import { TaskStore } from "./task-store.js";
 
@@ -27,7 +30,8 @@ export class ArtifactNameTaskService {
 
   /**
    * 入队一条命名任务（不执行 LLM）。
-   * @returns task_id；未配置 TEXT_API / 用户已命名 / 无可覆盖名时返回 undefined（调用方应视为「跳过」）。
+   * 无 TEXT 配置时仍可入队：handle 走 prompt 启发式 + source=system。
+   * @returns task_id；用户已命名 / 无可覆盖名 / 空意图时返回 undefined。
    */
   async submit(input: {
     artifactId: string;
@@ -36,9 +40,7 @@ export class ArtifactNameTaskService {
     force?: boolean;
     parentDisplayName?: string;
   }): Promise<string | undefined> {
-    if (!this.config.textEndpoint || !this.config.textApiKey || !input.namingInput.trim()) {
-      return undefined;
-    }
+    if (!input.namingInput.trim()) return undefined;
     // 在事务里抬升 name_version 并签发 generation_token；user 名则直接拒绝 prepare
     const prepared = await this.artifacts.prepareModelDisplayName(input.artifactId, input.force);
     if (!prepared) return undefined;
@@ -64,15 +66,27 @@ export class ArtifactNameTaskService {
 
   /**
    * Worker 执行体。始终应能被 finalize 为 succeeded：
-   * - provider 无有效名 → applied=false, reason=provider_no_valid_name
+   * - LLM 名 → source=model；启发式 → source=system
+   * - 两者皆无 → applied=false, reason=provider_no_valid_name
    * - token/用户挡写 → applied=false, reason=token_or_user_blocked
    * - 写库成功 → applied=true
    * 禁止在此 throw 导致「图像已成功但 name task failed」误伤批次观测（除非配置缺失等硬错误）。
    */
   async handle(task: ArtifactNameTaskV1) {
-    const name = await this.suggestWithRetry(task.naming_input);
+    const llmName = await this.suggestWithRetry(task.naming_input);
+    const heuristic = llmName ? undefined : heuristicDisplayNameFromPrompt(task.naming_input);
+    const name = llmName ?? heuristic;
     if (!name) {
+      console.warn(
+        `[artifact.name] provider_no_valid_name artifact=${task.artifact_id} model=${this.config.textModel ?? "?"}`,
+      );
       return softNameResult(task.artifact_id, null, "provider_no_valid_name");
+    }
+    const writeSource = llmName ? "model" : "system";
+    if (!llmName) {
+      console.warn(
+        `[artifact.name] heuristic_fallback artifact=${task.artifact_id} name=${name}`,
+      );
     }
     const applied = await this.artifacts.applyGeneratedDisplayName({
       artifactId: task.artifact_id,
@@ -80,18 +94,23 @@ export class ArtifactNameTaskService {
       nameVersion: task.name_version,
       generationToken: task.generation_token,
       displayNameSource: task.display_name_source,
+      writeSource,
       force: task.force,
     });
+    if (!applied) {
+      console.warn(`[artifact.name] token_or_user_blocked artifact=${task.artifact_id} name=${name}`);
+    }
     return softNameResult(
       task.artifact_id,
       name,
-      applied ? "applied" : "token_or_user_blocked",
+      applied ? (llmName ? "applied" : "heuristic_applied") : "token_or_user_blocked",
       applied,
     );
   }
 
   /** 带短退避的文本起名；全部失败返回 undefined。 */
   private async suggestWithRetry(namingInput: string): Promise<string | undefined> {
+    if (!this.config.textEndpoint || !this.config.textApiKey) return undefined;
     for (let attempt = 1; attempt <= NAME_ATTEMPTS; attempt++) {
       const name = await suggestArtifactDisplayName(this.config, namingInput);
       if (name) return name;
@@ -113,7 +132,7 @@ function formatNamingInput(namingInput: string, parentDisplayName?: string): str
 function softNameResult(
   artifactId: string,
   displayName: string | null,
-  reason: "applied" | "provider_no_valid_name" | "token_or_user_blocked",
+  reason: "applied" | "heuristic_applied" | "provider_no_valid_name" | "token_or_user_blocked",
   applied = false,
 ) {
   return { artifactId, displayName, applied, reason };

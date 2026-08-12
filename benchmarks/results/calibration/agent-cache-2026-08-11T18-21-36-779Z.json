@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-11T18:21:36.779Z",
+  "finishedAt": "2026-08-11T18:22:05.819Z",
+  "baseUrl": "http://127.0.0.1:8787",
+  "model": "codex2api/grok-4.5-latest",
+  "imageModel": "grok-imagine-image-quality",
+  "verdict": "fail",
+  "functionalPassed": true,
+  "cache": {
+    "schemaVersion": 1,
+    "verdict": "fail",
+    "cacheSignal": true,
+    "thresholds": {
+      "eligibleReadHitRate": 0.92,
+      "eligibleTurnHitRate": 0.9,
+      "eligibleTurnPassRate": 0.9,
+      "allTrafficEffectiveReuseRate": 0.9,
+      "minimumEligibleTurns": 5
+    },
+    "allTraffic": {
+      "turns": 10,
+      "input": 9235,
+      "output": 162,
+      "cacheRead": 31872,
+      "cacheWrite": 0,
+      "totalTokens": 41269,
+      "readHitRate": 0.7753423991047753,
+      "effectiveReuseRate": 0.7753423991047753,
+      "turnPassRate": 0.6
+    },
+    "eligible": {
+      "turns": 8,
+      "input": 4220,
+      "output": 64,
+      "cacheRead": 31616,
+      "cacheWrite": 0,
+      "totalTokens": 35900,
+      "readHitRate": 0.8822413215760687,
+      "effectiveReuseRate": 0.8822413215760687,
+      "turnPassRate": 0.75
+    },
+    "byScenario": {
+      "steady_dialogue": {
+        "allTraffic": {
+          "turns": 10,
+          "input": 9235,
+          "output": 162,
+          "cacheRead": 31872,
+          "cacheWrite": 0,
+          "totalTokens": 41269,
+          "readHitRate": 0.7753423991047753,
+          "effectiveReuseRate": 0.7753423991047753,
+          "turnPassRate": 0.6
+        },
+        "eligible": {
+          "turns": 8,
+          "input": 4220,
+          "output": 64,
+          "cacheRead": 31616,
+          "cacheWrite": 0,
+          "totalTokens": 35900,
+          "readHitRate": 0.8822413215760687,
+          "effectiveReuseRate": 0.8822413215760687,
+          "turnPassRate": 0.75
+        }
+      }
+    },
+    "checks": [
+      {
+        "id": "provider_cache_signal",
+        "passed": true,
+        "actual": true,
+        "target": true
+      },
+      {
+        "id": "minimum_eligible_turns",
+        "passed": true,
+        "actual": 8,
+        "target": 5
+      },
+      {
+        "id": "eligible_read_hit_rate",
+        "passed": false,
+        "actual": 0.8822413215760687,
+        "target": 0.92
+      },
+      {
+        "id": "eligible_turn_pass_rate",
+        "passed": false,
+        "actual": 0.75,
+        "target": 0.9
+      },
+      {
+        "id": "all_traffic_effective_reuse_rate",
+        "passed": false,
+        "actual": 0.7753423991047753,
+        "target": 0.9
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "steady_dialogue",
+      "description": "空桌连续纯文本对话，验证 system/tools/history 稳定前缀。",
+      "status": "passed",
+      "durationMs": 29039,
+      "modelTurns": 10,
+      "tools": [
+        "search_tools"
+      ],
+      "failures": []
+    }
+  ],
+  "modelTurns": [
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 1,
+      "modelTurnIndex": 1,
+      "cohort": "cold",
+      "turnKind": "thread_first",
+      "usage": {
+        "input": 2140,
+        "output": 45,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 2313
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 1,
+      "modelTurnIndex": 2,
+      "cohort": "cold",
+      "turnKind": "tool_followup",
+      "usage": {
+        "input": 2875,
+        "output": 53,
+        "cacheRead": 128,
+        "cacheWrite": 0,
+        "totalTokens": 3056
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 2,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 1536,
+        "output": 8,
+        "cacheRead": 1792,
+        "cacheWrite": 0,
+        "totalTokens": 3336
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 3,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 329,
+        "output": 8,
+        "cacheRead": 3328,
+        "cacheWrite": 0,
+        "totalTokens": 3665
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 4,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 402,
+        "output": 8,
+        "cacheRead": 3584,
+        "cacheWrite": 0,
+        "totalTokens": 3994
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 5,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 347,
+        "output": 8,
+        "cacheRead": 3968,
+        "cacheWrite": 0,
+        "totalTokens": 4323
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 6,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 420,
+        "output": 8,
+        "cacheRead": 4224,
+        "cacheWrite": 0,
+        "totalTokens": 4652
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 7,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 365,
+        "output": 8,
+        "cacheRead": 4608,
+        "cacheWrite": 0,
+        "totalTokens": 4981
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 8,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 438,
+        "output": 8,
+        "cacheRead": 4864,
+        "cacheWrite": 0,
+        "totalTokens": 5310
+      }
+    },
+    {
+      "scenarioId": "steady_dialogue",
+      "runIndex": 9,
+      "modelTurnIndex": 1,
+      "cohort": "eligible",
+      "turnKind": "steady_user",
+      "usage": {
+        "input": 383,
+        "output": 8,
+        "cacheRead": 5248,
+        "cacheWrite": 0,
+        "totalTokens": 5639
+      }
+    }
+  ]
+}

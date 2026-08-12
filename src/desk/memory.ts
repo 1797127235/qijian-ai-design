@@ -32,10 +32,10 @@ export function groupMemoryEntries(state: ProjectMemoryState): MemorySection[] {
   return sections;
 }
 
-export type MemoryCardLayout = { x: number; y: number; hidden: boolean };
+/** 停靠卡状态：hidden=完全移除（工具栏开关）；collapsed=收成左侧书脊（悬浮展开） */
+export type MemoryCardLayout = { hidden: boolean; collapsed: boolean };
 
-/** 默认放在画布原点左侧，避开资产常用区域 */
-export const DEFAULT_MEMORY_CARD_LAYOUT: MemoryCardLayout = { x: -400, y: 40, hidden: false };
+export const DEFAULT_MEMORY_CARD_LAYOUT: MemoryCardLayout = { hidden: false, collapsed: false };
 
 const storageKey = (projectId: string) => `desk-memory-card:${projectId}`;
 
@@ -44,13 +44,31 @@ export function loadMemoryCardLayout(projectId: string): MemoryCardLayout {
     const raw = localStorage.getItem(storageKey(projectId));
     if (!raw) return { ...DEFAULT_MEMORY_CARD_LAYOUT };
     const parsed = JSON.parse(raw) as Partial<MemoryCardLayout>;
-    if (typeof parsed.x !== "number" || typeof parsed.y !== "number") {
-      return { ...DEFAULT_MEMORY_CARD_LAYOUT };
-    }
-    return { x: parsed.x, y: parsed.y, hidden: parsed.hidden === true };
+    return { hidden: parsed.hidden === true, collapsed: parsed.collapsed === true };
   } catch {
     return { ...DEFAULT_MEMORY_CARD_LAYOUT };
   }
+}
+
+/** 全部条目中最新的 updatedAt；无条目返回 undefined */
+export function latestMemoryUpdatedAt(state: ProjectMemoryState): string | undefined {
+  let latest: string | undefined;
+  for (const entry of Object.values(state.entries)) {
+    if (!latest || entry.updatedAt > latest) latest = entry.updatedAt;
+  }
+  return latest;
+}
+
+/** 「3 条 · 刚刚更新」里的相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 */
+export function formatMemoryRelativeTime(iso: string, now: number = Date.now()): string {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return "";
+  const minutes = Math.max(0, Math.floor((now - at) / 60_000));
+  if (minutes < 1) return "刚刚更新";
+  if (minutes < 60) return `${minutes} 分钟前更新`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前更新`;
+  return `${Math.floor(hours / 24)} 天前更新`;
 }
 
 export function saveMemoryCardLayout(projectId: string, layout: MemoryCardLayout): void {

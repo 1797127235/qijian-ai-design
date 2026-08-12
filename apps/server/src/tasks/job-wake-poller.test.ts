@@ -20,14 +20,17 @@ describe("TaskJobWakePoller", () => {
       createdAt: new Date().toISOString(),
     } as AgentJobDto;
     const onJobTerminal = vi.fn();
+    const onTerminal = vi.fn();
     const poller = new TaskJobWakePoller(
       { listGlobalAfter: async (cursor) => events.filter((event) => event.id > cursor) },
       { get: async () => job },
       { onJobTerminal },
+      onTerminal,
     );
 
     expect(await poller.pollOnce()).toEqual({ scanned: 2, terminal: 1, cursor: 2 });
     expect(await poller.pollOnce()).toEqual({ scanned: 0, terminal: 0, cursor: 2 });
     expect(onJobTerminal).toHaveBeenCalledOnce();
+    expect(onTerminal).toHaveBeenCalledWith(job);
   });
 });

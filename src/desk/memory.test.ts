@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectMemoryEntry, ProjectMemoryState } from "../lib/api";
 import {
   DEFAULT_MEMORY_CARD_LAYOUT,
+  formatMemoryRelativeTime,
   groupMemoryEntries,
+  latestMemoryUpdatedAt,
   loadMemoryCardLayout,
   saveMemoryCardLayout,
 } from "./memory";
@@ -73,7 +75,45 @@ describe("memory card layout", () => {
 
   it("save 后能 load 回来", () => {
     stubStorage();
-    saveMemoryCardLayout("p1", { x: 12, y: 34, hidden: true });
-    expect(loadMemoryCardLayout("p1")).toEqual({ x: 12, y: 34, hidden: true });
+    saveMemoryCardLayout("p1", { hidden: true, collapsed: true });
+    expect(loadMemoryCardLayout("p1")).toEqual({ hidden: true, collapsed: true });
+  });
+
+  it("旧版 x/y 记录按默认收起态读取", () => {
+    const data = stubStorage();
+    data.set("desk-memory-card:p-old", JSON.stringify({ x: 12, y: 34, hidden: true }));
+    expect(loadMemoryCardLayout("p-old")).toEqual({ hidden: true, collapsed: false });
+  });
+});
+
+describe("latestMemoryUpdatedAt", () => {
+  it("返回最新条目的 updatedAt", () => {
+    const state = stateWith([
+      entry({ stableKey: "old", updatedAt: "2026-01-01T00:00:00.000Z" }),
+      entry({ stableKey: "new", updatedAt: "2026-03-01T00:00:00.000Z" }),
+    ]);
+    expect(latestMemoryUpdatedAt(state)).toBe("2026-03-01T00:00:00.000Z");
+  });
+
+  it("空记忆返回 undefined", () => {
+    expect(latestMemoryUpdatedAt(stateWith([]))).toBeUndefined();
+  });
+});
+
+describe("formatMemoryRelativeTime", () => {
+  const now = Date.parse("2026-08-11T12:00:00.000Z");
+
+  it("一分钟内为刚刚更新", () => {
+    expect(formatMemoryRelativeTime("2026-08-11T11:59:40.000Z", now)).toBe("刚刚更新");
+  });
+
+  it("按分钟、小时、天递进", () => {
+    expect(formatMemoryRelativeTime("2026-08-11T11:30:00.000Z", now)).toBe("30 分钟前更新");
+    expect(formatMemoryRelativeTime("2026-08-11T09:00:00.000Z", now)).toBe("3 小时前更新");
+    expect(formatMemoryRelativeTime("2026-08-09T12:00:00.000Z", now)).toBe("2 天前更新");
+  });
+
+  it("坏时间返回空串", () => {
+    expect(formatMemoryRelativeTime("not-a-date", now)).toBe("");
   });
 });

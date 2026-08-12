@@ -17,6 +17,7 @@ import type { EventSink, ServerEvent } from "./events.js";
 import type { AgentSessionRegistry } from "./session-registry.js";
 import type { TraceRegistry } from "./tracing/index.js";
 import { mapErrorFromUnknown, truncateText } from "./tracing/index.js";
+import type { RuntimeMetrics } from "../observability/metrics.js";
 
 /** 客户端消息 schema：prompt / stop 两类。 */
 const clientMessageSchema = z.discriminatedUnion("type", [
@@ -52,6 +53,7 @@ export class ChatGateway {
     private readonly sessions: AgentSessionRegistry,
     private readonly chats: ChatService,
     private readonly traces?: TraceRegistry,
+    private readonly metrics?: RuntimeMetrics,
   ) {}
 
   /** 新连接：登记到对应 project 的连接组 + 推一条 connected 事件。 */
@@ -115,6 +117,7 @@ export class ChatGateway {
       if (saved.created) this.namer?.kick(projectId, message.text);
       if (saved.created && saved.run) {
         const runId = saved.run.id;
+        const runStartedAt = performance.now();
         // H7：捕获 run_id 常量；root 生命周期可晚于 H2 finish
         if (this.traces?.enabled) {
           const textCap = truncateText(saved.message.text ?? "");
@@ -154,6 +157,11 @@ export class ChatGateway {
             error: mapped,
             outputs: { run_status: status },
           });
+          this.metrics?.observeAgentRun({
+            status,
+            source: "interactive",
+            durationSeconds: Math.max(0, performance.now() - runStartedAt) / 1_000,
+          });
           return;
         }
         // H2：loop 跑完 ≠ 业务成功；按本 run 工具结果收口
@@ -166,6 +174,11 @@ export class ChatGateway {
             ? mapErrorFromUnknown(outcome.error ?? "任务失败")
             : undefined,
           outputs: { run_status: outcome.status },
+        });
+        this.metrics?.observeAgentRun({
+          status: outcome.status,
+          source: "interactive",
+          durationSeconds: Math.max(0, performance.now() - runStartedAt) / 1_000,
         });
       }
     } catch (error) {

@@ -10,6 +10,7 @@ export type {
   ProjectMemoryState,
   ProjectSummary,
   ServerEvent,
+  SkillSummary,
   StoredChatMessage,
   StoredFile,
   StoredToolCall,

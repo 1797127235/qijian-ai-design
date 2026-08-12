@@ -3,7 +3,7 @@
  * 这里只放「与 schema 形状对齐，但 Date 变 ISO string」的无逻辑转换。
  * 真正业务（runStatusMessage 注入状态文案、formatChatContext 拼 prompt 上下文）也在本文件。
  */
-import { chatMessages, chatRuns, chatThreads, chatToolCalls } from "../../db/schema.js";
+import { chatMessages, chatModelTurns, chatRuns, chatThreads, chatToolCalls } from "../../db/schema.js";
 
 export type ChatRole = "user" | "assistant";
 
@@ -61,7 +61,31 @@ export interface ChatToolCallDto {
   args: unknown;
   result?: unknown;
   error?: string;
-  cost?: unknown;
+  turnIndex?: number;
+  argumentCharacters?: number;
+  argumentBytes?: number;
+  resultCharacters?: number;
+  resultBytes?: number;
+  promptTokensBefore?: number;
+  promptTokensAfter?: number;
+  promptTokenDelta?: number;
+  sharedBatchSize?: number;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export interface ChatModelTurnDto {
+  id: string;
+  runId: string;
+  turnIndex: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  promptTokens: number;
+  totalTokens: number;
+  cacheHitRate?: number;
   startedAt: string;
   finishedAt?: string;
 }
@@ -155,7 +179,34 @@ export function toToolCallDto(row: typeof chatToolCalls.$inferSelect): ChatToolC
     args: clientSafeToolPayload(row.args),
     result: row.result == null ? undefined : clientSafeToolPayload(row.result),
     error: clientSafeError(row.error),
-    cost: row.cost ?? undefined,
+    turnIndex: row.turnIndex ?? undefined,
+    argumentCharacters: row.argumentCharacters ?? undefined,
+    argumentBytes: row.argumentBytes ?? undefined,
+    resultCharacters: row.resultCharacters ?? undefined,
+    resultBytes: row.resultBytes ?? undefined,
+    promptTokensBefore: row.promptTokensBefore ?? undefined,
+    promptTokensAfter: row.promptTokensAfter ?? undefined,
+    promptTokenDelta: row.promptTokenDelta ?? undefined,
+    sharedBatchSize: row.sharedBatchSize ?? undefined,
+    startedAt: row.startedAt.toISOString(),
+    finishedAt: row.finishedAt?.toISOString(),
+  };
+}
+
+export function toModelTurnDto(row: typeof chatModelTurns.$inferSelect): ChatModelTurnDto {
+  const cacheDenominator = row.inputTokens + row.cacheReadTokens;
+  return {
+    id: row.id,
+    runId: row.runId,
+    turnIndex: row.turnIndex,
+    model: row.model,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    cacheReadTokens: row.cacheReadTokens,
+    cacheWriteTokens: row.cacheWriteTokens,
+    promptTokens: row.promptTokens,
+    totalTokens: row.totalTokens,
+    cacheHitRate: cacheDenominator > 0 ? row.cacheReadTokens / cacheDenominator : undefined,
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt?.toISOString(),
   };

@@ -10,6 +10,7 @@ export class BoundedAsyncQueue {
   constructor(
     private readonly maxSize: number,
     private readonly concurrency = 2,
+    private readonly onDrop?: (droppedTotal: number) => void,
   ) {}
 
   get size() { return this.q.length; }
@@ -19,9 +20,7 @@ export class BoundedAsyncQueue {
     if (this.q.length >= this.maxSize) {
       this.q.shift();
       this.dropped += 1;
-      if (this.dropped === 1 || this.dropped % 20 === 0) {
-        console.warn(`[langsmith] outbound queue full; dropped=${this.dropped}`);
-      }
+      this.onDrop?.(this.dropped);
     }
     this.q.push(task);
     this.pump();
@@ -34,9 +33,7 @@ export class BoundedAsyncQueue {
       // Promise.resolve().then 包一层，同步 throw 也走 catch/finally，避免 active 泄漏
       void Promise.resolve()
         .then(task)
-        .catch((error) => {
-          console.warn("[langsmith] export failed:", error instanceof Error ? error.message : error);
-        })
+        .catch(() => undefined)
         .finally(() => {
           this.active -= 1;
           this.pump();

@@ -15,6 +15,7 @@ describe("NoopTracer", () => {
     });
     const child = t.startSpan(root, { name: "tool.x", run_type: "tool" });
     t.end(child, { status: "ok" });
+    t.annotate(child, { prompt_token_delta: 12 });
     t.recordError(root, { error_code: "INTERNAL", message: "x" });
     expect(async () => t.flush()).not.toThrow();
   });

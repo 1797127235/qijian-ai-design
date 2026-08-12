@@ -41,7 +41,13 @@ describe("ChatGateway run lifecycle", () => {
       summarizeRunTools: vi.fn().mockResolvedValue({ status: "completed" }),
       finishRun: vi.fn().mockResolvedValue(undefined),
     };
-    const gateway = new ChatGateway(sessions as never, chats as never);
+    const observeAgentRun = vi.fn();
+    const gateway = new ChatGateway(
+      sessions as never,
+      chats as never,
+      undefined,
+      { observeAgentRun } as never,
+    );
 
     await receive(gateway, socket(), { type: "prompt", text: "继续设计", threadId: "thread-1" });
 
@@ -49,6 +55,10 @@ describe("ChatGateway run lifecycle", () => {
     expect(sessions.prompt).toHaveBeenCalledWith("project-1", "thread-1", "继续设计", [], "run-1", []);
     expect(chats.summarizeRunTools).toHaveBeenCalledWith("run-1");
     expect(chats.finishRun).toHaveBeenCalledWith("run-1", "completed", undefined);
+    expect(observeAgentRun).toHaveBeenCalledWith(expect.objectContaining({
+      status: "completed",
+      source: "interactive",
+    }));
   });
 
   it("marks the run failed when tools report business failure", async () => {

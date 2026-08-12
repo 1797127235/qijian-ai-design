@@ -13,7 +13,14 @@ import { ImageTaskExecutor } from "./tasks/image-task-executor.js";
 import { AssetTaskWorker } from "./tasks/bullmq/worker.js";
 import { TaskStore } from "./tasks/task-store.js";
 import { ArtifactNameTaskService } from "./tasks/artifact-name-task.js";
+import { createAgentTracer } from "./agent/tracing/index.js";
+import { RuntimeMetrics } from "./observability/metrics.js";
+import { StructuredLogger } from "./observability/logger.js";
+import { createMetricsServer } from "./observability/metrics-server.js";
+import { WorkerRuntimeReadiness } from "./observability/worker-readiness.js";
 const config = loadConfig();
+const metrics = new RuntimeMetrics("qijian-worker");
+const logger = new StructuredLogger("qijian-worker");
 const { db, pool } = createDatabase(config);
 const artifacts = new ArtifactService(db);
 const files = new FileStorage(db, config);
@@ -23,19 +30,46 @@ const executor = new ImageTaskExecutor(files, images, artifacts);
 const taskStore = new TaskStore(db);
 // 命名：图像成功后由 worker 再 submit/handle 软任务
 const names = new ArtifactNameTaskService(taskStore, artifacts, config);
+const tracer = createAgentTracer(config, {
+  onDrop: (droppedTotal) => {
+    metrics.observeTraceDrop();
+    if (droppedTotal === 1 || droppedTotal % 20 === 0) {
+      logger.warn("trace_export_queue_dropped", { dropped_total: droppedTotal });
+    }
+  },
+  onError: (error) => {
+    metrics.observeTraceError();
+    logger.warn("trace_export_failed", { error: error instanceof Error ? error.message : String(error) });
+  },
+});
 const worker = new AssetTaskWorker(
   config,
   taskStore,
   new GenerationOperationStore(db),
   executor,
   names,
-  (error) => console.warn("[task-worker] BullMQ error:", error.message),
+  (error) => logger.warn("bullmq_worker_error", { error: error.message }),
+  tracer,
+  metrics,
+  logger,
 );
 
-console.log(`Asset task worker started (concurrency=${config.taskWorkerConcurrency})`);
+const readiness = new WorkerRuntimeReadiness(pool, {
+  pingRedis: () => worker.pingRedis(),
+  isRunning: () => worker.worker.isRunning(),
+}, metrics);
+const metricsServer = createMetricsServer(metrics, () => readiness.check());
+metricsServer.listen(config.workerMetricsPort, () => {
+  logger.info("worker_started", {
+    concurrency: config.taskWorkerConcurrency,
+    metrics_port: config.workerMetricsPort,
+  });
+});
 
 async function shutdown() {
+  await new Promise<void>((resolve) => metricsServer.close(() => resolve()));
   await worker.close();
+  await tracer.flush();
   await pool.end();
 }
 process.once("SIGINT", () => void shutdown());

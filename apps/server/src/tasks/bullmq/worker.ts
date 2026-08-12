@@ -20,6 +20,11 @@ import {
 } from "../types.js";
 import { createBullMqConnectionOptions } from "./connection.js";
 import { ASSET_TASK_QUEUE_NAME } from "./queue.js";
+import { NoopTracer } from "../../agent/tracing/noop.js";
+import type { AgentTracer } from "../../agent/tracing/types.js";
+import { runTaskWithTrace } from "../task-tracing.js";
+import type { RuntimeMetrics } from "../../observability/metrics.js";
+import type { StructuredLogger } from "../../observability/logger.js";
 
 type WorkerConfig = Pick<
   ServerConfig,
@@ -30,6 +35,14 @@ type WorkerConfig = Pick<
   | "taskImageMaxAttempts"
   | "taskImageBackoffMs"
 >;
+
+function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Redis health probe timed out")), timeoutMs);
+    timer.unref();
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
 
 export class AssetTaskWorker {
   readonly worker: Worker;
@@ -45,6 +58,9 @@ export class AssetTaskWorker {
     private readonly executor: ImageTaskExecutor,
     private readonly names?: ArtifactNameTaskService,
     onError: (error: Error) => void = () => undefined,
+    private readonly tracer: AgentTracer = new NoopTracer(),
+    private readonly metrics?: RuntimeMetrics,
+    private readonly logger?: StructuredLogger,
   ) {
     this.projectImageConcurrency = config.taskProjectImageConcurrency;
     this.imageMaxAttempts = config.taskImageMaxAttempts;
@@ -74,6 +90,44 @@ export class AssetTaskWorker {
     if (!row) return { status: "discarded", reason: "task_missing" };
     // 幂等：重复投递时直接返回已写入的终态结果
     if (isTerminalTaskStatus(row.status)) return row.result ?? { status: row.status };
+
+    const startedAt = performance.now();
+    try {
+      const result = await runTaskWithTrace(this.tracer, row, () => this.processAccepted(job, task, row));
+      const status = result && typeof result === "object" && typeof (result as { status?: unknown }).status === "string"
+        ? (result as { status: string }).status
+        : "succeeded";
+      const durationSeconds = Math.max(0, performance.now() - startedAt) / 1_000;
+      this.metrics?.observeTask({ kind: task.kind, status, durationSeconds });
+      this.logger?.info("task_finished", {
+        task_id: row.id,
+        run_id: row.runId,
+        trace_id: row.traceRootId,
+        kind: task.kind,
+        status,
+        duration_ms: Math.round(durationSeconds * 1_000),
+      });
+      return result;
+    } catch (error) {
+      const durationSeconds = Math.max(0, performance.now() - startedAt) / 1_000;
+      this.metrics?.observeTask({ kind: task.kind, status: "failed", durationSeconds });
+      this.logger?.error("task_failed", {
+        task_id: row.id,
+        run_id: row.runId,
+        trace_id: row.traceRootId,
+        kind: task.kind,
+        duration_ms: Math.round(durationSeconds * 1_000),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  private async processAccepted(
+    job: Job,
+    task: ReturnType<typeof taskPayloadSchema.parse>,
+    row: NonNullable<Awaited<ReturnType<TaskStore["get"]>>>,
+  ): Promise<unknown> {
 
     if (row.status === "enqueue_pending") {
       await this.store.markEnqueued(row.id, String(job.id));
@@ -189,5 +243,15 @@ export class AssetTaskWorker {
 
   async close(): Promise<void> {
     await this.worker.close();
+  }
+
+  async pingRedis(timeoutMs = 1_000): Promise<boolean> {
+    try {
+      const client = await within(this.worker.client, timeoutMs);
+      if (client.status !== "ready") return false;
+      return (await within(client.info(), timeoutMs)).length > 0;
+    } catch {
+      return false;
+    }
   }
 }

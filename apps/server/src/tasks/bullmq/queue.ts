@@ -2,6 +2,7 @@ import { FlowProducer, Queue, type FlowJob, type JobNode } from "bullmq";
 import type { ServerConfig } from "../../config.js";
 import { taskPayloadSchema, type TaskPayload } from "../types.js";
 import { createBullMqConnectionOptions } from "./connection.js";
+import type { QueueSnapshot } from "../../observability/metrics.js";
 
 export const ASSET_TASK_QUEUE_NAME = "asset-tasks";
 export const TASK_JOB_RETENTION_SECONDS = 7 * 24 * 60 * 60;
@@ -56,6 +57,31 @@ export class BullMqQueueAdapter {
       this.queue.waitUntilReady(),
       this.flowProducer.waitUntilReady(),
     ]);
+  }
+
+  async health(): Promise<{ redis: true; workers: number }> {
+    const [, workers] = await Promise.all([
+      this.queue.getJobCounts("waiting"),
+      this.queue.getWorkersCount(),
+    ]);
+    return { redis: true, workers };
+  }
+
+  async snapshot(now = Date.now()): Promise<QueueSnapshot> {
+    const [counts, workers, oldest] = await Promise.all([
+      this.queue.getJobCounts("waiting", "delayed", "active", "failed"),
+      this.queue.getWorkersCount(),
+      this.queue.getJobs(["waiting", "delayed"], 0, 0, true),
+    ]);
+    const createdAt = oldest[0]?.timestamp;
+    return {
+      waiting: counts.waiting ?? 0,
+      delayed: counts.delayed ?? 0,
+      active: counts.active ?? 0,
+      failed: counts.failed ?? 0,
+      workers,
+      oldestWaitingSeconds: createdAt ? Math.max(0, now - createdAt) / 1_000 : 0,
+    };
   }
 
   async enqueue(rawPayload: TaskPayload) {

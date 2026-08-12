@@ -317,6 +317,39 @@ describe("resolveDeskReferences", () => {
 });
 
 describe("assembleDeskContext", () => {
+  it("separates stable desk state from request-scoped selection and focus", () => {
+    const assembled = assembleDeskContext(snapshot(), ["art-living"], {
+      fileNames,
+      userText: "把客厅改暖一些",
+    });
+
+    expect(assembled.stateText).toContain("[DESK_CONTEXT");
+    expect(assembled.stateText).toContain("桌上物件：");
+    expect(assembled.stateText).not.toContain("[选中]");
+    expect(assembled.stateText).not.toContain("[FOCUS]");
+    expect(assembled.requestText).toContain("[选中]");
+    expect(assembled.requestText).toContain("[FOCUS]");
+    expect(Object.keys(assembled.manifest)).toEqual([...Object.keys(assembled.manifest)].sort());
+    expect(assembled.manifest["art-living"]).toMatchObject({
+      id: "art-living",
+      alias: expect.stringMatching(/^A/),
+      lifecycle: "ready",
+      fileId: "file-living",
+    });
+  });
+
+  it("uses project-stable aliases supplied by the context ledger", () => {
+    const assembled = assembleDeskContext(snapshot(), [], {
+      fileNames,
+      aliases: {
+        "art-living": "A17",
+        "art-mat": "A03",
+      },
+    });
+    expect(assembled.manifest["art-living"].alias).toBe("A17");
+    expect(assembled.manifest["art-mat"].alias).toBe("A03");
+  });
+
   it("includes survey focus resolution for material edit", () => {
     const assembled = assembleDeskContext(snapshot(), [], {
       fileNames,

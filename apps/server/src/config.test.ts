@@ -54,6 +54,7 @@ describe("server config", () => {
     expect(config.taskImageBackoffMs).toBe(2_000);
     expect(config.taskOutboxMaxAttempts).toBe(20);
     expect(config.taskOutboxBackoffMs).toBe(1_000);
+    expect(config.workerMetricsPort).toBe(9465);
   });
 
   it("loads BullMQ settings and clamps worker concurrency", () => {

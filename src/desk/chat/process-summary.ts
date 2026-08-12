@@ -15,6 +15,8 @@ const TOOL_LABELS: Record<string, string> = {
   replace_on_desk: "原卡替换",
   look_at: "细看物件",
   look_at_desk: "桌面总览",
+  search_skills: "搜索技能",
+  load_skill: "加载技能",
 };
 
 export function toolLabel(name: string) {

@@ -11,6 +11,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ChatService } from "../services/chat-service.js";
 import type { EventSink } from "./events.js";
 import { isToolBusinessFailure, toolFailureMessage } from "./tool-result.js";
+import { summarizePayload } from "./turn-observation.js";
 
 type ToolExecutionEvent = Extract<AgentSessionEvent, {
   type: "tool_execution_start" | "tool_execution_end";
@@ -51,17 +52,6 @@ function resultError(result: unknown): string | undefined {
   return text || undefined;
 }
 
-/** 从 result.details.cost / result.details.usage.cost 抠 provider 报告的费用。 */
-function resultCost(result: unknown): unknown {
-  if (!result || typeof result !== "object") return undefined;
-  const details = (result as { details?: unknown }).details;
-  if (!details || typeof details !== "object") return undefined;
-  const direct = (details as { cost?: unknown }).cost;
-  if (direct !== undefined) return jsonSnapshot(direct);
-  const usage = (details as { usage?: unknown }).usage;
-  return usage && typeof usage === "object" ? jsonSnapshot((usage as { cost?: unknown }).cost) : undefined;
-}
-
 /**
  * 持久化单条工具执行事件。
  *  - start：插 chat_tool_calls 行（onConflictDoNothing 用于重放）
@@ -71,13 +61,20 @@ export async function persistToolEvent(
   chats: Pick<ChatService, "startToolCall" | "finishToolCall">,
   runId: string,
   event: ToolExecutionEvent,
+  observation: { turnIndex?: number; promptTokensBefore?: number } = {},
 ) {
   if (event.type === "tool_execution_start") {
-    await chats.startToolCall(runId, event.toolCallId, event.toolName, jsonSnapshot(event.args));
+    const size = summarizePayload(event.args);
+    await chats.startToolCall(runId, event.toolCallId, event.toolName, jsonSnapshot(event.args), {
+      ...observation,
+      argumentCharacters: size.characters,
+      argumentBytes: size.bytes,
+    });
     return;
   }
   // fail() 时 pi isError 常为 false，需按 details.ok / status 判业务失败
   const failed = isToolBusinessFailure(event.result, event.isError);
+  const size = summarizePayload(event.result);
   await chats.finishToolCall(
     runId,
     event.toolCallId,
@@ -85,7 +82,11 @@ export async function persistToolEvent(
     jsonSnapshot(event.result),
     failed,
     failed ? (toolFailureMessage(event.result) ?? resultError(event.result)) : undefined,
-    resultCost(event.result),
+    {
+      ...observation,
+      resultCharacters: size.characters,
+      resultBytes: size.bytes,
+    },
   );
 }
 
