@@ -626,7 +626,7 @@
 /* ── 设计笔记停靠卡：屏幕坐标 HUD，钉在画布左缘，不随 zoom 缩放；
    collapsed 收成一条书脊，悬浮/聚焦书脊临时展开，点「收起」钉回收起态 ── */
 .desk-memory-dock {
-  position: absolute; left: 0; top: 16px; z-index: 40;
+  position: absolute; left: 0; top: 16px; bottom: 16px; z-index: 40;
   pointer-events: none;
 }
 .desk-memory-card {
@@ -713,6 +713,7 @@
   outline: 2px solid var(--color-accent); outline-offset: 1px;
 }
 .desk-memory-body {
+  flex: 1; min-height: 0; /* flex 子项允许收缩，滚动发生在卡片内部 */
   overflow-y: auto; padding: 4px 14px 16px;
   /* 细滚动条：替换原生粗滚动条，贴合纸面气质 */
   scrollbar-width: thin; scrollbar-color: var(--color-hairline-strong) transparent;
