@@ -42,7 +42,13 @@ describe("HTTP observability", () => {
     expect(await metricResponse.text()).toContain("qijian_http_requests_total");
     expect(readiness).toHaveBeenCalledTimes(2);
     const log = JSON.parse(sink.mock.calls[0][0]);
-    expect(log).toMatchObject({ event: "http_request_completed", request_id: "req-test-1" });
+    expect(log).toMatchObject({
+      event: "http_request_completed",
+      request_id: "req-test-1",
+      method: "GET",
+      route: "/health",
+      path: "/health",
+    });
 
     const alertResponse = await app.request("/internal/monitoring/alerts", {
       method: "POST",
@@ -82,5 +88,36 @@ describe("HTTP observability", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("qijian_http_requests_total");
+  });
+
+  it("records the project id when a project is deleted", async () => {
+    const sink = vi.fn();
+    const projectId = "6f42ee2a-bad6-4e93-828e-27d90232debe";
+    const cancelFileGc = vi.fn();
+    const app = createHttpApp(dependencies({
+      logger: new StructuredLogger("test-api", { sink }),
+      sessions: { forgetProject: vi.fn(async () => undefined) },
+      desks: { deleteProject: vi.fn(async () => ({ objectKeys: ["a.png"] })) },
+      files: { removeProjectFiles: vi.fn(async () => undefined) },
+      cancelFileGc,
+    }));
+
+    const response = await app.request(`/api/projects/${projectId}`, { method: "DELETE" });
+
+    expect(response.status).toBe(204);
+    expect(cancelFileGc).toHaveBeenCalledWith(projectId);
+    const events = sink.mock.calls.map(([line]) => JSON.parse(line));
+    expect(events).toContainEqual(expect.objectContaining({
+      event: "project_deleted",
+      project_id: projectId,
+      file_count: 1,
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      event: "http_request_completed",
+      method: "DELETE",
+      route: "/api/projects/:id",
+      path: `/api/projects/${projectId}`,
+      status: 204,
+    }));
   });
 });

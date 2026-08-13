@@ -13,7 +13,7 @@
 
 - **What:** ~~定期（或手动触发）清理不被任何 artifact（payload.file_id / input_refs）或聊天消息引用的 `stored_files` 行 + 磁盘字节。~~
 - **Done (2026-08-09):** `FileStorage.gcUnattached({ projectId?, minAgeMs=1h, limit })` + `POST /api/projects/:id/files/gc`；复用 reference checkers（artifact/chat/cover）；默认跳过 1h 内文件保护会话 undo。`referencesFile` 补 `payload.reference_file_id`。集成回归：`deletePlaced leaves the canvas image file on disk`。
-- **Also done:** 删物件后 best-effort 异步 GC（`setObjectDeletedListener` → `gcUnattached`，minAge 内跳过）。
+- **Also done:** 删物件后按项目合并再扫（`FileGcScheduler` debounce + 单飞 → `gcUnattached`，minAge 内跳过）。磁盘引用检查在 `FOR UPDATE` 外。
 - **Still open (optional):** 启动/定时扫全库、InpaintDialog 取消清理临时参考图。
 - **Why (historical):** 主路径上传失败前端已 `deleteFile`；真泄漏是硬删物件不级联清文件 + 无扫孤儿。
 - **Depends on / blocked by:** 无；若做 TODO 1 tombstone，checker 需继续认墓碑引用。

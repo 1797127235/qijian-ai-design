@@ -51,6 +51,7 @@ interface HttpDependencies {
   metrics?: RuntimeMetrics;
   logger?: StructuredLogger;
   readiness?: () => Promise<ReadinessResult>;
+  cancelFileGc?: (projectId: string) => void;
 }
 
 function requestId(raw: string | undefined): string {
@@ -97,6 +98,7 @@ export function createHttpApp(deps: HttpDependencies) {
         request_id: id,
         method: c.req.method,
         route,
+        path: c.req.path,
         status,
         duration_ms: Math.round(durationSeconds * 1_000),
       });

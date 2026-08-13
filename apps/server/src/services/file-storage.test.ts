@@ -77,4 +77,41 @@ describe("FileStorage.gcUnattached", () => {
     expect(deleteSpy).not.toHaveBeenCalledWith("p1", "young-orphan");
     expect(result).toEqual({ scanned: 2, deleted: 1, skipped: 1, errors: 0 });
   });
+
+  it("runs disk checkers before opening the delete transaction", async () => {
+    const order: string[] = [];
+    const db = {
+      select: vi.fn(),
+      transaction: vi.fn(async () => {
+        order.push("transaction");
+        return null;
+      }),
+    };
+    const storage = new FileStorage(db as never, {
+      uploadDir: "/tmp/qijian-test-uploads",
+      publicBaseUrl: "http://localhost",
+    } as never);
+    storage.setReferenceCheckers([
+      {
+        transactional: false,
+        referencesFile: async () => {
+          order.push("disk");
+          return true;
+        },
+      },
+      {
+        referencesFile: async () => {
+          order.push("sql");
+          return false;
+        },
+      },
+    ]);
+
+    await expect(storage.deleteUnattached("p1", "file-1")).rejects.toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+    });
+    expect(order).toEqual(["disk"]);
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
 });

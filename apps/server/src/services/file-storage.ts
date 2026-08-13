@@ -27,6 +27,11 @@ export type FileReferenceExecutor = Pick<Database, "select">;
 /** 谁能告诉我 file_id 是否还被引用？由 ChatService / ArtifactService 实现。 */
 export interface FileReferenceChecker {
   referencesFile(fileId: string, executor?: FileReferenceExecutor): Promise<boolean>;
+  /**
+   * 默认 true：检查走 SQL，可进删除事务（看见未提交快照 + 行锁）。
+   * 扫磁盘 / 调外部系统的检查器必须标 false，否则 FOR UPDATE 会拖到 IO 结束。
+   */
+  transactional?: boolean;
 }
 
 /** 上传后返回给前端的精简视图（不暴露 objectKey 等内部字段）。 */
@@ -119,10 +124,17 @@ export class FileStorage {
   }
 
   /**
-   * 删除文件：事务内 FOR UPDATE 锁行 → 查引用 → 删行 → 再 unlink 磁盘。
-   * 与 artifact/chat 写引用路径对同一 stored_files 行加锁，避免「检查无引用后被引用」的 TOCTOU。
+   * 删除文件：事务外先过磁盘/外部引用 → 短事务 FOR UPDATE + SQL 引用 → 再 unlink。
+   * SQL 检查仍与 artifact/chat 写引用互斥；磁盘扫描不再占着行锁。
    */
   async deleteUnattached(projectId: string, fileId: string) {
+    const sqlCheckers = this.referenceCheckers.filter((checker) => checker.transactional !== false);
+    const externalCheckers = this.referenceCheckers.filter((checker) => checker.transactional === false);
+    for (const checker of externalCheckers) {
+      if (await checker.referencesFile(fileId)) {
+        throw new AppError(409, "CONFLICT", "附件已被消息或画布使用，不能删除");
+      }
+    }
     const stored = await this.db.transaction(async (tx) => {
       const [row] = await tx
         .select()
@@ -130,7 +142,7 @@ export class FileStorage {
         .where(and(eq(storedFiles.id, fileId), eq(storedFiles.projectId, projectId)))
         .for("update");
       if (!row) return null;
-      for (const checker of this.referenceCheckers) {
+      for (const checker of sqlCheckers) {
         if (await checker.referencesFile(fileId, tx)) {
           throw new AppError(409, "CONFLICT", "附件已被消息或画布使用，不能删除");
         }

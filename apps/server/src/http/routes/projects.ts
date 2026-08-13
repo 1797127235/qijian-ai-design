@@ -7,6 +7,7 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import type { AgentSessionRegistry } from "../../agent/session-registry.js";
 import { DEFAULT_PROJECT_NAME } from "../../domain/types.js";
+import type { StructuredLogger } from "../../observability/logger.js";
 import type { DeskStateService } from "../../services/desk-state-service.js";
 import type { FileStorage } from "../../services/file-storage.js";
 import { body } from "./shared.js";
@@ -17,6 +18,8 @@ export function registerProjectRoutes(
     desks: DeskStateService;
     files: FileStorage;
     sessions: AgentSessionRegistry;
+    logger?: StructuredLogger;
+    cancelFileGc?: (projectId: string) => void;
   },
 ) {
   /** 列出所有项目（前端首页用）。 */
@@ -37,9 +40,14 @@ export function registerProjectRoutes(
   /** 删项目：级联清 chat / artifact / file / desk_state，再 rm 磁盘文件。 */
   app.delete("/api/projects/:id", async (c) => {
     const projectId = c.req.param("id");
+    deps.cancelFileGc?.(projectId);
     await deps.sessions.forgetProject(projectId);
     const result = await deps.desks.deleteProject(projectId);
     await deps.files.removeProjectFiles(projectId, result.objectKeys);
+    deps.logger?.info("project_deleted", {
+      project_id: projectId,
+      file_count: result.objectKeys.length,
+    });
     return c.body(null, 204);
   });
 }

@@ -36,6 +36,7 @@ import { ImageCaptionStore } from "./services/image-caption-store.js";
 import { HttpImageGenerator } from "./services/image-generator.js";
 import { warnDuplicateImageModels } from "./services/image-providers.js";
 import { ProjectAutoNamer } from "./services/project-namer.js";
+import { FileGcScheduler } from "./services/file-gc-scheduler.js";
 import { ProjectCoverService } from "./services/project-cover-service.js";
 import { eq } from "drizzle-orm";
 import { projects } from "./db/schema.js";
@@ -113,18 +114,23 @@ const onDeskContentChanged = createDeskContentChangedHandler(
 );
 desks.setDeskChangedListener(onDeskContentChanged);
 artifacts.setDeskChangedListener(onDeskContentChanged);
-// 删物件后异步扫本项目孤儿文件（默认 minAge 1h，不伤会话 undo；失败只记日志）
-artifacts.setObjectDeletedListener((projectId) => {
-  void files
-    .gcUnattached({ projectId })
-    .then((result) => {
-      if (result.deleted > 0 || result.errors > 0) {
-        console.info(`[files] gc after delete project=${projectId}`, result);
-      }
-    })
-    .catch((error) => {
-      console.warn(`[files] gc after delete failed project=${projectId}:`, error instanceof Error ? error.message : error);
+// 删物件只标记脏；按项目合并后再扫孤儿（默认 minAge 1h，不伤会话 undo）
+const fileGc = new FileGcScheduler({
+  gc: (projectId) => files.gcUnattached({ projectId }),
+  onFinished: (projectId, result) => {
+    if (result.deleted > 0 || result.errors > 0) {
+      logger.info("file_gc_finished", { project_id: projectId, ...result });
+    }
+  },
+  onError: (projectId, error) => {
+    logger.warn("file_gc_failed", {
+      project_id: projectId,
+      error: error instanceof Error ? error.message : String(error),
     });
+  },
+});
+artifacts.setObjectDeletedListener((projectId) => {
+  fileGc.schedule(projectId);
 });
 
 // —— Agent 异步任务（job）——
@@ -321,6 +327,7 @@ const app = createHttpApp({
   metrics,
   logger,
   readiness: () => readiness.check(),
+  cancelFileGc: (projectId) => fileGc.cancel(projectId),
 });
 const sockets = new WebSocketServer({ noServer: true });
 
@@ -379,6 +386,7 @@ async function start() {
     await bullmq.shutdown();
     traces.forceCloseAll("server shutdown");
     await traces.flush();
+    fileGc.cancelAll();
     await pool.end();
   }
   process.once("SIGINT", () => void shutdown());
