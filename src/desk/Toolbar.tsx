@@ -1,4 +1,4 @@
-import { Brain, Hand, Image, Redo2, Undo2 } from "lucide-react";
+import { Brain, Hand, Plus, Redo2, Undo2 } from "lucide-react";
 
 export function DeskToolbar({
   canUndo,
@@ -6,7 +6,7 @@ export function DeskToolbar({
   onHand,
   onUndo,
   onRedo,
-  onImage,
+  onAdd,
   memoryCount,
   memoryVisible,
   onToggleMemory,
@@ -16,7 +16,7 @@ export function DeskToolbar({
   onHand: () => void;
   onUndo: () => void;
   onRedo: () => void;
-  onImage: () => void;
+  onAdd: () => void;
   /** 记忆条目数；onToggleMemory 存在时才渲染记忆开关 */
   memoryCount?: number;
   memoryVisible?: boolean;
@@ -35,8 +35,8 @@ export function DeskToolbar({
         <Redo2 size={16} />
       </button>
       <span className="tb-sep" />
-      <button type="button" title="图片" aria-label="图片" onClick={onImage}>
-        <Image size={16} />
+      <button type="button" title="添加卡片" aria-label="添加卡片" onClick={onAdd}>
+        <Plus size={16} />
       </button>
       {onToggleMemory && (
         <>

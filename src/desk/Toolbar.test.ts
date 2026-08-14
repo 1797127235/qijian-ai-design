@@ -7,13 +7,13 @@ const base = {
   onHand: () => undefined,
   onUndo: () => undefined,
   onRedo: () => undefined,
-  onImage: () => undefined,
+  onAdd: () => undefined,
 };
 
 describe("DeskToolbar", () => {
   it("renders tools in order without text tool", () => {
     const html = renderToStaticMarkup(createElement(DeskToolbar, { ...base, canUndo: false, canRedo: false }));
-    const order = ["漫游", "撤销", "重做", "图片"].map((label) => html.indexOf(`aria-label="${label}"`));
+    const order = ["漫游", "撤销", "重做", "添加卡片"].map((label) => html.indexOf(`aria-label="${label}"`));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(html).not.toContain('aria-label="文字"');

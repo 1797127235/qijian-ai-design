@@ -148,6 +148,25 @@
 .desk-connections { z-index: 0; pointer-events: none; }
 .desk-connections path.conn-hit { pointer-events: stroke; }
 .desk-connections .conn-delete { pointer-events: all; }
+.desk-connections path.conn-line {
+  transition:
+    stroke var(--dur-micro) var(--ease-out),
+    stroke-width var(--dur-micro) var(--ease-out),
+    opacity var(--dur-micro) var(--ease-out);
+}
+.desk-connections path.conn-line-dim { opacity: .28; }
+.obj-related-source::before,
+.obj-related-output::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  pointer-events: none;
+  border-radius: 8px;
+  border: 1.5px solid color-mix(in srgb, var(--color-info) 60%, var(--color-hairline-strong));
+}
+.obj-related-output::before {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-hairline-strong));
+}
 
 .effect-pending, .effect-error {
   display: grid; place-items: center; gap: 8px;

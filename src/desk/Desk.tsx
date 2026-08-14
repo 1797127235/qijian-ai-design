@@ -551,6 +551,21 @@ export function Desk({
   };
 
   const selectedSet = new Set(selectedIds);
+  const sourceSet = new Set<string>();
+  const outputSet = new Set<string>();
+  if (selectedSet.size) {
+    for (const connection of connections) {
+      if (selectedSet.has(connection.to) && !selectedSet.has(connection.from)) sourceSet.add(connection.from);
+      if (selectedSet.has(connection.from) && !selectedSet.has(connection.to)) outputSet.add(connection.to);
+    }
+  }
+  if (selectedConnectionId) {
+    const selectedConnection = connections.find((connection) => connection.id === selectedConnectionId);
+    if (selectedConnection) {
+      sourceSet.add(selectedConnection.from);
+      outputSet.add(selectedConnection.to);
+    }
+  }
   /**
    * 是否渲染卡外名称/输入框。
    * - 编辑中：强制 true，保证 input 不因「单选隐藏」被卸载。
@@ -593,6 +608,7 @@ export function Desk({
           objects={objects}
           connections={connections}
           selectedId={selectedConnectionId}
+          selectedObjectIds={selectedIds}
           preview={preview}
           onSelect={(id) => {
             // 勿再调 onSelect(undefined)：Workbench 的 onSelect 会清掉 selectedConnectionId
@@ -603,11 +619,13 @@ export function Desk({
         {objects.map((obj) => {
           const size = nodeSize(obj);
           const isSelected = selectedSet.has(obj.id);
+          const isSource = !isSelected && sourceSet.has(obj.id);
+          const isOutput = !isSelected && outputSet.has(obj.id);
           const showHandles = isSelected || Boolean(connect.current);
           return (
             <div
               key={`${obj.id}-${focusRequest?.id === obj.id ? focusRequest.token : "idle"}`}
-              className={`obj obj-${obj.kind} ${focusRequest?.id === obj.id ? "obj-focused" : ""} ${isSelected ? "obj-selected" : ""}`}
+              className={`obj obj-${obj.kind} ${focusRequest?.id === obj.id ? "obj-focused" : ""} ${isSelected ? "obj-selected" : ""} ${isSource ? "obj-related-source" : ""} ${isOutput ? "obj-related-output" : ""}`}
               style={{ left: obj.x, top: obj.y, transform: `rotate(${obj.rot}deg)` }}
               onPointerDown={(e) => startNodeDrag(e, obj)}
               onClick={(e) => onObjectClick(e, obj)}

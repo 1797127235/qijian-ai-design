@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ConnectionsLayer } from "./Connections";
+import { connectionHighlight, ConnectionsLayer } from "./Connections";
 import type { DeskConnection, DeskObject } from "./types";
 
 const objects: DeskObject[] = [
@@ -42,5 +42,48 @@ describe("ConnectionsLayer", () => {
       }),
     );
     expect(html).not.toContain('class="conn-delete"');
+  });
+
+  it("highlights incident edges when an object is selected", () => {
+    const extra: DeskConnection[] = [
+      { id: "c1", from: "a", to: "b" },
+      { id: "c2", from: "b", to: "a" },
+    ];
+    const moreObjects: DeskObject[] = [
+      ...objects,
+      { id: "c", kind: "canvas_image", x: 600, y: 0, rot: 0, status: "confirmed", url: "/c.png" },
+    ];
+    const all: DeskConnection[] = [...extra, { id: "c3", from: "b", to: "c" }];
+    const html = renderToStaticMarkup(
+      createElement(ConnectionsLayer, {
+        objects: moreObjects,
+        connections: all,
+        selectedObjectIds: ["a"],
+      }),
+    );
+    expect(html).toContain("conn-line-output");
+    expect(html).toContain("conn-line-source");
+    expect(html).toContain("conn-line-dim");
+    expect(html).not.toContain('class="conn-delete"');
+  });
+
+  it("does not show delete on related-only edges", () => {
+    const html = renderToStaticMarkup(
+      createElement(ConnectionsLayer, {
+        objects,
+        connections,
+        selectedObjectIds: ["a"],
+        onDelete: () => undefined,
+      }),
+    );
+    expect(html).toContain("conn-line-output");
+    expect(html).not.toContain('class="conn-delete"');
+  });
+
+  it("colors inbound sources and outbound outputs differently", () => {
+    expect(connectionHighlight({ id: "c1", from: "a", to: "b" }, undefined, ["b"])).toBe("source");
+    expect(connectionHighlight({ id: "c1", from: "a", to: "b" }, undefined, ["a"])).toBe("output");
+    expect(connectionHighlight({ id: "c1", from: "a", to: "b" }, undefined, ["a", "b"])).toBe("both");
+    expect(connectionHighlight({ id: "c1", from: "a", to: "b" }, "c1", [])).toBe("selected");
   });
 });

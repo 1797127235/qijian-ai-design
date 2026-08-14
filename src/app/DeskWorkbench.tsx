@@ -458,7 +458,7 @@ export function DeskWorkbench({
                 }}
                 onUndo={history.undo}
                 onRedo={history.redo}
-                onImage={placement.addImagePlaceholder}
+                onAdd={placement.addImagePlaceholder}
                 memoryCount={memoryDesk.memory ? Object.keys(memoryDesk.memory.entries).length : 0}
                 memoryVisible={!memoryDesk.layout.hidden}
                 onToggleMemory={() =>

@@ -6,10 +6,28 @@ import {
   routeAnchors,
 } from "./connection-geometry";
 
+export type ConnectionHighlight = "selected" | "source" | "output" | "both";
+
+export function connectionHighlight(
+  connection: DeskConnection,
+  selectedId: string | undefined,
+  selectedObjectIds: Iterable<string> | undefined,
+): ConnectionHighlight | undefined {
+  if (selectedId === connection.id) return "selected";
+  const selected = selectedObjectIds instanceof Set ? selectedObjectIds : new Set(selectedObjectIds);
+  const fromSelected = selected.has(connection.from);
+  const toSelected = selected.has(connection.to);
+  if (fromSelected && toSelected) return "both";
+  if (fromSelected) return "output";
+  if (toSelected) return "source";
+  return undefined;
+}
+
 export function ConnectionsLayer({
   objects,
   connections,
   selectedId,
+  selectedObjectIds,
   preview,
   onSelect,
   onDelete,
@@ -17,11 +35,24 @@ export function ConnectionsLayer({
   objects: DeskObject[];
   connections: DeskConnection[];
   selectedId?: string;
+  selectedObjectIds?: string[];
   preview?: { x1: number; y1: number; x2: number; y2: number; fromSide?: ConnSide; toSide?: ConnSide };
   onSelect?: (id: string) => void;
   onDelete?: (id: string) => void;
 }) {
   const byId = new Map(objects.map((o) => [o.id, o]));
+  const selectedObjects = new Set(selectedObjectIds);
+  const graphFocused = Boolean(selectedId) || selectedObjects.size > 0;
+  const painted = connections
+    .map((c) => {
+      const from = byId.get(c.from);
+      const to = byId.get(c.to);
+      if (!from || !to) return null;
+      const highlight = connectionHighlight(c, selectedId, selectedObjects);
+      return { c, from, to, highlight };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+    .sort((a, b) => Number(Boolean(a.highlight)) - Number(Boolean(b.highlight)));
   return (
     <svg className="desk-connections" style={{ overflow: "visible", position: "absolute", left: 0, top: 0, width: 1, height: 1 }}>
       <defs>
@@ -47,14 +78,28 @@ export function ConnectionsLayer({
         >
           <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-accent)" />
         </marker>
+        <marker
+          id="conn-arrow-source"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="7"
+          markerHeight="7"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-info)" />
+        </marker>
       </defs>
-      {connections.map((c) => {
-        const from = byId.get(c.from);
-        const to = byId.get(c.to);
-        if (!from || !to) return null;
+      {painted.map(({ c, from, to, highlight }) => {
         const { fromSide, toSide, start: a, end: b } = routeAnchors(from, to);
         const d = bezierPath(a.x, a.y, b.x, b.y, fromSide, toSide);
-        const active = selectedId === c.id;
+        const dimmed = graphFocused && !highlight;
+        const inbound = highlight === "source";
+        const stroke = inbound
+          ? "var(--color-info)"
+          : highlight
+            ? "var(--color-accent)"
+            : "var(--color-hairline-strong)";
         return (
           <g key={c.id}>
             <path
@@ -76,14 +121,15 @@ export function ConnectionsLayer({
               }}
             />
             <path
+              className={`conn-line${highlight ? ` conn-line-${highlight}` : ""}${dimmed ? " conn-line-dim" : ""}`}
               d={d}
               fill="none"
-              stroke={active ? "var(--color-accent)" : "var(--color-hairline-strong)"}
-              strokeWidth={active ? 3 : 2}
-              markerEnd={active ? "url(#conn-arrow-active)" : "url(#conn-arrow)"}
+              stroke={stroke}
+              strokeWidth={highlight === "selected" ? 3 : highlight ? 2.5 : 2}
+              markerEnd={inbound ? "url(#conn-arrow-source)" : highlight ? "url(#conn-arrow-active)" : "url(#conn-arrow)"}
               style={{ pointerEvents: "none" }}
             />
-            {active && onDelete && (() => {
+            {highlight === "selected" && onDelete && (() => {
               const mid = bezierMid(a.x, a.y, b.x, b.y, fromSide, toSide);
               return (
                 <g
