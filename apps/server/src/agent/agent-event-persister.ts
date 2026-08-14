@@ -17,6 +17,39 @@ type ToolExecutionEvent = Extract<AgentSessionEvent, {
   type: "tool_execution_start" | "tool_execution_end";
 }>;
 
+/** 把视觉像素转换为可持久化/观测的元数据，避免任意工具绕过 receipt 约束时扩散 Base64。 */
+export function redactToolResult(result: unknown): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const value = result as Record<string, unknown>;
+  const content = Array.isArray(value.content) ? value.content : [];
+  let imageCount = 0;
+  let imageBase64Chars = 0;
+  const safeContent = content.flatMap((block) => {
+    if (!block || typeof block !== "object") return [];
+    const item = block as Record<string, unknown>;
+    if (item.type !== "image") return [block];
+    imageCount += 1;
+    if (typeof item.data === "string") imageBase64Chars += item.data.length;
+    return [{ type: "text", text: `[IMAGE_REDACTED] ordinal=${imageCount} mime=${String(item.mimeType ?? "unknown")} base64_chars=${typeof item.data === "string" ? item.data.length : 0}` }];
+  });
+  if (imageCount === 0) return result;
+  return {
+    ...value,
+    content: safeContent,
+    details: {
+      ...(value.details && typeof value.details === "object" && !Array.isArray(value.details) ? value.details : {}),
+      image_count: imageCount,
+      image_base64_chars: imageBase64Chars,
+      images_redacted: true,
+    },
+  };
+}
+
+export function redactAgentEvent(event: AgentSessionEvent): AgentSessionEvent {
+  if (event.type !== "tool_execution_end") return event;
+  return { ...event, result: redactToolResult(event.result) } as AgentSessionEvent;
+}
+
 /** 类型守卫：是不是工具执行事件。 */
 export function isToolExecutionEvent(event: AgentSessionEvent): event is ToolExecutionEvent {
   return event.type === "tool_execution_start" || event.type === "tool_execution_end";
@@ -79,7 +112,7 @@ export async function persistToolEvent(
     runId,
     event.toolCallId,
     event.toolName,
-    jsonSnapshot(event.result),
+    jsonSnapshot(redactToolResult(event.result)),
     failed,
     failed ? (toolFailureMessage(event.result) ?? resultError(event.result)) : undefined,
     {

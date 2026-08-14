@@ -1,4 +1,7 @@
 import type { ProcessSnapshot, ProcessStep } from "../types";
+import { isToolBusinessFailure } from "../../../shared/tool-result.js";
+
+export { isToolBusinessFailure } from "../../../shared/tool-result.js";
 
 type ToolStep = Extract<ProcessStep, { kind: "tool" }>;
 
@@ -68,18 +71,6 @@ function contentText(value: unknown): string | undefined {
     .join("\n")
     .trim();
   return text || undefined;
-}
-
-export function isToolBusinessFailure(result: unknown, isError?: boolean): boolean {
-  if (isError) return true;
-  if (!result || typeof result !== "object") return false;
-  const details = (result as { details?: unknown }).details;
-  if (details && typeof details === "object") {
-    const d = details as Record<string, unknown>;
-    if (d.ok === false || d.status === "failed") return true;
-  }
-  const text = contentText(result);
-  return Boolean(text && /失败|错误|未找到|不能|无法/.test(text));
 }
 
 export function toolStepLabel(args: unknown, result: unknown, failed: boolean): string | undefined {

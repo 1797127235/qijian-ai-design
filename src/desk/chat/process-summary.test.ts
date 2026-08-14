@@ -55,6 +55,20 @@ describe("process-summary", () => {
     }, false)).toBe(true);
   });
 
+  it("trusts explicit ok over failure keywords in prose", () => {
+    expect(isToolBusinessFailure({
+      content: [{ type: "text", text: "不要把失败案例当成既定事实；无法确认时直接说明。" }],
+      details: { ok: true, skill_id: "desk-loop" },
+    }, false)).toBe(false);
+  });
+
+  it("treats policy denials as delivered results, not failures", () => {
+    expect(isToolBusinessFailure({
+      content: [{ type: "text", text: "当前轮次用于读取并汇报后台任务结果；新的用户操作请求会开启可执行轮次。" }],
+      details: { ok: false, error_code: "POLICY_DENIED", code: "WAKE_READ_ONLY" },
+    }, false)).toBe(false);
+  });
+
   it("labels steps from prompt or error only", () => {
     expect(toolStepLabel({ prompt: "生成完整俯视图" }, undefined, false)).toBe("生成完整俯视图");
     expect(toolStepLabel(undefined, {

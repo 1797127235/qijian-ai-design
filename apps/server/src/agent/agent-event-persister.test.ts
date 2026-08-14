@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { persistToolEvent } from "./agent-event-persister.js";
+import { persistToolEvent, redactToolResult } from "./agent-event-persister.js";
 
 describe("persistToolEvent observation", () => {
   it("stores the model turn and argument size on tool start", async () => {
@@ -62,5 +62,14 @@ describe("persistToolEvent observation", () => {
       }),
     );
     expect(chats.finishToolCall.mock.calls[0]).not.toContainEqual({ total: 99 });
+  });
+
+  it("redacts image pixels before persistence", () => {
+    const result = redactToolResult({
+      content: [{ type: "text", text: "inspect" }, { type: "image", data: "A".repeat(40_000), mimeType: "image/png" }],
+      details: { ok: true },
+    }) as { content: Array<{ type: string; text?: string }>; details: Record<string, unknown> };
+    expect(JSON.stringify(result)).not.toContain("A".repeat(100));
+    expect(result.details).toMatchObject({ image_count: 1, images_redacted: true });
   });
 });
