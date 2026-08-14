@@ -157,7 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     taskImageBackoffMs: boundedInteger(env.TASK_IMAGE_BACKOFF_MS, 2_000, 60_000),
     taskOutboxMaxAttempts: boundedInteger(env.TASK_OUTBOX_MAX_ATTEMPTS, 20, 100),
     taskOutboxBackoffMs: boundedInteger(
-      env.TASK_OUTBOX_BACKOFF_MS ?? env.TASK_OUTBOX_RETRY_BASE_MS,
+      env.TASK_OUTBOX_BACKOFF_MS,
       1_000,
       60_000,
     ),

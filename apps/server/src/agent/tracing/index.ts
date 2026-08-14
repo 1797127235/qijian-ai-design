@@ -4,7 +4,7 @@ import { NoopTracer } from "./noop.js";
 import { TraceRegistry } from "./registry.js";
 import type { AgentTracer } from "./types.js";
 
-export type { AgentTracer, ErrorCode, MappedError, RootAttrs, SpanAttrs, TraceContext, TraceHandle } from "./types.js";
+export type { AgentTracer, ErrorCode, MappedError, RootAttrs, SpanAttrs, TraceContext, TraceContextCarrier, TraceHandle } from "./types.js";
 export { mapError, mapErrorFromUnknown, isErrorCode } from "./map-error.js";
 export { capJson, pickMeta, imageMeta, truncateText } from "./redact.js";
 export { TraceRegistry } from "./registry.js";

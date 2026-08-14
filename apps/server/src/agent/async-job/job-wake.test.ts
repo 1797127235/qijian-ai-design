@@ -44,11 +44,11 @@ describe("JobWakeService", () => {
       projectId: "p1",
       threadId: "t1",
       taskId: "job-1",
-      sourceTraceRootId: undefined,
+      sourceTraceContext: undefined,
     }));
   });
 
-  it("carries the originating trace root into the wake delivery", async () => {
+  it("carries the originating trace context into the wake delivery", async () => {
     const appendPrompt = vi.fn().mockResolvedValue({
       created: true,
       run: { id: "run-wake" },
@@ -57,12 +57,16 @@ describe("JobWakeService", () => {
     const deliver = vi.fn().mockResolvedValue(undefined);
     const svc = new JobWakeService({ appendPrompt } as never, deliver, () => false, 0);
 
-    svc.onJobTerminal(job({ traceRootId: "root-original", traceParentId: "tool-original" }));
+    const traceContext = {
+      traceId: "root-original",
+      parentRunId: "tool-original",
+      langsmithTrace: "20260812T000000000001Zroot-original.20260812T000001000002Ztool-original",
+    };
+    svc.onJobTerminal(job({ traceContext }));
 
     await vi.waitFor(() => expect(deliver).toHaveBeenCalled());
     expect(deliver).toHaveBeenCalledWith(expect.objectContaining({
-      sourceTraceRootId: "root-original",
-      sourceTraceParentId: "tool-original",
+      sourceTraceContext: traceContext,
     }));
   });
 

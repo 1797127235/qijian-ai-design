@@ -176,19 +176,19 @@ const sessions = new AgentSessionRegistry({
 // 方案 3 / 书中异步事件：job 终态 → 结构化 [JOB_EVENT] 回注轨迹并续跑
 const jobWake = new JobWakeService(
   chats,
-  async ({ projectId, threadId, text, taskId, runId, message, sourceTraceRootId, sourceTraceParentId }) => {
+  async ({ projectId, threadId, text, taskId, runId, message, sourceTraceContext }) => {
     // appendPrompt 已在 JobWakeService 完成（写轨迹喂模型）。
     // 不向客户端广播 chat_message：job-wake 是系统事件，不是用户气泡。
     void message;
     if (traces?.enabled) {
-      const trace = sourceTraceRootId
+      const trace = sourceTraceContext?.traceId
         ? traces.startLinkedRoot({
           project_id: projectId,
           thread_id: threadId,
           run_id: runId,
           inputs: { wake: true, task_id: taskId },
-          metadata: { source_trace_parent_id: sourceTraceParentId },
-        }, sourceTraceRootId)
+          metadata: { source_trace_parent_id: sourceTraceContext.parentRunId },
+        }, sourceTraceContext)
         : traces.startRoot({
           project_id: projectId,
           thread_id: threadId,

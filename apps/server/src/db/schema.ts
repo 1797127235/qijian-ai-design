@@ -10,6 +10,7 @@
  */
 import { sql } from "drizzle-orm";
 import { index, integer, jsonb, pgTable, serial, text, timestamp, unique, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import type { TraceContextCarrier } from "../agent/tracing/types.js";
 import type { CreatedBy, DeskConnection, DeskLayoutObject, DeskViewport } from "../domain/types.js";
 
 /** 设计项目：根实体，所有其他表通过 project_id 关联。 */
@@ -308,9 +309,8 @@ export const agentJobs = pgTable(
     result: jsonb("result").$type<unknown>(),
     artifactId: uuid("artifact_id"),
     error: text("error"),
-    /** H7 LangSmith 关联 */
-    traceRootId: text("trace_root_id"),
-    traceParentId: text("trace_parent_id"),
+    /** 跨进程恢复 LangSmith 父链所需的完整传播载体。 */
+    traceContext: jsonb("trace_context").$type<TraceContextCarrier>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     enqueuedAt: timestamp("enqueued_at", { withTimezone: true }),
     cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),

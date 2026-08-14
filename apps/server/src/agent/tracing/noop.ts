@@ -1,4 +1,4 @@
-import type { AgentTracer, EndOptions, MappedError, RootAttrs, SpanAttrs, TraceHandle } from "./types.js";
+import type { AgentTracer, EndOptions, MappedError, RootAttrs, SpanAttrs, TraceContextCarrier, TraceHandle } from "./types.js";
 
 class NoopHandle implements TraceHandle {
   constructor(readonly id: string, readonly runId: string) {}
@@ -15,6 +15,11 @@ export class NoopTracer implements AgentTracer {
 
   startSpan(parent: TraceHandle, _attrs: SpanAttrs): TraceHandle {
     return new NoopHandle(`noop-span-${++this.seq}`, parent.runId);
+  }
+
+  captureContext(_handle: TraceHandle): TraceContextCarrier | undefined { return undefined; }
+  startRemoteSpan(_context: TraceContextCarrier, _attrs: SpanAttrs, runId: string): TraceHandle {
+    return new NoopHandle(`noop-remote-span-${++this.seq}`, runId);
   }
 
   end(_handle: TraceHandle, _out?: EndOptions) {}

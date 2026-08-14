@@ -8,6 +8,7 @@
  */
 import { AppError } from "../../lib/errors.js";
 import type { ChatService } from "../../services/chat-service.js";
+import type { TraceContextCarrier } from "../tracing/types.js";
 import type { AgentJobDto } from "./types.js";
 import {
   formatJobWakeBatchPrompt,
@@ -23,8 +24,7 @@ export type JobWakeDeliver = (args: {
   text: string;
   externalId: string;
   taskId: string;
-  sourceTraceRootId?: string;
-  sourceTraceParentId?: string;
+  sourceTraceContext?: TraceContextCarrier;
   /** appendPrompt 已创建的 run；deliver 只跑模型，禁止再 append */
   runId: string;
   /** 已落库的 wake 消息，供前端展示 */
@@ -160,8 +160,7 @@ export class JobWakeService {
         text: saved.message.text,
         externalId,
         taskId: job.id,
-        sourceTraceRootId: job.traceRootId,
-        sourceTraceParentId: job.traceParentId,
+        sourceTraceContext: job.traceContext,
         runId: saved.run.id,
         message: saved.message as { id: string; role: string; text: string },
       });

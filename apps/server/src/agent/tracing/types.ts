@@ -41,6 +41,14 @@ export interface TraceHandle {
   readonly runId: string;
 }
 
+/** 可跨进程/队列持久化的 LangSmith 父链上下文。 */
+export interface TraceContextCarrier {
+  readonly traceId: string;
+  readonly parentRunId: string;
+  readonly langsmithTrace: string;
+  readonly baggage?: string;
+}
+
 export interface EndOptions {
   status: "ok" | "error";
   outputs?: Record<string, unknown>;
@@ -51,6 +59,8 @@ export interface AgentTracer {
   enabled: boolean;
   startRoot(attrs: RootAttrs): TraceHandle;
   startSpan(parent: TraceHandle, attrs: SpanAttrs): TraceHandle;
+  captureContext(handle: TraceHandle): TraceContextCarrier | undefined;
+  startRemoteSpan(context: TraceContextCarrier, attrs: SpanAttrs, runId: string): TraceHandle;
   end(handle: TraceHandle, out?: EndOptions): void;
   /** Patch outputs after a span ended while preserving its execution duration. */
   annotate(handle: TraceHandle, outputs: Record<string, unknown>): void;

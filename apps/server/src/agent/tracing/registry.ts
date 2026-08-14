@@ -2,7 +2,7 @@
  * 按本地 chat_run.id 登记 TraceContext。
  * root 在 product finish 且 inflight jobs 清空后才 end。
  */
-import type { AgentTracer, EndOptions, MappedError, RootAttrs, SpanAttrs, TraceContext, TraceHandle } from "./types.js";
+import type { AgentTracer, EndOptions, MappedError, RootAttrs, SpanAttrs, TraceContext, TraceContextCarrier, TraceHandle } from "./types.js";
 
 const ROOT_TIMEOUT_MS = 15 * 60 * 1_000;
 
@@ -16,10 +16,6 @@ export class TraceRegistry {
     return this.tracer.enabled;
   }
 
-  getTracer() {
-    return this.tracer;
-  }
-
   startRoot(attrs: RootAttrs): TraceContext {
     const existing = this.byRun.get(attrs.run_id);
     if (existing && !existing.closed) return existing;
@@ -28,11 +24,11 @@ export class TraceRegistry {
   }
 
   /** Register a new product run under a trace root persisted by an earlier process. */
-  startLinkedRoot(attrs: RootAttrs, sourceTraceRootId: string): TraceContext {
+  startLinkedRoot(attrs: RootAttrs, sourceTraceContext: TraceContextCarrier): TraceContext {
     const existing = this.byRun.get(attrs.run_id);
     if (existing && !existing.closed) return existing;
-    const root = this.tracer.startSpan(
-      { id: sourceTraceRootId, runId: attrs.run_id },
+    const root = this.tracer.startRemoteSpan(
+      sourceTraceContext,
       {
         name: "agent.job_wake",
         run_type: "chain",
@@ -44,6 +40,7 @@ export class TraceRegistry {
           ...attrs.metadata,
         },
       },
+      attrs.run_id,
     );
     return this.register(attrs, root);
   }
@@ -69,6 +66,10 @@ export class TraceRegistry {
     if (!runId) return undefined;
     const ctx = this.byRun.get(runId);
     return ctx && !ctx.closed ? ctx : undefined;
+  }
+
+  captureContext(handle: TraceHandle | undefined): TraceContextCarrier | undefined {
+    return handle ? this.tracer.captureContext(handle) : undefined;
   }
 
   startSpan(runId: string | undefined, attrs: SpanAttrs, parent?: TraceHandle): TraceHandle | undefined {

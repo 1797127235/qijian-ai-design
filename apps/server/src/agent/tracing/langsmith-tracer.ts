@@ -6,7 +6,7 @@ import { Client, RunTree } from "langsmith";
 import type { ServerConfig } from "../../config.js";
 import { BoundedAsyncQueue } from "./queue.js";
 import { capJson, pickMeta, truncateText } from "./redact.js";
-import type { AgentTracer, EndOptions, MappedError, RootAttrs, SpanAttrs, TraceHandle } from "./types.js";
+import type { AgentTracer, EndOptions, MappedError, RootAttrs, SpanAttrs, TraceContextCarrier, TraceHandle } from "./types.js";
 
 interface LiveHandle extends TraceHandle {
   tree: RunTree;
@@ -80,10 +80,9 @@ export class LangSmithTracer implements AgentTracer {
   }
 
   startSpan(parent: TraceHandle, attrs: SpanAttrs): TraceHandle {
-    const parentHandle = this.handles.get(parent.id);
+    const parentHandle = this.handles.get(parent.id) ?? this.endedHandles.get(parent.id);
     if (!parentHandle) {
-      // parent 已 end 并移出 map：仍尝试用 parent_run_id 挂接
-      return this.startDetachedChild(parent, attrs);
+      throw new Error(`unknown trace parent: ${parent.id}`);
     }
     const child = parentHandle.tree.createChild({
       name: attrs.name,
@@ -110,6 +109,50 @@ export class LangSmithTracer implements AgentTracer {
           this.telemetry.onError?.(error);
         }
       }
+      await child.postRun();
+      handle.posted = true;
+    });
+    return handle;
+  }
+
+  captureContext(handle: TraceHandle): TraceContextCarrier | undefined {
+    const live = this.handles.get(handle.id) ?? this.endedHandles.get(handle.id);
+    if (!live) return undefined;
+    const headers = live.tree.toHeaders();
+    return {
+      traceId: live.tree.trace_id,
+      parentRunId: live.tree.id,
+      langsmithTrace: headers["langsmith-trace"],
+      baggage: headers.baggage,
+    };
+  }
+
+  startRemoteSpan(context: TraceContextCarrier, attrs: SpanAttrs, runId: string): TraceHandle {
+    const parent = RunTree.fromHeaders({
+      "langsmith-trace": context.langsmithTrace,
+      ...(context.baggage ? { baggage: context.baggage } : {}),
+    }, {
+      client: this.client,
+      project_name: this.project,
+    });
+    if (!parent) {
+      throw new Error("invalid LangSmith trace context");
+    }
+    const child = parent.createChild({
+      name: attrs.name,
+      run_type: attrs.run_type ?? "chain",
+      inputs: (attrs.inputs ? capJson(attrs.inputs) : {}) as Record<string, unknown>,
+      metadata: pickMeta({ run_id: runId, ...attrs.metadata }),
+    });
+    const handle: LiveHandle = {
+      id: child.id,
+      runId,
+      tree: child,
+      posted: false,
+      chain: Promise.resolve(),
+    };
+    this.handles.set(handle.id, handle);
+    this.enqueue(handle, async () => {
       await child.postRun();
       handle.posted = true;
     });
@@ -157,32 +200,7 @@ export class LangSmithTracer implements AgentTracer {
       .map((h) => h.chain.catch(() => undefined));
     await Promise.all(chains);
     await this.queue.drain(5_000);
-  }
-
-  /** 父 handle 已释放时，用 parent_run_id 直接建子 run */
-  private startDetachedChild(parent: TraceHandle, attrs: SpanAttrs): TraceHandle {
-    const tree = new RunTree({
-      name: attrs.name,
-      run_type: attrs.run_type ?? "chain",
-      project_name: this.project,
-      client: this.client,
-      parent_run_id: parent.id,
-      inputs: (attrs.inputs ? capJson(attrs.inputs) : {}) as Record<string, unknown>,
-      metadata: pickMeta({ run_id: parent.runId, ...attrs.metadata }),
-    });
-    const handle: LiveHandle = {
-      id: tree.id,
-      runId: parent.runId,
-      tree,
-      posted: false,
-      chain: Promise.resolve(),
-    };
-    this.handles.set(handle.id, handle);
-    this.enqueue(handle, async () => {
-      await tree.postRun();
-      handle.posted = true;
-    });
-    return handle;
+    await this.client.awaitPendingTraceBatches();
   }
 
   private enqueue(handle: LiveHandle, task: () => Promise<void>) {
@@ -213,7 +231,7 @@ export class LangSmithTracer implements AgentTracer {
       } finally {
         release();
       }
-    });
+    }, release);
   }
 
   private retainEnded(handle: LiveHandle) {

@@ -52,8 +52,11 @@ describe("generation submission freezes project memory", () => {
     const snapshot = desk();
     let accepted: {
       payload: Record<string, unknown>;
-      traceRootId?: string;
-      traceParentId?: string;
+      traceContext?: {
+        traceId: string;
+        parentRunId: string;
+        langsmithTrace: string;
+      };
     } | undefined;
     const store = {
       accept: async (input: { payload: Record<string, unknown>; prepare: (tx: never) => Promise<unknown> }) => {
@@ -69,6 +72,11 @@ describe("generation submission freezes project memory", () => {
       get: vi.fn(() => ({
         root: { id: "trace-root-1", runId },
         toolSpans: new Map([["call-1", { id: "trace-tool-1", runId }]]),
+      })),
+      captureContext: vi.fn(() => ({
+        traceId: "trace-root-1",
+        parentRunId: "trace-tool-1",
+        langsmithTrace: "20260812T000000000001Ztrace-root-1.20260812T000001000002Ztrace-tool-1",
       })),
       trackJob,
     };
@@ -97,8 +105,10 @@ describe("generation submission freezes project memory", () => {
     });
     expect(String(accepted?.payload.prompt)).toMatch(/PROJECT_MEMORY[\s\S]*CURRENT_GENERATION_REQUEST/);
     expect(accepted).toMatchObject({
-      traceRootId: "trace-root-1",
-      traceParentId: "trace-tool-1",
+      traceContext: {
+        traceId: "trace-root-1",
+        parentRunId: "trace-tool-1",
+      },
     });
     expect(trackJob).toHaveBeenCalledWith(runId, expect.any(String));
   });

@@ -20,6 +20,7 @@
 | [asset-task-queue-diagrams.md](asset-task-queue-diagrams.md) | BullMQ 任务架构图、流程图和时序图 |
 | [runbooks/asset-task-queue.md](runbooks/asset-task-queue.md) | 队列运维：outbox、needs_review、重试、Bull Board、命名软失败 |
 | [runbooks/observability.md](runbooks/observability.md) | API、Agent、Worker、队列、缓存与追踪的指标、告警、看板和故障演练 |
+| [agent-observations-2026-08-13.md](agent-observations-2026-08-13.md) | 最近一次 Agent/LangSmith 观测问题、证据与验收清单 |
 | [canvas-connections-generate-design.md](canvas-connections-generate-design.md) | 连线 + 面板生图 |
 | [canvas-inpainting-design.md](canvas-inpainting-design.md) | 局部重绘 |
 | [agent-context-management.md](agent-context-management.md) | Agent 上下文管理当前实现：请求格式、状态生命周期、工具、Skills、压缩与缓存观测 |

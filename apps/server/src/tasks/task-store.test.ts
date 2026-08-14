@@ -50,16 +50,19 @@ describe("TaskStore (integration)", () => {
     const store = new TaskStore(db!);
     try {
       const payload = imageTask(project.id);
+      const traceContext = {
+        traceId: "trace-root-1",
+        parentRunId: "trace-tool-1",
+        langsmithTrace: "20260812T000000000001Ztrace-root-1.20260812T000001000002Ztrace-tool-1",
+      };
       const accepted = await store.accept({
         payload,
         taskKind: "generate_from_desk",
-        traceRootId: "trace-root-1",
-        traceParentId: "trace-tool-1",
+        traceContext,
       });
       expect(accepted.id).toBe(payload.task_id);
       expect(accepted.status).toBe("enqueue_pending");
-      expect(accepted.traceRootId).toBe("trace-root-1");
-      expect(accepted.traceParentId).toBe("trace-tool-1");
+      expect(accepted.traceContext).toEqual(traceContext);
 
       const [outbox] = await db!.select().from(taskQueueOutbox)
         .where(eq(taskQueueOutbox.taskId, payload.task_id));

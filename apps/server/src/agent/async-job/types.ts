@@ -1,3 +1,5 @@
+import type { TraceContextCarrier } from "../tracing/types.js";
+
 /** agent_jobs.status 枚举。与 schema 的 $type 对齐。 */
 export type AgentJobStatus =
   | "enqueue_pending"
@@ -23,8 +25,7 @@ export interface AgentJobDto {
   result?: unknown;
   artifactId?: string;
   error?: string;
-  traceRootId?: string;
-  traceParentId?: string;
+  traceContext?: TraceContextCarrier;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;

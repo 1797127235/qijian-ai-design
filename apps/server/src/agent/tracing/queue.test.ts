@@ -16,4 +16,18 @@ describe("BoundedAsyncQueue telemetry", () => {
     release();
     await queue.drain();
   });
+
+  it("notifies a dropped operation so dependent work can continue", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const onOperationDrop = vi.fn();
+    const queue = new BoundedAsyncQueue(1, 1);
+    queue.enqueue(() => blocked);
+    queue.enqueue(async () => undefined, onOperationDrop);
+    queue.enqueue(async () => undefined);
+
+    expect(onOperationDrop).toHaveBeenCalledOnce();
+    release();
+    await queue.drain();
+  });
 });

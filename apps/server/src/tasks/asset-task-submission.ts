@@ -88,13 +88,13 @@ export class AssetTaskSubmissionService {
     let prepared: PreparedGenerate | undefined;
     const trace = this.traces?.get(input.runId);
     const traceParent = trace?.toolSpans.get(input.toolCallId) ?? trace?.root;
+    const traceContext = this.traces?.captureContext(traceParent);
     await this.store.accept({
       payload,
       taskKind: "generate_from_desk",
       threadId: input.threadId,
       runId: input.runId,
-      traceRootId: trace?.root.id,
-      traceParentId: traceParent?.id,
+      traceContext,
       prepare: async (tx: DatabaseTransaction) => {
         const clientOpId = `agent:${input.toolCallId || taskId}`;
         prepared = await this.generate.prepare({

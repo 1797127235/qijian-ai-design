@@ -1,6 +1,7 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { agentJobs, projects, taskBatches, taskEvents, taskQueueOutbox } from "../db/schema.js";
+import type { TraceContextCarrier } from "../agent/tracing/types.js";
 import { HttpError } from "../lib/errors.js";
 import { deriveBatchStatus } from "./state-machine.js";
 import type { TerminalTaskStatus } from "./task-queue.js";
@@ -23,8 +24,7 @@ export class TaskStore {
     batchId?: string;
     threadId?: string;
     runId?: string;
-    traceRootId?: string;
-    traceParentId?: string;
+    traceContext?: TraceContextCarrier;
     /** 项目未完成任务上限（含本任务）；默认 100，与 acceptBatch 一致 */
     maxUnfinished?: number;
     prepare?: (
@@ -52,8 +52,7 @@ export class TaskStore {
         batchId: input.batchId,
         threadId: input.threadId,
         runId: input.runId,
-        traceRootId: input.traceRootId,
-        traceParentId: input.traceParentId,
+        traceContext: input.traceContext,
         kind: input.taskKind,
         status: "enqueue_pending",
         taskRole: payload.kind === "artifact.name" ? "name" : "image",

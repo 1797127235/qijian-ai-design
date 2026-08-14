@@ -4,10 +4,15 @@ import { TraceRegistry } from "./registry.js";
 describe("TraceRegistry", () => {
   it("registers a wake run as a child of the persisted source trace", () => {
     const linked = { id: "wake-span", runId: "wake-run" };
+    const traceContext = {
+      traceId: "source-root",
+      parentRunId: "source-tool",
+      langsmithTrace: "20260812T000000000001Zsource-root.20260812T000001000002Zsource-tool",
+    };
     const tracer = {
       enabled: true,
       startRoot: vi.fn(),
-      startSpan: vi.fn(() => linked),
+      startRemoteSpan: vi.fn(() => linked),
       end: vi.fn(),
       annotate: vi.fn(),
       recordError: vi.fn(),
@@ -20,12 +25,13 @@ describe("TraceRegistry", () => {
       thread_id: "thread-1",
       run_id: "wake-run",
       inputs: { wake: true },
-    }, "source-root");
+    }, traceContext);
 
     expect(context.root).toBe(linked);
-    expect(tracer.startSpan).toHaveBeenCalledWith(
-      { id: "source-root", runId: "wake-run" },
+    expect(tracer.startRemoteSpan).toHaveBeenCalledWith(
+      traceContext,
       expect.objectContaining({ name: "agent.job_wake" }),
+      "wake-run",
     );
   });
 

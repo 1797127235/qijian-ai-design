@@ -1,12 +1,11 @@
 import { mapErrorFromUnknown } from "../agent/tracing/map-error.js";
-import type { AgentTracer, TraceHandle } from "../agent/tracing/types.js";
+import type { AgentTracer, TraceContextCarrier } from "../agent/tracing/types.js";
 
 export type TracedTask = Readonly<{
   id: string;
   runId?: string | null;
   kind: string;
-  traceRootId?: string | null;
-  traceParentId?: string | null;
+  traceContext?: TraceContextCarrier | null;
 }>;
 
 function terminalStatus(result: unknown): string {
@@ -27,17 +26,15 @@ export async function runTaskWithTrace<T>(
   task: TracedTask,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const parentId = task.traceParentId ?? task.traceRootId;
-  if (!tracer.enabled || !parentId) return operation();
+  if (!tracer.enabled || !task.traceContext) return operation();
 
   const runId = task.runId ?? task.id;
-  const parent: TraceHandle = { id: parentId, runId };
-  const span = tracer.startSpan(parent, {
+  const span = tracer.startRemoteSpan(task.traceContext, {
     name: `task.${task.kind}`,
     run_type: "tool",
     inputs: { task_id: task.id },
     metadata: { job_id: task.id, kind: task.kind },
-  });
+  }, runId);
   try {
     const result = await operation();
     const status = terminalStatus(result);

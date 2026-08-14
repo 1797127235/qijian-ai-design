@@ -102,7 +102,7 @@ export class AssetTaskWorker {
       this.logger?.info("task_finished", {
         task_id: row.id,
         run_id: row.runId,
-        trace_id: row.traceRootId,
+        trace_id: row.traceContext?.traceId,
         kind: task.kind,
         status,
         duration_ms: Math.round(durationSeconds * 1_000),
@@ -114,7 +114,7 @@ export class AssetTaskWorker {
       this.logger?.error("task_failed", {
         task_id: row.id,
         run_id: row.runId,
-        trace_id: row.traceRootId,
+        trace_id: row.traceContext?.traceId,
         kind: task.kind,
         duration_ms: Math.round(durationSeconds * 1_000),
         error: error instanceof Error ? error.message : String(error),

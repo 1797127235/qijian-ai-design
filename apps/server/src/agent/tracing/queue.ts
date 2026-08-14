@@ -1,9 +1,10 @@
 /** 有界出站队列：满则 drop 最旧；永不阻塞调用方。 */
 
 export type QueueTask = () => Promise<void>;
+type QueueEntry = Readonly<{ task: QueueTask; onDrop?: () => void }>;
 
 export class BoundedAsyncQueue {
-  private readonly q: QueueTask[] = [];
+  private readonly q: QueueEntry[] = [];
   private active = 0;
   private dropped = 0;
 
@@ -16,19 +17,20 @@ export class BoundedAsyncQueue {
   get size() { return this.q.length; }
   get droppedCount() { return this.dropped; }
 
-  enqueue(task: QueueTask) {
+  enqueue(task: QueueTask, onOperationDrop?: () => void) {
     if (this.q.length >= this.maxSize) {
-      this.q.shift();
+      const dropped = this.q.shift();
       this.dropped += 1;
+      dropped?.onDrop?.();
       this.onDrop?.(this.dropped);
     }
-    this.q.push(task);
+    this.q.push({ task, onDrop: onOperationDrop });
     this.pump();
   }
 
   private pump() {
     while (this.active < this.concurrency && this.q.length > 0) {
-      const task = this.q.shift()!;
+      const { task } = this.q.shift()!;
       this.active += 1;
       // Promise.resolve().then 包一层，同步 throw 也走 catch/finally，避免 active 泄漏
       void Promise.resolve()
