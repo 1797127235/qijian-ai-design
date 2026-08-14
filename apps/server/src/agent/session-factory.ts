@@ -31,6 +31,8 @@ import {
   assistantTextFromEvent,
   isToolExecutionEvent,
   persistToolEvent,
+  redactAgentEvent,
+  redactToolResult,
 } from "./agent-event-persister.js";
 import type { EventSink } from "./events.js";
 import { agentSessionDir } from "./session-paths.js";
@@ -139,6 +141,18 @@ export class SessionFactory {
 
   skillStateSnapshot(session: AgentSession): SessionSkillStateSnapshot | undefined {
     return this.skillStates.get(session)?.snapshot();
+  }
+
+  markOpenWork(session: AgentSession): void {
+    this.skillStates.get(session)?.markOpenWork();
+  }
+
+  closeOpenWork(session: AgentSession): void {
+    this.skillStates.get(session)?.closeOpenWork();
+  }
+
+  noteResumeHop(session: AgentSession, maxHops: number): boolean {
+    return this.skillStates.get(session)?.noteResumeHop(maxHops) ?? false;
   }
 
   resolveExplicitSkills(session: AgentSession, userText: string): ExplicitSkillResolution {
@@ -357,7 +371,8 @@ export class SessionFactory {
     await this.flushSkillState(session);
     await this.flushContextFrame(session);
     session.subscribe((event) => {
-      this.deps.emit({ type: "agent_event", event: { projectId, threadId, ...event } });
+      const publicEvent = redactAgentEvent(event);
+      this.deps.emit({ type: "agent_event", event: { projectId, threadId, ...publicEvent } });
       const runId = this.turnContext.maybeCurrent()?.runId;
       const traces = this.deps.traces;
       const ctx = traces?.get(runId);
@@ -404,7 +419,7 @@ export class SessionFactory {
           const observation = {
             turn_index: observed?.turnIndex,
             argument_result_accounting: "provider_turn_transition",
-            result_summary: summarizePayload(event.result),
+            result_summary: summarizePayload(redactToolResult(event.result)),
             prompt_tokens_before: observed?.promptTokensBefore,
             model_usage_before: observed?.before,
           };
@@ -421,7 +436,7 @@ export class SessionFactory {
               traces!.end(span, {
                 status: "ok",
                 outputs: {
-                  result: capJson(event.result),
+                  result: capJson(redactToolResult(event.result)),
                   ...(resultBudget ? { result_budget: resultBudget } : {}),
                   observation,
                 },

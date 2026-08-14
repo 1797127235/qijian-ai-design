@@ -108,7 +108,7 @@ export function toMessageDto(row: typeof chatMessages.$inferSelect, attachments:
 export function isInternalSystemChatMessage(
   message: Pick<ChatMessageDto, "text" | "externalId"> | { text: string; externalId?: string | null },
 ): boolean {
-  if (typeof message.externalId === "string" && message.externalId.startsWith("job-wake:")) return true;
+  if (typeof message.externalId === "string" && message.externalId.startsWith("job-wake")) return true;
   const text = (message.text ?? "").replace(/^\uFEFF/, "").trimStart();
   return text.includes("[JOB_EVENT]")
     || text.includes("[系统事件")

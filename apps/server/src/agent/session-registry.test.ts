@@ -79,11 +79,13 @@ describe("system prompt identity", () => {
     expect(prompt).not.toContain("Cursor 里的 Auto");
   });
 
-  it("teaches discovery and JOB_EVENT without hardcoding all tool manuals", () => {
+  it("teaches discovery without hardcoding job-wake or deferred manuals", () => {
     const prompt = deskSystemPrompt();
-    expect(prompt).toContain("[JOB_EVENT]");
     expect(prompt).toContain("search_tools");
-    expect(prompt).toContain("系统事件轮用于读取并汇报任务结果");
+    expect(prompt).toContain("accepted");
+    expect(prompt).not.toContain("[JOB_EVENT]");
+    expect(prompt).not.toContain("[DEFERRED_REMOVE]");
+    expect(prompt).not.toContain("先不删");
   });
 
   it("defaults to short user-facing replies while allowing expand and itemization", () => {
@@ -130,6 +132,7 @@ describe("AgentSessionRegistry stable prefix", () => {
       generate: {} as never,
       chats: {
         summarizeRunTools: async () => ({ status: "completed" as const }),
+        listRunToolNames: async () => [],
         finishRun: async () => undefined,
         append: async () => ({ message: { id: "m" } }),
       } as never,
@@ -190,6 +193,7 @@ describe("AgentSessionRegistry stable prefix", () => {
       generate: {} as never,
       chats: {
         summarizeRunTools: async () => ({ status: "completed" as const }),
+        listRunToolNames: async () => [],
         finishRun: async () => undefined,
         append: async () => ({ message: { id: "m" } }),
       } as never,
@@ -234,6 +238,7 @@ describe("AgentSessionRegistry stable prefix", () => {
       generate: {} as never,
       chats: {
         summarizeRunTools: async () => ({ status: "completed" as const }),
+        listRunToolNames: async () => [],
         finishRun: async () => undefined,
         append: async () => ({ message: { id: "m" } }),
       } as never,

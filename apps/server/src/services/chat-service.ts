@@ -428,6 +428,14 @@ export class ChatService {
       });
   }
 
+  async listRunToolNames(runId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ toolName: chatToolCalls.toolName })
+      .from(chatToolCalls)
+      .where(eq(chatToolCalls.runId, runId));
+    return rows.map((row) => row.toolName);
+  }
+
   /** prompt 正常返回后扫一遍：run 是否有 failed 工具 → run 标 failed，否则 completed。 */
   async summarizeRunTools(runId: string): Promise<{ status: "completed" | "failed"; error?: string }> {
     const rows = await this.db

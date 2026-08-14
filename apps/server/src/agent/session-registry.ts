@@ -22,6 +22,13 @@ import {
 } from "../services/image-caption-sanitize.js";
 import type { ImageCaptionStore } from "../services/image-caption-store.js";
 import type { JobWakeService } from "./async-job/job-wake.js";
+import {
+  formatPipelineContinuePrompt,
+  jobWakeContinueExternalId,
+  MAX_RESUME_HOPS,
+  runOpenedDeskWork,
+  shouldResumeAfterWake,
+} from "./pipeline-continue.js";
 import type { ProjectMemoryService } from "./memory/service.js";
 import { TurnContextScope, type TurnContext } from "./capability-gate.js";
 import { CacheContract, sha256 } from "./cache-contract.js";
@@ -88,6 +95,38 @@ export class AgentSessionRegistry {
     this.jobWake = jobWake;
   }
 
+  private async maybeContinuePipeline(
+    projectId: string,
+    threadId: string,
+    wakeRunId: string,
+    wakeText: string,
+  ): Promise<void> {
+    const session = await this.get(projectId, threadId);
+    const skill = this.factory.skillStateSnapshot(session);
+    if (!shouldResumeAfterWake(skill?.openWork === true, wakeText)) return;
+    if (!this.factory.noteResumeHop(session, MAX_RESUME_HOPS)) return;
+    const externalId = jobWakeContinueExternalId(wakeRunId);
+    const continueText = formatPipelineContinuePrompt();
+    try {
+      const saved = await this.chats.appendPrompt(projectId, threadId, continueText, externalId, []);
+      if (!saved.created || !saved.run) return;
+      await this.prompt(projectId, threadId, saved.message.text, [], saved.run.id, [], "designer");
+      const outcome = await this.chats.summarizeRunTools(saved.run.id);
+      const statusMessage = await this.chats.finishRun(saved.run.id, outcome.status, outcome.error);
+      if (statusMessage) this.emit({ type: "chat_message", projectId, message: statusMessage });
+      this.metrics?.observeAgentRun({
+        status: outcome.status,
+        source: "pipeline_continue",
+        durationSeconds: 0,
+      });
+    } catch (error) {
+      console.warn(
+        `[pipeline-continue] enqueue failed thread=${threadId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
   /** thread 是否有进行中的 agent run（wake 互斥）。 */
   isThreadBusy(projectId: string, threadId: string): boolean {
     const runs = this.activeRunIds.get(`${projectId}:${threadId}`);
@@ -120,6 +159,9 @@ export class AgentSessionRegistry {
         source: "job_wake",
         durationSeconds: Math.max(0, performance.now() - startedAt) / 1_000,
       });
+      if (outcome.status !== "failed") {
+        await this.maybeContinuePipeline(projectId, threadId, runId, text);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "job wake 失败";
       const statusMessage = await this.chats.finishRun(runId, "failed", message);
@@ -194,6 +236,9 @@ export class AgentSessionRegistry {
       policyRevision: "capability-gate-v1",
       selectedArtifactIds: Object.freeze([...selectedArtifactIds]),
     });
+    if (promptSource === "designer" && !text.includes("[系统事件")) {
+      this.factory.closeOpenWork(session);
+    }
     try {
       const toolState = this.factory.prepareToolBoundary(session);
       this.cacheContract.observe(session, toolState);
@@ -323,6 +368,11 @@ export class AgentSessionRegistry {
         await this.writes.awaitRun(runId);
       });
       this.cacheContract.observe(session, this.factory.toolStateSnapshot(session), { onViolation: "accept" });
+      if (promptSource === "designer") {
+        const tools = await this.chats.listRunToolNames(runId);
+        if (runOpenedDeskWork(tools)) this.factory.markOpenWork(session);
+        else this.factory.closeOpenWork(session);
+      }
     } finally {
       await this.factory.flushToolState(session);
       await this.factory.flushSkillState(session);
@@ -491,6 +541,10 @@ export class AgentSessionRegistry {
     const pending = this.sessions.get(key);
     // 只 cancel 本 thread 的 jobs（job signal 会 abort complete）；不 abortProject，避免杀面板生图
     await this.taskCancellation?.cancelThread(projectId, threadId);
+    if (pending) {
+      const session = await pending.catch(() => undefined);
+      if (session) this.factory.closeOpenWork(session);
+    }
     if (!pending) return true;
     try {
       const aborted = await stopAgentSession(await pending);

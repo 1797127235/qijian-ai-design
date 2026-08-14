@@ -48,6 +48,8 @@ describe("job-event", () => {
     expect(text).toContain("generate_from_desk");
     expect(text).toContain("replace_on_desk");
     expect(text).toContain("text_to_image_on_desk");
+    expect(text).toContain("本轮只汇报验收，不能改桌面");
+    expect(text).not.toContain("等待用户下一条明确请求");
     expect(jobWakeExternalId("abc")).toBe("job-wake:abc");
   });
 

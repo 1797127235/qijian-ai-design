@@ -9,6 +9,8 @@ type PersistedSkillState = {
   trajectoryEpoch: number;
   loadedRevisions: Record<string, string>;
   emittedRevisions: Record<string, string>;
+  openWork: boolean;
+  resumeHops: number;
 };
 
 export type SessionSkillStateSnapshot = Readonly<{
@@ -17,6 +19,8 @@ export type SessionSkillStateSnapshot = Readonly<{
   trajectoryEpoch: number;
   loadedRevisions: Readonly<Record<string, string>>;
   emittedRevisions: Readonly<Record<string, string>>;
+  openWork: boolean;
+  resumeHops: number;
 }>;
 
 export type SessionSkillStateOptions = {
@@ -62,6 +66,8 @@ export class SessionSkillState {
       trajectoryEpoch: sameCatalog ? previousEpoch : (validVersion ? previousEpoch + 1 : 1),
       loadedRevisions: sameCatalog ? sortedStringRecord(stored?.loadedRevisions) : {},
       emittedRevisions: sameCatalog ? sortedStringRecord(stored?.emittedRevisions) : {},
+      openWork: sameCatalog ? stored?.openWork === true : false,
+      resumeHops: sameCatalog ? Math.max(0, Number(stored?.resumeHops) || 0) : 0,
     };
     const instance = new SessionSkillState(options.filePath, state);
     if (validVersion && !sameCatalog) instance.schedulePersist();
@@ -74,6 +80,30 @@ export class SessionSkillState {
       loadedRevisions: Object.freeze({ ...this.state.loadedRevisions }),
       emittedRevisions: Object.freeze({ ...this.state.emittedRevisions }),
     });
+  }
+
+  markOpenWork(): void {
+    if (this.state.openWork && this.state.resumeHops === 0) return;
+    this.state = { ...this.state, openWork: true, resumeHops: 0 };
+    this.schedulePersist();
+  }
+
+  closeOpenWork(): void {
+    if (!this.state.openWork && this.state.resumeHops === 0) return;
+    this.state = { ...this.state, openWork: false, resumeHops: 0 };
+    this.schedulePersist();
+  }
+
+  noteResumeHop(maxHops: number): boolean {
+    if (!this.state.openWork) return false;
+    const hops = this.state.resumeHops + 1;
+    if (hops > maxHops) {
+      this.closeOpenWork();
+      return false;
+    }
+    this.state = { ...this.state, resumeHops: hops };
+    this.schedulePersist();
+    return true;
   }
 
   recordLoad(skillId: string, revision: string): { emit: boolean } {

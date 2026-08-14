@@ -26,7 +26,26 @@ describe("SessionSkillState", () => {
     expect(state.recordLoad("design-language", "skill-v1").emit).toBe(true);
     expect(state.recordLoad("design-language", "skill-v1").emit).toBe(false);
     expect(state.snapshot().loadedRevisions).toEqual({ "design-language": "skill-v1" });
+    expect(state.snapshot().openWork).toBe(false);
     await state.flush();
+  });
+
+  it("opens work, counts resume hops, and closes at the cap", async () => {
+    const filePath = await stateFile();
+    const state = await SessionSkillState.open({ filePath, catalogRevision: "catalog-v1" });
+    state.markOpenWork();
+    expect(state.noteResumeHop(2)).toBe(true);
+    expect(state.snapshot()).toMatchObject({ openWork: true, resumeHops: 1 });
+    await state.flush();
+
+    const restored = await SessionSkillState.open({ filePath, catalogRevision: "catalog-v1" });
+    expect(restored.snapshot().openWork).toBe(true);
+    expect(restored.noteResumeHop(2)).toBe(true);
+    expect(restored.noteResumeHop(2)).toBe(false);
+    expect(restored.snapshot().openWork).toBe(false);
+    restored.markOpenWork();
+    restored.closeOpenWork();
+    expect(restored.snapshot()).toMatchObject({ openWork: false, resumeHops: 0 });
   });
 
   it("persists emit-once state and emits a changed revision", async () => {

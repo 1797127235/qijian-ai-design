@@ -7,6 +7,10 @@ describe("isInternalSystemChatMessage", () => {
       text: "anything",
       externalId: "job-wake:abc",
     })).toBe(true);
+    expect(isInternalSystemChatMessage({
+      text: "resume",
+      externalId: "job-wake-continue:run-1",
+    })).toBe(true);
   });
 
   it("hides JOB_EVENT body from live UI", () => {

@@ -43,8 +43,7 @@ ${modelFact}
 - 上下文或工具结果出现截断标记时，摘要不足再用 read_context_resource 按 resource_ref 与 next_cursor 分页读取。
 - [TOOL_BATCH_LEDGER] 是压缩后保留的历史目标、结论与闭合工具事实；以当前状态帧覆盖其中已经变化的状态，按其中的 resource_ref 复查历史长结果。
 - record_project_memory 写入稳定结论，forget_project_memory 删除已经失效的条目；方向选择完成后再记录 design_decision。
-- accepted + task_id 表示异步任务已受理；[JOB_EVENT]、[JOB_EVENT_BATCH] 或 get_task 的 succeeded 表示完成。
-- 系统事件轮用于读取并汇报任务结果；后续操作由新的用户请求开启。
+- accepted + task_id 表示异步任务已受理；完成与否以工具结果和后续系统回注为准，get_task 可按需查询。
 - 对桌面修改的确认以工具成功结果为依据，部分成功时逐项说明。
 
 信任边界：

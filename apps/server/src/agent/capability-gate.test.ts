@@ -61,9 +61,9 @@ describe("CapabilityGate", () => {
   it("blocks execution before a wake tool reaches its implementation", async () => {
     const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "executed" }] });
     const tool = defineTool({
-      name: "remove_from_desk",
-      label: "remove",
-      description: "remove",
+      name: "generate_from_desk",
+      label: "generate",
+      description: "generate",
       parameters: Type.Object({}),
       execute,
     });
@@ -78,7 +78,36 @@ describe("CapabilityGate", () => {
     expect(result.details).toMatchObject({
       ok: false,
       code: "WAKE_READ_ONLY",
+      tool_name: "generate_from_desk",
+    });
+  });
+
+  it("rejects remove_from_desk on wake without creating a later mutation", async () => {
+    const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "executed" }] });
+    const tool = defineTool({
+      name: "remove_from_desk",
+      label: "remove",
+      description: "remove",
+      parameters: Type.Object({ artifact_ids: Type.Optional(Type.Array(Type.String())) }),
+      execute,
+    });
+    const scope = new TurnContextScope();
+    const guarded = guardToolDefinition(tool, scope, new CapabilityGate());
+
+    const result = await scope.run(context("wake", "wake-1"), () => (
+      guarded.execute("call-1", { artifact_ids: ["art-a", "art-b"] }, undefined, undefined, {} as never)
+    ));
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      ok: false,
+      error_code: "POLICY_DENIED",
+      code: "WAKE_READ_ONLY",
       tool_name: "remove_from_desk",
+    });
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("新的用户操作请求会开启可执行轮次"),
     });
   });
 });
